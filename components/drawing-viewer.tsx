@@ -110,7 +110,7 @@ export function DrawingViewer({
           off.height = viewport.height
           const ctx = off.getContext('2d')
           if (!ctx) return
-          const renderTask = page.render({ canvasContext: ctx, viewport })
+          const renderTask = page.render({ canvas: off, canvasContext: ctx, viewport })
           await renderTask.promise
           if (cancelled) return
           const dataUrl = off.toDataURL('image/png')

@@ -74,7 +74,7 @@ export function optimize(
 
   for (const [barType, typePieces] of Object.entries(byType)) {
     const sorted = [...typePieces].sort((a, b) => b.lengthMm - a.lengthMm)
-    const stocks: { pieces: StockResult['pieces']; usedRaw: number }[] = []
+    const stocks: { pieces: StockResult['pieces'] }[] = []
 
     for (const piece of sorted) {
       if (piece.lengthMm > stockLengthMm) continue
