@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "TalkToFigma": {
+      "command": "bunx",
+      "args": ["cursor-talk-to-figma-mcp@latest"]
+    },
+    "supabase": {
+      "url": "https://mcp.supabase.com/mcp?project_ref=rcjninpzzkjirxddbzys",
+      "headers": {}
+    }
+  }
+}
