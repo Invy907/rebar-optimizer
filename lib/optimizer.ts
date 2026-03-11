@@ -60,7 +60,7 @@ export function optimize(
   stockLengthMm: number = 6000,
   options: OptimizationOptions = {},
 ): OptimizationOutput {
-  const algorithm = options.algorithm ?? 'first-fit'
+  const algorithm = options.algorithm ?? 'best-fit'
   const cuttingLossMm = options.cuttingLossMm ?? 0
 
   const byType: Record<string, PieceInput[]> = {}

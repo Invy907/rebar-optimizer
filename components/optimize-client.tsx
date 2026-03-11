@@ -16,10 +16,26 @@ export function OptimizeClient({
   segments: DrawingSegment[]
   pastRuns: OptimizationRun[]
 }) {
+  const segmentsSortedForLabels = [...segments].sort((a, b) =>
+    (a.created_at ?? '').localeCompare(b.created_at ?? ''),
+  )
+  const segmentLabelById: Record<string, string> = {}
+  let autoNo = 1
+  for (const seg of segmentsSortedForLabels) {
+    const existing = seg.label?.trim()
+    if (existing) {
+      segmentLabelById[seg.id] = existing
+    } else {
+      segmentLabelById[seg.id] = `S${String(autoNo).padStart(2, '0')}`
+      autoNo++
+    }
+  }
+
   const [stockLength, setStockLength] = useState(6000)
-  const [algorithm, setAlgorithm] = useState<AlgorithmType>('first-fit')
+  const [algorithm, setAlgorithm] = useState<AlgorithmType>('best-fit')
   const [cuttingLossMm, setCuttingLossMm] = useState(0)
   const [result, setResult] = useState<OptimizationOutput | null>(null)
+  const [calculating, setCalculating] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const supabase = createClient()
@@ -42,12 +58,16 @@ export function OptimizeClient({
       return
     }
 
-    const output = optimize(pieces, stockLength, {
-      algorithm,
-      cuttingLossMm: cuttingLossMm || 0,
+    setCalculating(true)
+    queueMicrotask(() => {
+      const output = optimize(pieces, stockLength, {
+        algorithm,
+        cuttingLossMm: cuttingLossMm || 0,
+      })
+      setResult(output)
+      setSaved(false)
+      setCalculating(false)
     })
-    setResult(output)
-    setSaved(false)
   }
 
   async function handleSave() {
@@ -124,7 +144,7 @@ export function OptimizeClient({
               <tbody className="divide-y divide-border">
                 {segments.map((seg) => (
                   <tr key={seg.id}>
-                    <td className="py-2">{seg.label || '-'}</td>
+                    <td className="py-2 font-mono">{segmentLabelById[seg.id] ?? '-'}</td>
                     <td className="py-2 font-mono">{seg.length_mm.toLocaleString()}</td>
                     <td className="py-2">{seg.quantity}</td>
                     <td className="py-2 font-mono">{seg.bar_type}</td>
@@ -163,8 +183,8 @@ export function OptimizeClient({
               onChange={(e) => setAlgorithm(e.target.value as AlgorithmType)}
               className="w-40 rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary bg-white"
             >
-              <option value="first-fit">First Fit（最初に空く場所）</option>
-              <option value="best-fit">Best Fit（残りが最小になる場所）</option>
+              <option value="best-fit">Best Fit（残りが最小になる場所・推奨）</option>
+              <option value="first-fit">First Fit（比較用・最初に空く場所）</option>
             </select>
           </div>
           <div>
@@ -181,16 +201,34 @@ export function OptimizeClient({
           </div>
           <button
             onClick={handleCalculate}
-            disabled={segments.length === 0}
-            className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50 transition-colors"
+            disabled={segments.length === 0 || calculating}
+            className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50 transition-colors flex items-center gap-2 min-w-[140px] justify-center"
           >
-            計算を実行
+            {calculating ? (
+              <>
+                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" aria-hidden />
+                計算中...
+              </>
+            ) : (
+              '計算を実行'
+            )}
           </button>
         </div>
       </section>
 
+      {/* 計算中表示 */}
+      {calculating && (
+        <section className="rounded-lg border border-border bg-white p-8 text-center">
+          <div className="flex flex-col items-center gap-3 text-muted">
+            <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <p className="text-sm font-medium">切断最適化を計算しています...</p>
+            <p className="text-xs">しばらくお待ちください</p>
+          </div>
+        </section>
+      )}
+
       {/* 結果 */}
-      {result && (
+      {result && !calculating && (
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">計算結果</h2>
@@ -202,7 +240,11 @@ export function OptimizeClient({
               {saved ? '保存済み' : saving ? '保存中...' : '結果を保存'}
             </button>
           </div>
-          <OptimizationResultView result={result} stockLengthMm={stockLength} />
+          <OptimizationResultView
+            result={result}
+            stockLengthMm={stockLength}
+            segmentLabelById={segmentLabelById}
+          />
         </section>
       )}
 

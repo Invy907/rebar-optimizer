@@ -52,6 +52,20 @@ export function DrawingViewer({
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
+    const segmentsSortedForLabels = [...segments].sort((a, b) =>
+      (a.created_at ?? '').localeCompare(b.created_at ?? ''),
+    )
+    const labelById: Record<string, string> = {}
+    let autoNo = 1
+    for (const seg of segmentsSortedForLabels) {
+      const existing = seg.label?.trim()
+      if (existing) labelById[seg.id] = existing
+      else {
+        labelById[seg.id] = `S${String(autoNo).padStart(2, '0')}`
+        autoNo++
+      }
+    }
+
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.save()
     ctx.translate(offset.x, offset.y)
@@ -71,7 +85,8 @@ export function DrawingViewer({
       const midY = (seg.y1 + seg.y2) / 2
       ctx.fillStyle = isSelected ? '#2563eb' : '#ef4444'
       ctx.font = `${12 / scale}px sans-serif`
-      ctx.fillText(`${seg.length_mm}mm ${seg.bar_type}`, midX, midY - 6 / scale)
+      const label = labelById[seg.id] ?? '-'
+      ctx.fillText(`${label} ${seg.length_mm}mm ${seg.bar_type}`, midX, midY - 6 / scale)
     })
 
     if (drawing && startPoint && currentPoint) {
@@ -216,7 +231,19 @@ export function DrawingViewer({
       return
     }
     if (drawing) {
-      setCurrentPoint(screenToCanvas(e))
+      let pt = screenToCanvas(e)
+      if (startPoint && e.shiftKey) {
+        const dx = Math.abs(pt.x - startPoint.x)
+        const dy = Math.abs(pt.y - startPoint.y)
+        if (dx > dy) {
+          // 水平方向にスナップ
+          pt = { x: pt.x, y: startPoint.y }
+        } else {
+          // 垂直方向にスナップ
+          pt = { x: startPoint.x, y: pt.y }
+        }
+      }
+      setCurrentPoint(pt)
     }
   }
 
@@ -342,7 +369,7 @@ export function DrawingViewer({
             線を描く
           </button>
           <span className="text-xs text-muted ml-2">
-            Alt+ドラッグ: 移動 / ホイール: ズーム
+            Alt+ドラッグ: 移動 / ホイール: ズーム / Shift+ドラッグ: 水平・垂直にスナップ
           </span>
         </div>
         <div

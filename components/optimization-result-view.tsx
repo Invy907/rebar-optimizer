@@ -5,9 +5,11 @@ import type { OptimizationOutput } from '@/lib/optimizer'
 export function OptimizationResultView({
   result,
   stockLengthMm,
+  segmentLabelById,
 }: {
   result: OptimizationOutput
   stockLengthMm: number
+  segmentLabelById: Record<string, string>
 }) {
   return (
     <div className="space-y-4">
@@ -80,6 +82,7 @@ export function OptimizationResultView({
                 <div className="h-8 rounded bg-gray-100 flex overflow-hidden">
                   {stock.pieces.map((piece, pIdx) => {
                     const width = (piece.lengthMm / stockLengthMm) * 100
+                    const label = segmentLabelById[piece.segmentId] ?? '-'
                     const colors = [
                       'bg-blue-500',
                       'bg-emerald-500',
@@ -93,7 +96,7 @@ export function OptimizationResultView({
                         key={pIdx}
                         className={`${colors[pIdx % colors.length]} flex items-center justify-center text-white text-xs font-mono border-r border-white/30`}
                         style={{ width: `${width}%` }}
-                        title={`${piece.lengthMm}mm`}
+                        title={`${label}: ${piece.lengthMm}mm`}
                       >
                         {width > 8 ? `${piece.lengthMm}` : ''}
                       </div>
@@ -114,14 +117,18 @@ export function OptimizationResultView({
                 </div>
                 {/* ピース一覧 */}
                 <div className="mt-1.5 flex flex-wrap gap-1">
-                  {stock.pieces.map((piece, pIdx) => (
-                    <span
-                      key={pIdx}
-                      className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono"
-                    >
-                      {piece.lengthMm}mm
-                    </span>
-                  ))}
+                  {stock.pieces.map((piece, pIdx) => {
+                    const label = segmentLabelById[piece.segmentId] ?? '-'
+                    return (
+                      <span
+                        key={pIdx}
+                        className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono"
+                        title={label}
+                      >
+                        {label} {piece.lengthMm}mm
+                      </span>
+                    )
+                  })}
                 </div>
               </div>
             )

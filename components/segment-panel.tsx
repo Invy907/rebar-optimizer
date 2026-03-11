@@ -22,6 +22,23 @@ export function SegmentPanel({
   projectId: string
 }) {
   const selected = segments.find((s) => s.id === selectedSegmentId)
+  const segmentsSortedForLabels = [...segments].sort((a, b) =>
+    (a.created_at ?? '').localeCompare(b.created_at ?? ''),
+  )
+  const segmentLabelById: Record<string, { label: string; isAuto: boolean }> = {}
+  let autoNo = 1
+  for (const seg of segmentsSortedForLabels) {
+    const existing = seg.label?.trim()
+    if (existing) {
+      segmentLabelById[seg.id] = { label: existing, isAuto: false }
+    } else {
+      segmentLabelById[seg.id] = {
+        label: `S${String(autoNo).padStart(2, '0')}`,
+        isAuto: true,
+      }
+      autoNo++
+    }
+  }
 
   return (
     <div className="w-80 shrink-0 flex flex-col rounded-lg border border-border bg-white overflow-hidden">
@@ -126,11 +143,20 @@ export function SegmentPanel({
                 }`}
               >
                 <div className="min-w-0">
+                  <span
+                    className={`font-mono text-xs mr-2 ${
+                      segmentLabelById[seg.id]?.isAuto ? 'text-muted' : 'text-foreground'
+                    }`}
+                    title={
+                      segmentLabelById[seg.id]?.isAuto
+                        ? '自動ラベル（未入力）'
+                        : 'ラベル'
+                    }
+                  >
+                    {segmentLabelById[seg.id]?.label ?? '-'}
+                  </span>
                   <span className="font-medium">{seg.length_mm}mm</span>
                   <span className="text-muted ml-1.5">x{seg.quantity}</span>
-                  {seg.label && (
-                    <span className="text-muted ml-1.5 text-xs">({seg.label})</span>
-                  )}
                 </div>
                 <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono">
                   {seg.bar_type}
