@@ -13,6 +13,12 @@ interface Point {
 
 const BAR_TYPES = ['D10', 'D13', 'D16', 'D19', 'D22', 'D25', 'D29', 'D32']
 
+type LastAction =
+  | { type: 'create'; segment: DrawingSegment }
+  | { type: 'delete'; segment: DrawingSegment }
+  | { type: 'update'; before: DrawingSegment; after: DrawingSegment }
+  | null
+
 export function DrawingViewer({
   drawingId,
   projectId,
@@ -31,6 +37,15 @@ export function DrawingViewer({
   const [startPoint, setStartPoint] = useState<Point | null>(null)
   const [currentPoint, setCurrentPoint] = useState<Point | null>(null)
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null)
+  const [lastAction, setLastAction] = useState<LastAction>(null)
+  const [newSegmentDraft, setNewSegmentDraft] = useState<{
+    p1: Point
+    p2: Point
+    lengthMm: string
+    barType: string
+    quantity: string
+    label: string
+  } | null>(null)
   const [tool, setTool] = useState<'select' | 'draw'>('select')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -44,6 +59,20 @@ export function DrawingViewer({
   const supabase = createClient()
   const router = useRouter()
 
+  const segmentsSortedForLabels = [...segments].sort((a, b) =>
+    (a.created_at ?? '').localeCompare(b.created_at ?? ''),
+  )
+  const labelById: Record<string, string> = {}
+  let autoNo = 1
+  for (const seg of segmentsSortedForLabels) {
+    const existing = seg.label?.trim()
+    if (existing) labelById[seg.id] = existing
+    else {
+      labelById[seg.id] = `S${String(autoNo).padStart(2, '0')}`
+      autoNo++
+    }
+  }
+
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current
     const img = imgRef.current
@@ -51,20 +80,6 @@ export function DrawingViewer({
 
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-
-    const segmentsSortedForLabels = [...segments].sort((a, b) =>
-      (a.created_at ?? '').localeCompare(b.created_at ?? ''),
-    )
-    const labelById: Record<string, string> = {}
-    let autoNo = 1
-    for (const seg of segmentsSortedForLabels) {
-      const existing = seg.label?.trim()
-      if (existing) labelById[seg.id] = existing
-      else {
-        labelById[seg.id] = `S${String(autoNo).padStart(2, '0')}`
-        autoNo++
-      }
-    }
 
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.save()
@@ -253,13 +268,13 @@ export function DrawingViewer({
       return
     }
 
-    if (drawing && startPoint && currentPoint) {
+    if (drawing && startPoint && currentPoint && !newSegmentDraft) {
       const dx = currentPoint.x - startPoint.x
       const dy = currentPoint.y - startPoint.y
       const pixelLen = Math.sqrt(dx * dx + dy * dy)
 
       if (pixelLen > 5) {
-        createSegment(startPoint, currentPoint)
+        openNewSegmentForm(startPoint, currentPoint)
       }
     }
     setDrawing(false)
@@ -286,10 +301,30 @@ export function DrawingViewer({
     })
   }
 
-  async function createSegment(p1: Point, p2: Point) {
-    const lengthStr = prompt('この線分の実際の長さ (mm) を入力してください:')
-    if (!lengthStr) return
-    const lengthMm = parseInt(lengthStr, 10)
+  function openNewSegmentForm(p1: Point, p2: Point) {
+    const last = segmentsSortedForLabels[segmentsSortedForLabels.length - 1]
+    const nextLabel =
+      segmentsSortedForLabels.length === 0
+        ? 'S01'
+        : labelById[last.id]?.match(/^S(\d{2})$/)
+          ? `S${String(Number(RegExp.$1) + 1).padStart(2, '0')}`
+          : `S${String(segmentsSortedForLabels.length + 1).padStart(2, '0')}`
+
+    setNewSegmentDraft({
+      p1,
+      p2,
+      lengthMm: '',
+      barType: last?.bar_type ?? 'D10',
+      quantity: '1',
+      label: nextLabel,
+    })
+  }
+
+  async function confirmNewSegment() {
+    if (!newSegmentDraft) return
+    const { p1, p2 } = newSegmentDraft
+    const lengthMm = parseInt(newSegmentDraft.lengthMm, 10)
+    const quantity = Math.max(1, parseInt(newSegmentDraft.quantity, 10) || 1)
     if (isNaN(lengthMm) || lengthMm <= 0) {
       alert('有効な長さ (mm) を入力してください。')
       return
@@ -304,8 +339,9 @@ export function DrawingViewer({
         x2: p2.x,
         y2: p2.y,
         length_mm: lengthMm,
-        quantity: 1,
-        bar_type: 'D10',
+        quantity,
+        bar_type: newSegmentDraft.barType,
+        label: newSegmentDraft.label.trim() || null,
       })
       .select()
       .single<DrawingSegment>()
@@ -313,6 +349,8 @@ export function DrawingViewer({
     if (!error && data) {
       setSegments((prev) => [...prev, data])
       setSelectedSegmentId(data.id)
+      setLastAction({ type: 'create', segment: data })
+      setNewSegmentDraft(null)
     }
   }
 
@@ -323,9 +361,15 @@ export function DrawingViewer({
       .eq('id', id)
 
     if (!error) {
-      setSegments((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, ...updates } : s)),
-      )
+      setSegments((prev) => {
+        const before = prev.find((s) => s.id === id)
+        const next = prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
+        if (before) {
+          const after = next.find((s) => s.id === id)!
+          setLastAction({ type: 'update', before, after })
+        }
+        return next
+      })
     }
   }
 
@@ -336,8 +380,58 @@ export function DrawingViewer({
       .eq('id', id)
 
     if (!error) {
-      setSegments((prev) => prev.filter((s) => s.id !== id))
+      setSegments((prev) => {
+        const deleted = prev.find((s) => s.id === id)
+        if (deleted) setLastAction({ type: 'delete', segment: deleted })
+        return prev.filter((s) => s.id !== id)
+      })
       if (selectedSegmentId === id) setSelectedSegmentId(null)
+    }
+  }
+
+  async function handleUndo() {
+    if (!lastAction) return
+    if (lastAction.type === 'create') {
+      const { segment } = lastAction
+      const { error } = await supabase
+        .from('drawing_segments')
+        .delete()
+        .eq('id', segment.id)
+      if (!error) {
+        setSegments((prev) => prev.filter((s) => s.id !== segment.id))
+        setSelectedSegmentId(null)
+        setLastAction(null)
+      }
+    } else if (lastAction.type === 'delete') {
+      const { segment } = lastAction
+      const { data, error } = await supabase
+        .from('drawing_segments')
+        .insert(segment)
+        .select()
+        .single<DrawingSegment>()
+      if (!error && data) {
+        setSegments((prev) => [...prev, data])
+        setSelectedSegmentId(data.id)
+        setLastAction(null)
+      }
+    } else if (lastAction.type === 'update') {
+      const { before } = lastAction
+      const { error } = await supabase
+        .from('drawing_segments')
+        .update({
+          length_mm: before.length_mm,
+          quantity: before.quantity,
+          bar_type: before.bar_type,
+          label: before.label,
+        })
+        .eq('id', before.id)
+      if (!error) {
+        setSegments((prev) =>
+          prev.map((s) => (s.id === before.id ? before : s)),
+        )
+        setSelectedSegmentId(before.id)
+        setLastAction(null)
+      }
     }
   }
 
@@ -403,7 +497,96 @@ export function DrawingViewer({
         onDelete={deleteSegment}
         barTypes={BAR_TYPES}
         projectId={projectId}
+        canUndo={!!lastAction}
+        onUndo={handleUndo}
       />
+
+      {newSegmentDraft && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg space-y-4">
+            <h2 className="text-base font-semibold">新しい線分の入力</h2>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-muted mb-1">長さ (mm)</label>
+                <input
+                  type="number"
+                  value={newSegmentDraft.lengthMm}
+                  onChange={(e) =>
+                    setNewSegmentDraft((prev) =>
+                      prev ? { ...prev, lengthMm: e.target.value } : prev,
+                    )
+                  }
+                  className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-muted mb-1">数量</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={newSegmentDraft.quantity}
+                  onChange={(e) =>
+                    setNewSegmentDraft((prev) =>
+                      prev ? { ...prev, quantity: e.target.value } : prev,
+                    )
+                  }
+                  className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-muted mb-1">鉄筋種別</label>
+                <select
+                  value={newSegmentDraft.barType}
+                  onChange={(e) =>
+                    setNewSegmentDraft((prev) =>
+                      prev ? { ...prev, barType: e.target.value } : prev,
+                    )
+                  }
+                  className="w-full rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary"
+                >
+                  {BAR_TYPES.map((bt) => (
+                    <option key={bt} value={bt}>
+                      {bt}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-muted mb-1">ラベル</label>
+                <input
+                  type="text"
+                  value={newSegmentDraft.label}
+                  onChange={(e) =>
+                    setNewSegmentDraft((prev) =>
+                      prev ? { ...prev, label: e.target.value } : prev,
+                    )
+                  }
+                  className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setNewSegmentDraft(null)}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:bg-gray-50"
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                onClick={confirmNewSegment}
+                className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-hover"
+              >
+                追加
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

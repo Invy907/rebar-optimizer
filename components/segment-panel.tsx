@@ -12,6 +12,8 @@ export function SegmentPanel({
   onDelete,
   barTypes,
   projectId,
+  canUndo,
+  onUndo,
 }: {
   segments: DrawingSegment[]
   selectedSegmentId: string | null
@@ -20,6 +22,8 @@ export function SegmentPanel({
   onDelete: (id: string) => void
   barTypes: string[]
   projectId: string
+  canUndo?: boolean
+  onUndo?: () => void
 }) {
   const selected = segments.find((s) => s.id === selectedSegmentId)
   const segmentsSortedForLabels = [...segments].sort((a, b) =>
@@ -44,9 +48,21 @@ export function SegmentPanel({
     <div className="w-80 shrink-0 flex flex-col rounded-lg border border-border bg-white overflow-hidden">
       {/* Header */}
       <div className="border-b border-border px-4 py-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">
-          線分一覧 ({segments.length})
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold">
+            線分一覧 ({segments.length})
+          </h3>
+          {onUndo && (
+            <button
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              className="text-[11px] text-muted hover:text-foreground disabled:opacity-40"
+            >
+              元に戻す
+            </button>
+          )}
+        </div>
         {segments.length > 0 && (
           <Link
             href={`/projects/${projectId}/optimize`}
