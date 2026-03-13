@@ -1,37 +1,115 @@
 'use client'
 
+import { useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import type { OptimizationOutput } from '@/lib/optimizer'
 
 export function OptimizationResultView({
   result,
   stockLengthMm,
+  projectId,
   segmentLabelById,
+  segmentDrawingIdById,
+  focusSegmentId,
 }: {
   result: OptimizationOutput
   stockLengthMm: number
+  projectId: string
   segmentLabelById: Record<string, string>
+  segmentDrawingIdById: Record<string, string>
+  focusSegmentId?: string | null
 }) {
+  const router = useRouter()
+
+  const handleExportCsv = useCallback(() => {
+    const escapeCsvField = (value: string): string => {
+      const needsQuote = /[",\n\r]/.test(value)
+      const escaped = value.replace(/"/g, '""')
+      return needsQuote ? `"${escaped}"` : escaped
+    }
+
+    const lines: string[] = []
+    lines.push(
+      [
+        'bar_type',
+        'stock_index',
+        'piece_seq',
+        'segment_label',
+        'segment_id',
+        'length_mm',
+        'stock_used_mm',
+        'stock_waste_mm',
+      ].join(','),
+    )
+    for (const stock of result.stocks) {
+      stock.pieces.forEach((piece) => {
+        const label = segmentLabelById[piece.segmentId] ?? ''
+        const row = [
+          stock.barType,
+          String(stock.stockIndex),
+          String(piece.sequenceNo),
+          label,
+          piece.segmentId,
+          String(piece.lengthMm),
+          String(stock.usedLengthMm),
+          String(stock.wasteMm),
+        ].map(escapeCsvField)
+        lines.push(row.join(','))
+      })
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'rebar_optimization.csv'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }, [result, segmentLabelById])
+
+  const handlePrint = useCallback(() => {
+    window.print()
+  }, [])
   return (
     <div className="space-y-4">
-      {/* サマリカード */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <SummaryCard
-          label="必要本数合計"
-          value={`${result.totalStockCount}本`}
-        />
-        <SummaryCard
-          label="元材長さ"
-          value={`${stockLengthMm.toLocaleString()}mm`}
-        />
-        <SummaryCard
-          label="廃棄長さ合計"
-          value={`${result.totalWasteMm.toLocaleString()}mm`}
-        />
-        <SummaryCard
-          label="全体廃棄率"
-          value={`${(result.wasteRatio * 100).toFixed(1)}%`}
-          highlight={result.wasteRatio > 0.1}
-        />
+      {/* サマリカード + アクション */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 flex-1">
+          <SummaryCard
+            label="必要本数合計"
+            value={`${result.totalStockCount}本`}
+          />
+          <SummaryCard
+            label="元材長さ"
+            value={`${stockLengthMm.toLocaleString()}mm`}
+          />
+          <SummaryCard
+            label="廃棄長さ合計"
+            value={`${result.totalWasteMm.toLocaleString()}mm`}
+          />
+          <SummaryCard
+            label="全体廃棄率"
+            value={`${(result.wasteRatio * 100).toFixed(1)}%`}
+            highlight={result.wasteRatio > 0.1}
+          />
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={handleExportCsv}
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:bg-gray-50"
+          >
+            CSV出力
+          </button>
+          <button
+            type="button"
+            onClick={handlePrint}
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:bg-gray-50"
+          >
+            印刷
+          </button>
+        </div>
       </div>
 
       {/* 鉄筋種別ごとのサマリ */}
@@ -83,6 +161,7 @@ export function OptimizationResultView({
                   {stock.pieces.map((piece, pIdx) => {
                     const width = (piece.lengthMm / stockLengthMm) * 100
                     const label = segmentLabelById[piece.segmentId] ?? '-'
+                    const isFocused = focusSegmentId === piece.segmentId
                     const colors = [
                       'bg-blue-500',
                       'bg-emerald-500',
@@ -94,7 +173,9 @@ export function OptimizationResultView({
                     return (
                       <div
                         key={pIdx}
-                        className={`${colors[pIdx % colors.length]} flex items-center justify-center text-white text-xs font-mono border-r border-white/30`}
+                        className={`${colors[pIdx % colors.length]} flex items-center justify-center text-white text-xs font-mono border-r border-white/30 ${
+                          isFocused ? 'ring-2 ring-offset-1 ring-yellow-300' : ''
+                        }`}
                         style={{ width: `${width}%` }}
                         title={`${label}: ${piece.lengthMm}mm`}
                       >
@@ -119,11 +200,21 @@ export function OptimizationResultView({
                 <div className="mt-1.5 flex flex-wrap gap-1">
                   {stock.pieces.map((piece, pIdx) => {
                     const label = segmentLabelById[piece.segmentId] ?? '-'
+                    const isFocused = focusSegmentId === piece.segmentId
+                    const drawingId = segmentDrawingIdById[piece.segmentId]
                     return (
                       <span
                         key={pIdx}
-                        className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono"
+                        className={`rounded px-1.5 py-0.5 text-xs font-mono cursor-pointer ${
+                          isFocused ? 'bg-primary text-white' : 'bg-gray-100'
+                        }`}
                         title={label}
+                        onClick={() => {
+                          if (!drawingId) return
+                          router.push(
+                            `/projects/${projectId}/drawings/${drawingId}?segmentId=${piece.segmentId}`,
+                          )
+                        }}
                       >
                         {label} {piece.lengthMm}mm
                       </span>

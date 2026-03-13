@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import type { DrawingSegment } from '@/lib/types/database'
+import { getSegmentLabelMapWithMeta } from '@/lib/segment-labels'
 import Link from 'next/link'
 
 export function SegmentPanel({
@@ -26,23 +27,7 @@ export function SegmentPanel({
   onUndo?: () => void
 }) {
   const selected = segments.find((s) => s.id === selectedSegmentId)
-  const segmentsSortedForLabels = [...segments].sort((a, b) =>
-    (a.created_at ?? '').localeCompare(b.created_at ?? ''),
-  )
-  const segmentLabelById: Record<string, { label: string; isAuto: boolean }> = {}
-  let autoNo = 1
-  for (const seg of segmentsSortedForLabels) {
-    const existing = seg.label?.trim()
-    if (existing) {
-      segmentLabelById[seg.id] = { label: existing, isAuto: false }
-    } else {
-      segmentLabelById[seg.id] = {
-        label: `S${String(autoNo).padStart(2, '0')}`,
-        isAuto: true,
-      }
-      autoNo++
-    }
-  }
+  const segmentLabelById = getSegmentLabelMapWithMeta(segments)
 
   return (
     <div className="w-80 shrink-0 flex flex-col rounded-lg border border-border bg-white overflow-hidden">
@@ -65,7 +50,11 @@ export function SegmentPanel({
         </div>
         {segments.length > 0 && (
           <Link
-            href={`/projects/${projectId}/optimize`}
+            href={
+              selectedSegmentId
+                ? `/projects/${projectId}/optimize?segmentId=${selectedSegmentId}`
+                : `/projects/${projectId}/optimize`
+            }
             className="rounded bg-primary px-3 py-1 text-xs font-medium text-white hover:bg-primary-hover transition-colors"
           >
             切断計算

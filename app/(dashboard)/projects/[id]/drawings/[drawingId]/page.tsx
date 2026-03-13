@@ -6,10 +6,13 @@ import { DrawingViewer } from '@/components/drawing-viewer'
 
 export default async function DrawingDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string; drawingId: string }>
+  searchParams: Promise<{ segmentId?: string }>
 }) {
   const { id: projectId, drawingId } = await params
+  const { segmentId } = await searchParams
   const supabase = await createClient()
 
   const { data: drawing } = await supabase
@@ -50,6 +53,7 @@ export default async function DrawingDetailPage({
         imageUrl={signedUrlData?.signedUrl ?? ''}
         fileType={drawing.file_type}
         initialSegments={segments ?? []}
+        initialSelectedSegmentId={segmentId}
       />
     </div>
   )

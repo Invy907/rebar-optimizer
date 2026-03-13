@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import type { DrawingSegment, OptimizationRun } from '@/lib/types/database'
+import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput, type AlgorithmType } from '@/lib/optimizer'
 import { OptimizationResultView } from '@/components/optimization-result-view'
 
@@ -11,30 +12,25 @@ export function OptimizeClient({
   projectId,
   segments,
   pastRuns,
+  initialFocusSegmentId,
 }: {
   projectId: string
   segments: DrawingSegment[]
   pastRuns: OptimizationRun[]
+  initialFocusSegmentId?: string | null
 }) {
-  const segmentsSortedForLabels = [...segments].sort((a, b) =>
-    (a.created_at ?? '').localeCompare(b.created_at ?? ''),
+  const segmentLabelById = getSegmentLabelMap(segments)
+  const segmentDrawingIdById = Object.fromEntries(
+    segments.map((s) => [s.id, s.drawing_id]),
   )
-  const segmentLabelById: Record<string, string> = {}
-  let autoNo = 1
-  for (const seg of segmentsSortedForLabels) {
-    const existing = seg.label?.trim()
-    if (existing) {
-      segmentLabelById[seg.id] = existing
-    } else {
-      segmentLabelById[seg.id] = `S${String(autoNo).padStart(2, '0')}`
-      autoNo++
-    }
-  }
 
   const [stockLength, setStockLength] = useState(6000)
   const [algorithm, setAlgorithm] = useState<AlgorithmType>('best-fit')
   const [cuttingLossMm, setCuttingLossMm] = useState(0)
   const [result, setResult] = useState<OptimizationOutput | null>(null)
+  const [focusSegmentId, setFocusSegmentId] = useState<string | null>(
+    initialFocusSegmentId ?? null,
+  )
   const [calculating, setCalculating] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -93,28 +89,47 @@ export function OptimizeClient({
       return
     }
 
-    for (const stock of result.stocks) {
-      const { data: resultRow } = await supabase
-        .from('optimization_results')
-        .insert({
-          run_id: run.id,
-          bar_type: stock.barType,
-          stock_index: stock.stockIndex,
-          used_length_mm: stock.usedLengthMm,
-          waste_mm: stock.wasteMm,
-        })
-        .select()
-        .single()
+    // 一括で optimization_results を挿入
+    const resultsPayload = result.stocks.map((stock) => ({
+      run_id: run.id,
+      bar_type: stock.barType,
+      stock_index: stock.stockIndex,
+      used_length_mm: stock.usedLengthMm,
+      waste_mm: stock.wasteMm,
+    }))
 
-      if (resultRow) {
-        const piecesToInsert = stock.pieces.map((p) => ({
-          result_id: resultRow.id,
-          source_segment_id: p.segmentId,
-          piece_length_mm: p.lengthMm,
-          sequence_no: p.sequenceNo,
-        }))
+    const { data: insertedResults, error: resultsError } = await supabase
+      .from('optimization_results')
+      .insert(resultsPayload)
+      .select()
 
-        await supabase.from('optimization_result_pieces').insert(piecesToInsert)
+    if (resultsError || !insertedResults) {
+      alert('結果行の保存に失敗しました: ' + resultsError?.message)
+      setSaving(false)
+      return
+    }
+
+    // 挿入された結果IDに紐づくピースを一括で挿入
+    const piecesPayload = result.stocks.flatMap((stock, index) => {
+      const resultRow = insertedResults[index]
+      if (!resultRow) return []
+      return stock.pieces.map((p) => ({
+        result_id: resultRow.id,
+        source_segment_id: p.segmentId,
+        piece_length_mm: p.lengthMm,
+        sequence_no: p.sequenceNo,
+      }))
+    })
+
+    if (piecesPayload.length > 0) {
+      const { error: piecesError } = await supabase
+        .from('optimization_result_pieces')
+        .insert(piecesPayload)
+
+      if (piecesError) {
+        alert('ピース情報の保存に失敗しました: ' + piecesError.message)
+        setSaving(false)
+        return
       }
     }
 
@@ -243,7 +258,10 @@ export function OptimizeClient({
           <OptimizationResultView
             result={result}
             stockLengthMm={stockLength}
+            projectId={projectId}
             segmentLabelById={segmentLabelById}
+            segmentDrawingIdById={segmentDrawingIdById}
+            focusSegmentId={focusSegmentId ?? undefined}
           />
         </section>
       )}

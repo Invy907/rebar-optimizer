@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import type { DrawingSegment } from '@/lib/types/database'
+import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { SegmentPanel } from '@/components/segment-panel'
 
 interface Point {
@@ -25,18 +26,22 @@ export function DrawingViewer({
   imageUrl,
   fileType,
   initialSegments,
+  initialSelectedSegmentId,
 }: {
   drawingId: string
   projectId: string
   imageUrl: string
   fileType: string
   initialSegments: DrawingSegment[]
+  initialSelectedSegmentId?: string
 }) {
   const [segments, setSegments] = useState<DrawingSegment[]>(initialSegments)
   const [drawing, setDrawing] = useState(false)
   const [startPoint, setStartPoint] = useState<Point | null>(null)
   const [currentPoint, setCurrentPoint] = useState<Point | null>(null)
-  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null)
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(
+    initialSelectedSegmentId ?? null,
+  )
   const [lastAction, setLastAction] = useState<LastAction>(null)
   const [newSegmentDraft, setNewSegmentDraft] = useState<{
     p1: Point
@@ -62,16 +67,7 @@ export function DrawingViewer({
   const segmentsSortedForLabels = [...segments].sort((a, b) =>
     (a.created_at ?? '').localeCompare(b.created_at ?? ''),
   )
-  const labelById: Record<string, string> = {}
-  let autoNo = 1
-  for (const seg of segmentsSortedForLabels) {
-    const existing = seg.label?.trim()
-    if (existing) labelById[seg.id] = existing
-    else {
-      labelById[seg.id] = `S${String(autoNo).padStart(2, '0')}`
-      autoNo++
-    }
-  }
+  const labelById = getSegmentLabelMap(segments)
 
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current

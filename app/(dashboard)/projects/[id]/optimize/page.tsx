@@ -6,10 +6,13 @@ import { OptimizeClient } from '@/components/optimize-client'
 
 export default async function OptimizePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ segmentId?: string }>
 }) {
   const { id: projectId } = await params
+  const { segmentId } = await searchParams
   const supabase = await createClient()
 
   const { data: project } = await supabase
@@ -59,6 +62,7 @@ export default async function OptimizePage({
         projectId={projectId}
         segments={segments ?? []}
         pastRuns={pastRuns ?? []}
+        initialFocusSegmentId={segmentId}
       />
     </div>
   )
