@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "鉄筋切断最適化",
+  title: "鉄筋資材算定システム | サプロン建材工業株式会社",
   description: "6mの鉄筋切断計画を最適化する業務用Webアプリケーション",
 };
 
