@@ -103,7 +103,7 @@ export function DrawingUpload({ projectId }: { projectId: string }) {
     canvas.width = viewport.width
     canvas.height = viewport.height
 
-    await page.render({ canvasContext: context, viewport }).promise
+    await page.render({ canvasContext: context, viewport, canvas }).promise
 
     const blob: Blob | null = await new Promise((resolve) =>
       canvas.toBlob((b) => resolve(b), 'image/png'),
