@@ -11,6 +11,7 @@ export function SegmentPanel({
   onSelect,
   onUpdate,
   onDelete,
+  onSplit,
   barTypes,
   projectId,
   canUndo,
@@ -21,6 +22,7 @@ export function SegmentPanel({
   onSelect: (id: string | null) => void
   onUpdate: (id: string, updates: Partial<DrawingSegment>) => void
   onDelete: (id: string) => void
+  onSplit?: (id: string) => void
   barTypes: string[]
   projectId: string
   canUndo?: boolean
@@ -77,6 +79,15 @@ export function SegmentPanel({
               {selectedIsSpacing ? '間隔線の編集' : '線分の編集'}
             </span>
             <div className="flex items-center gap-2">
+              {onSplit && (
+                <button
+                  type="button"
+                  onClick={() => onSplit(selected.id)}
+                  className="text-xs text-primary hover:underline"
+                >
+                  分割
+                </button>
+              )}
               {selectedIsSpacing && (
                 <button
                   type="button"

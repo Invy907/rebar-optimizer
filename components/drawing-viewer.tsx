@@ -18,6 +18,11 @@ type LastAction =
   | { type: 'create'; segment: DrawingSegment }
   | { type: 'delete'; segment: DrawingSegment }
   | { type: 'update'; before: DrawingSegment; after: DrawingSegment }
+  | {
+      type: 'split'
+      before: DrawingSegment
+      created: [DrawingSegment, DrawingSegment]
+    }
   | null
 
 export function DrawingViewer({
@@ -43,6 +48,9 @@ export function DrawingViewer({
     initialSelectedSegmentId ?? null,
   )
   const [lastAction, setLastAction] = useState<LastAction>(null)
+  const [splitArmedSegmentId, setSplitArmedSegmentId] = useState<string | null>(
+    null,
+  )
   const [newSegmentDraft, setNewSegmentDraft] = useState<{
     kind: 'rebar' | 'spacing'
     p1: Point
@@ -128,6 +136,23 @@ export function DrawingViewer({
   useEffect(() => {
     drawCanvas()
   }, [drawCanvas])
+
+  useEffect(() => {
+    if (!splitArmedSegmentId) return
+    if (selectedSegmentId !== splitArmedSegmentId) {
+      setSplitArmedSegmentId(null)
+    }
+  }, [selectedSegmentId, splitArmedSegmentId])
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setSplitArmedSegmentId(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   useEffect(() => {
     if (fileType === 'pdf') {
@@ -240,6 +265,22 @@ export function DrawingViewer({
     if (tool === 'select' && e.button === 0) {
       const pt = screenToCanvas(e)
       const clickRadius = 10 / scale
+      if (splitArmedSegmentId) {
+        const target = segments.find((s) => s.id === splitArmedSegmentId)
+        if (!target) {
+          setSplitArmedSegmentId(null)
+          return
+        }
+        const distance = distToSegment(
+          pt,
+          { x: target.x1, y: target.y1 },
+          { x: target.x2, y: target.y2 },
+        )
+        if (distance < clickRadius) {
+          void splitSegmentAtPoint(target, pt)
+          return
+        }
+      }
       const found = segments.find((seg) => {
         return distToSegment(pt, { x: seg.x1, y: seg.y1 }, { x: seg.x2, y: seg.y2 }) < clickRadius
       })
@@ -407,6 +448,94 @@ export function DrawingViewer({
     }
   }
 
+  async function splitSegmentAtPoint(segment: DrawingSegment, clickPoint: Point) {
+    const a = { x: segment.x1, y: segment.y1 }
+    const b = { x: segment.x2, y: segment.y2 }
+    const { t, projectedPoint } = projectPointToSegment(clickPoint, a, b)
+
+    const minDistanceFromEndpoint = 10 / scale
+    const distanceToA = Math.hypot(projectedPoint.x - a.x, projectedPoint.y - a.y)
+    const distanceToB = Math.hypot(projectedPoint.x - b.x, projectedPoint.y - b.y)
+    if (distanceToA < minDistanceFromEndpoint || distanceToB < minDistanceFromEndpoint) {
+      alert('端点に近すぎるため分割できません。もう少し中央をクリックしてください。')
+      return
+    }
+
+    const trimmedLabel = segment.label?.trim() ?? ''
+    const labelA = trimmedLabel ? `${trimmedLabel}-1` : null
+    const labelB = trimmedLabel ? `${trimmedLabel}-2` : null
+
+    const lengthA = Math.max(1, Math.round(segment.length_mm * t))
+    const lengthB = Math.max(1, segment.length_mm - lengthA)
+
+    const insertRows = [
+      {
+        drawing_id: drawingId,
+        x1: segment.x1,
+        y1: segment.y1,
+        x2: projectedPoint.x,
+        y2: projectedPoint.y,
+        length_mm: lengthA,
+        quantity: segment.quantity,
+        bar_type: segment.bar_type,
+        label: labelA,
+      },
+      {
+        drawing_id: drawingId,
+        x1: projectedPoint.x,
+        y1: projectedPoint.y,
+        x2: segment.x2,
+        y2: segment.y2,
+        length_mm: lengthB,
+        quantity: segment.quantity,
+        bar_type: segment.bar_type,
+        label: labelB,
+      },
+    ] as const
+
+    const { data: createdSegments, error: insertError } = await supabase
+      .from('drawing_segments')
+      .insert(insertRows)
+      .select()
+      .returns<DrawingSegment[]>()
+
+    if (insertError || !createdSegments || createdSegments.length !== 2) {
+      alert('分割に失敗しました。')
+      return
+    }
+
+    const { error: deleteError } = await supabase
+      .from('drawing_segments')
+      .delete()
+      .eq('id', segment.id)
+
+    if (deleteError) {
+      await supabase
+        .from('drawing_segments')
+        .delete()
+        .in(
+          'id',
+          createdSegments.map((s) => s.id),
+        )
+      alert('分割に失敗しました。')
+      return
+    }
+
+    const [createdA, createdB] = createdSegments
+    setSegments((prev) => [
+      ...prev.filter((s) => s.id !== segment.id),
+      createdA,
+      createdB,
+    ])
+    setSelectedSegmentId(createdA.id)
+    setSplitArmedSegmentId(null)
+    setLastAction({
+      type: 'split',
+      before: segment,
+      created: [createdA, createdB],
+    })
+  }
+
   async function handleUndo() {
     if (!lastAction) return
     if (lastAction.type === 'create') {
@@ -450,6 +579,27 @@ export function DrawingViewer({
         setSelectedSegmentId(before.id)
         setLastAction(null)
       }
+    } else if (lastAction.type === 'split') {
+      const { before, created } = lastAction
+      const createdIds = created.map((s) => s.id)
+      const { error: deleteNewError } = await supabase
+        .from('drawing_segments')
+        .delete()
+        .in('id', createdIds)
+      if (deleteNewError) return
+      const { data: restored, error: restoreError } = await supabase
+        .from('drawing_segments')
+        .insert(before)
+        .select()
+        .single<DrawingSegment>()
+      if (!restoreError && restored) {
+        setSegments((prev) => [
+          ...prev.filter((s) => !createdIds.includes(s.id)),
+          restored,
+        ])
+        setSelectedSegmentId(restored.id)
+        setLastAction(null)
+      }
     }
   }
 
@@ -491,7 +641,9 @@ export function DrawingViewer({
             間隔線
           </button>
           <span className="text-xs text-muted ml-2">
-            Alt+ドラッグ: 移動 / ホイール: ズーム / Shift+ドラッグ: 水平・垂直にスナップ
+            {splitArmedSegmentId
+              ? '分割: 図面上の線をクリックして分割点を選択（Escでキャンセル）'
+              : 'Alt+ドラッグ: 移動 / ホイール: ズーム / Shift+ドラッグ: 水平・垂直にスナップ'}
           </span>
         </div>
         <div
@@ -523,6 +675,11 @@ export function DrawingViewer({
         onSelect={setSelectedSegmentId}
         onUpdate={updateSegment}
         onDelete={deleteSegment}
+        onSplit={(id) => {
+          setTool('select')
+          setSelectedSegmentId(id)
+          setSplitArmedSegmentId(id)
+        }}
         barTypes={BAR_TYPES}
         projectId={projectId}
         canUndo={!!lastAction}
@@ -633,4 +790,21 @@ function distToSegment(p: Point, a: Point, b: Point): number {
   const projX = a.x + t * dx
   const projY = a.y + t * dy
   return Math.sqrt((p.x - projX) ** 2 + (p.y - projY) ** 2)
+}
+
+function projectPointToSegment(
+  p: Point,
+  a: Point,
+  b: Point,
+): { t: number; projectedPoint: Point } {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const lenSq = dx * dx + dy * dy
+  if (lenSq === 0) return { t: 0, projectedPoint: { ...a } }
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq
+  t = Math.max(0, Math.min(1, t))
+  return {
+    t,
+    projectedPoint: { x: a.x + t * dx, y: a.y + t * dy },
+  }
 }
