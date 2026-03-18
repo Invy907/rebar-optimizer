@@ -26,8 +26,15 @@ export function SegmentPanel({
   canUndo?: boolean
   onUndo?: () => void
 }) {
-  const selected = segments.find((s) => s.id === selectedSegmentId)
-  const segmentLabelById = getSegmentLabelMapWithMeta(segments)
+  const rebarSegments = segments.filter(
+    (s) => !(s.bar_type === 'SPACING' && s.quantity === 0),
+  )
+  const spacingSegments = segments.filter(
+    (s) => s.bar_type === 'SPACING' && s.quantity === 0,
+  )
+  const selected = segments.find((s) => s.id === selectedSegmentId) ?? null
+  const selectedIsSpacing = selected?.bar_type === 'SPACING'
+  const segmentLabelById = getSegmentLabelMapWithMeta(rebarSegments)
 
   return (
     <div className="w-80 shrink-0 flex flex-col rounded-lg border border-border bg-white overflow-hidden">
@@ -35,7 +42,7 @@ export function SegmentPanel({
       <div className="border-b border-border px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold">
-            線分一覧 ({segments.length})
+            線分一覧 ({rebarSegments.length})
           </h3>
           {onUndo && (
             <button
@@ -48,7 +55,7 @@ export function SegmentPanel({
             </button>
           )}
         </div>
-        {segments.length > 0 && (
+        {rebarSegments.length > 0 && (
           <Link
             href={
               selectedSegmentId
@@ -66,13 +73,31 @@ export function SegmentPanel({
       {selected && (
         <div className="border-b border-border p-4 space-y-3 bg-blue-50/50">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-primary">線分の編集</span>
-            <button
-              onClick={() => onDelete(selected.id)}
-              className="text-xs text-danger hover:underline"
-            >
-              削除
-            </button>
+            <span className="text-xs font-medium text-primary">
+              {selectedIsSpacing ? '間隔線の編集' : '線分の編集'}
+            </span>
+            <div className="flex items-center gap-2">
+              {selectedIsSpacing && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdate(selected.id, {
+                      bar_type: barTypes[0] ?? 'D10',
+                      quantity: 1,
+                    })
+                  }
+                  className="text-[11px] text-emerald-700 hover:underline"
+                >
+                  鉄筋線に変換
+                </button>
+              )}
+              <button
+                onClick={() => onDelete(selected.id)}
+                className="text-xs text-danger hover:underline"
+              >
+                削除
+              </button>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -81,38 +106,46 @@ export function SegmentPanel({
                 type="number"
                 value={selected.length_mm}
                 onChange={(e) =>
-                  onUpdate(selected.id, { length_mm: parseInt(e.target.value) || 0 })
+                  onUpdate(selected.id, {
+                    length_mm: parseInt(e.target.value) || 0,
+                  })
                 }
                 className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
               />
             </div>
+            {!selectedIsSpacing && (
+              <div>
+                <label className="block text-xs text-muted mb-0.5">数量</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={selected.quantity}
+                  onChange={(e) =>
+                    onUpdate(selected.id, {
+                      quantity: parseInt(e.target.value) || 1,
+                    })
+                  }
+                  className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
+                />
+              </div>
+            )}
+          </div>
+          {!selectedIsSpacing && (
             <div>
-              <label className="block text-xs text-muted mb-0.5">数量</label>
-              <input
-                type="number"
-                min={1}
-                value={selected.quantity}
-                onChange={(e) =>
-                  onUpdate(selected.id, { quantity: parseInt(e.target.value) || 1 })
-                }
-                className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
-              />
+              <label className="block text-xs text-muted mb-0.5">鉄筋種別</label>
+              <select
+                value={selected.bar_type}
+                onChange={(e) => onUpdate(selected.id, { bar_type: e.target.value })}
+                className="w-full rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary"
+              >
+                {barTypes.map((bt) => (
+                  <option key={bt} value={bt}>
+                    {bt}
+                  </option>
+                ))}
+              </select>
             </div>
-          </div>
-          <div>
-            <label className="block text-xs text-muted mb-0.5">鉄筋種別</label>
-            <select
-              value={selected.bar_type}
-              onChange={(e) => onUpdate(selected.id, { bar_type: e.target.value })}
-              className="w-full rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary"
-            >
-              {barTypes.map((bt) => (
-                <option key={bt} value={bt}>
-                  {bt}
-                </option>
-              ))}
-            </select>
-          </div>
+          )}
           <div>
             <label className="block text-xs text-muted mb-0.5">ラベル / メモ</label>
             <input
@@ -128,16 +161,16 @@ export function SegmentPanel({
         </div>
       )}
 
-      {/* Segment list */}
+      {/* Segment list (rebar only) */}
       <div className="flex-1 overflow-y-auto">
-        {segments.length === 0 ? (
+        {rebarSegments.length === 0 ? (
           <div className="p-4 text-center text-sm text-muted">
             「線を描く」ツールで<br />
             図面上に線分を追加してください。
           </div>
         ) : (
           <ul className="divide-y divide-border">
-            {segments.map((seg) => (
+            {rebarSegments.map((seg) => (
               <li
                 key={seg.id}
                 onClick={() => onSelect(seg.id)}
@@ -172,17 +205,50 @@ export function SegmentPanel({
         )}
       </div>
 
+      {/* Spacing marks list */}
+      {spacingSegments.length > 0 && (
+        <div className="border-t border-border px-4 py-3 text-xs">
+          <div className="mb-2 font-semibold text-muted">間隔線</div>
+          <ul className="space-y-1 max-h-32 overflow-y-auto">
+            {spacingSegments.map((seg) => (
+              <li
+                key={seg.id}
+                className={`flex items-center justify-between text-[11px] cursor-pointer ${
+                  seg.id === selectedSegmentId
+                    ? 'text-emerald-700 bg-emerald-50 rounded px-2 py-1'
+                    : 'text-muted'
+                }`}
+                onClick={() => onSelect(seg.id)}
+              >
+                <span className="truncate">
+                  {seg.label ?? '間隔'} {seg.length_mm}mm
+                </span>
+                <button
+                  onClick={() => onDelete(seg.id)}
+                  className="ml-2 text-[11px] text-danger hover:underline"
+                >
+                  削除
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )
+      }
+
       {/* Summary */}
-      {segments.length > 0 && (
+      {rebarSegments.length > 0 && (
         <div className="border-t border-border px-4 py-3 text-xs text-muted space-y-1">
           <div className="flex justify-between">
             <span>線分の本数</span>
-            <span className="font-medium text-foreground">{segments.length}本</span>
+            <span className="font-medium text-foreground">
+              {rebarSegments.length}本
+            </span>
           </div>
           <div className="flex justify-between">
             <span>部材本数の合計（数量の合計）</span>
             <span className="font-medium text-foreground">
-              {segments.reduce((sum, s) => sum + s.quantity, 0)}本
+              {rebarSegments.reduce((sum, s) => sum + s.quantity, 0)}本
             </span>
           </div>
         </div>

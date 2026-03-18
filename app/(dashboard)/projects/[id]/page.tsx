@@ -1,10 +1,11 @@
 import { createClient } from '@/lib/supabase/server'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import type { Project, Drawing } from '@/lib/types/database'
 import { DrawingUpload } from '@/components/drawing-upload'
 import { DrawingList } from '@/components/drawing-list'
 import { DeleteProjectButton } from '@/components/delete-project-button'
+import { EditProjectName } from '@/components/edit-project-name'
 
 export default async function ProjectDetailPage({
   params,
@@ -29,6 +30,13 @@ export default async function ProjectDetailPage({
     .order('created_at', { ascending: false })
     .returns<Drawing[]>()
 
+  // If this project already has a drawing, redirect directly to its drawing page.
+  // Only the most recent drawing is used, and projects are limited to a single drawing
+  // via checks in the upload component.
+  if (drawings && drawings.length > 0) {
+    redirect(`/projects/${id}/drawings/${drawings[0].id}`)
+  }
+
   return (
     <div>
       <div className="mb-6">
@@ -40,11 +48,13 @@ export default async function ProjectDetailPage({
         </Link>
       </div>
 
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-bold">{project.name}</h1>
+      <div className="flex items-start justify-between mb-6 gap-4">
+        <div className="min-w-0">
+          <EditProjectName projectId={project.id} initialName={project.name} />
           {project.description && (
-            <p className="mt-1 text-sm text-muted">{project.description}</p>
+            <p className="mt-1 text-sm text-muted break-words">
+              {project.description}
+            </p>
           )}
         </div>
         <DeleteProjectButton projectId={project.id} />

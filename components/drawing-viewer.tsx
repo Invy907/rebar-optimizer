@@ -44,6 +44,7 @@ export function DrawingViewer({
   )
   const [lastAction, setLastAction] = useState<LastAction>(null)
   const [newSegmentDraft, setNewSegmentDraft] = useState<{
+    kind: 'rebar' | 'spacing'
     p1: Point
     p2: Point
     lengthMm: string
@@ -51,7 +52,7 @@ export function DrawingViewer({
     quantity: string
     label: string
   } | null>(null)
-  const [tool, setTool] = useState<'select' | 'draw'>('select')
+  const [tool, setTool] = useState<'select' | 'draw' | 'spacing'>('select')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -85,19 +86,29 @@ export function DrawingViewer({
 
     segments.forEach((seg) => {
       const isSelected = seg.id === selectedSegmentId
+      const isSpacing = seg.bar_type === 'SPACING' && seg.quantity === 0
       ctx.beginPath()
       ctx.moveTo(seg.x1, seg.y1)
       ctx.lineTo(seg.x2, seg.y2)
-      ctx.strokeStyle = isSelected ? '#2563eb' : '#ef4444'
+      ctx.strokeStyle = isSpacing ? (isSelected ? '#0f766e' : '#22c55e') : isSelected ? '#2563eb' : '#ef4444'
       ctx.lineWidth = isSelected ? 3 / scale : 2 / scale
+      if (isSpacing) {
+        ctx.setLineDash([4 / scale, 4 / scale])
+      }
       ctx.stroke()
+      if (isSpacing) {
+        ctx.setLineDash([])
+      }
 
       const midX = (seg.x1 + seg.x2) / 2
       const midY = (seg.y1 + seg.y2) / 2
-      ctx.fillStyle = isSelected ? '#2563eb' : '#ef4444'
+      ctx.fillStyle = isSpacing ? (isSelected ? '#0f766e' : '#16a34a') : isSelected ? '#2563eb' : '#ef4444'
       ctx.font = `${12 / scale}px sans-serif`
-      const label = labelById[seg.id] ?? '-'
-      ctx.fillText(`${label} ${seg.length_mm}mm ${seg.bar_type}`, midX, midY - 6 / scale)
+      const label = isSpacing ? (seg.label ?? 'SP') : labelById[seg.id] ?? '-'
+      const text = isSpacing
+        ? `${label} ${seg.length_mm}mm`
+        : `${label} ${seg.length_mm}mm ${seg.bar_type}`
+      ctx.fillText(text, midX, midY - 6 / scale)
     })
 
     if (drawing && startPoint && currentPoint) {
@@ -219,7 +230,7 @@ export function DrawingViewer({
       return
     }
 
-    if (tool === 'draw' && e.button === 0) {
+    if ((tool === 'draw' || tool === 'spacing') && e.button === 0) {
       const pt = screenToCanvas(e)
       setDrawing(true)
       setStartPoint(pt)
@@ -270,7 +281,7 @@ export function DrawingViewer({
       const pixelLen = Math.sqrt(dx * dx + dy * dy)
 
       if (pixelLen > 5) {
-        openNewSegmentForm(startPoint, currentPoint)
+        openNewSegmentForm(tool === 'spacing' ? 'spacing' : 'rebar', startPoint, currentPoint)
       }
     }
     setDrawing(false)
@@ -297,7 +308,7 @@ export function DrawingViewer({
     })
   }
 
-  function openNewSegmentForm(p1: Point, p2: Point) {
+  function openNewSegmentForm(kind: 'rebar' | 'spacing', p1: Point, p2: Point) {
     const last = segmentsSortedForLabels[segmentsSortedForLabels.length - 1]
     const nextLabel =
       segmentsSortedForLabels.length === 0
@@ -306,13 +317,21 @@ export function DrawingViewer({
           ? `S${String(Number(RegExp.$1) + 1).padStart(2, '0')}`
           : `S${String(segmentsSortedForLabels.length + 1).padStart(2, '0')}`
 
+    // デフォルトの鉄筋種別は、直前の線分が通常の鉄筋ならそれを引き継ぎ、
+    // そうでなければ D10 にする。間隔線の場合は常に 'SPACING' を内部的に使う。
+    const defaultBarTypeForRebar =
+      last && BAR_TYPES.includes(last.bar_type as (typeof BAR_TYPES)[number])
+        ? last.bar_type
+        : 'D10'
+
     setNewSegmentDraft({
+      kind,
       p1,
       p2,
       lengthMm: '',
-      barType: last?.bar_type ?? 'D10',
-      quantity: '1',
-      label: nextLabel,
+      barType: kind === 'spacing' ? 'SPACING' : defaultBarTypeForRebar,
+      quantity: kind === 'spacing' ? '0' : '1',
+      label: kind === 'spacing' ? '間隔' : nextLabel,
     })
   }
 
@@ -320,7 +339,10 @@ export function DrawingViewer({
     if (!newSegmentDraft) return
     const { p1, p2 } = newSegmentDraft
     const lengthMm = parseInt(newSegmentDraft.lengthMm, 10)
-    const quantity = Math.max(1, parseInt(newSegmentDraft.quantity, 10) || 1)
+    const isSpacing = newSegmentDraft.kind === 'spacing'
+    const quantity = isSpacing
+      ? 0
+      : Math.max(1, parseInt(newSegmentDraft.quantity, 10) || 1)
     if (isNaN(lengthMm) || lengthMm <= 0) {
       alert('有効な長さ (mm) を入力してください。')
       return
@@ -336,7 +358,7 @@ export function DrawingViewer({
         y2: p2.y,
         length_mm: lengthMm,
         quantity,
-        bar_type: newSegmentDraft.barType,
+        bar_type: isSpacing ? 'SPACING' : newSegmentDraft.barType,
         label: newSegmentDraft.label.trim() || null,
       })
       .select()
@@ -458,6 +480,16 @@ export function DrawingViewer({
           >
             線を描く
           </button>
+          <button
+            onClick={() => setTool('spacing')}
+            className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+              tool === 'spacing'
+                ? 'bg-emerald-600 text-white'
+                : 'bg-gray-100 text-foreground hover:bg-gray-200'
+            }`}
+          >
+            間隔線
+          </button>
           <span className="text-xs text-muted ml-2">
             Alt+ドラッグ: 移動 / ホイール: ズーム / Shift+ドラッグ: 水平・垂直にスナップ
           </span>
@@ -516,40 +548,44 @@ export function DrawingViewer({
                   autoFocus
                 />
               </div>
-              <div>
-                <label className="block text-xs text-muted mb-1">数量</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={newSegmentDraft.quantity}
-                  onChange={(e) =>
-                    setNewSegmentDraft((prev) =>
-                      prev ? { ...prev, quantity: e.target.value } : prev,
-                    )
-                  }
-                  className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
-                />
-              </div>
+              {newSegmentDraft.kind === 'rebar' && (
+                <div>
+                  <label className="block text-xs text-muted mb-1">数量</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={newSegmentDraft.quantity}
+                    onChange={(e) =>
+                      setNewSegmentDraft((prev) =>
+                        prev ? { ...prev, quantity: e.target.value } : prev,
+                      )
+                    }
+                    className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
+                  />
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-muted mb-1">鉄筋種別</label>
-                <select
-                  value={newSegmentDraft.barType}
-                  onChange={(e) =>
-                    setNewSegmentDraft((prev) =>
-                      prev ? { ...prev, barType: e.target.value } : prev,
-                    )
-                  }
-                  className="w-full rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary"
-                >
-                  {BAR_TYPES.map((bt) => (
-                    <option key={bt} value={bt}>
-                      {bt}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {newSegmentDraft.kind === 'rebar' && (
+                <div>
+                  <label className="block text-xs text-muted mb-1">鉄筋種別</label>
+                  <select
+                    value={newSegmentDraft.barType}
+                    onChange={(e) =>
+                      setNewSegmentDraft((prev) =>
+                        prev ? { ...prev, barType: e.target.value } : prev,
+                      )
+                    }
+                    className="w-full rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary"
+                  >
+                    {BAR_TYPES.map((bt) => (
+                      <option key={bt} value={bt}>
+                        {bt}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="block text-xs text-muted mb-1">ラベル</label>
                 <input

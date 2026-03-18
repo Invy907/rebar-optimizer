@@ -15,6 +15,22 @@ export function DrawingUpload({ projectId }: { projectId: string }) {
   const supabase = createClient()
 
   async function uploadFile(file: File) {
+    // Enforce a single drawing per project
+    const { count, error: countError } = await supabase
+      .from('drawings')
+      .select('*', { count: 'exact', head: true })
+      .eq('project_id', projectId)
+
+    if (countError) {
+      alert('図面の状態取得に失敗しました: ' + countError.message)
+      return
+    }
+
+    if ((count ?? 0) > 0) {
+      alert('このプロジェクトにはすでに図面が登録されています。')
+      return
+    }
+
     if (!ACCEPTED_TYPES.includes(file.type)) {
       alert('PDF, PNG, JPG ファイルのみアップロードできます。')
       return
@@ -50,10 +66,55 @@ export function DrawingUpload({ projectId }: { projectId: string }) {
 
     if (dbError) {
       alert('図面情報の保存に失敗しました: ' + dbError.message)
+      setUploading(false)
+      return
+    }
+
+    // For PDF drawings, also create a PNG thumbnail for project list
+    if (fileType === 'pdf') {
+      try {
+        await generatePdfThumbnail(file, projectId, filePath)
+      } catch (e) {
+        console.error('Failed to generate PDF thumbnail', e)
+      }
     }
 
     setUploading(false)
     router.refresh()
+  }
+
+  async function generatePdfThumbnail(
+    file: File,
+    projectId: string,
+    filePath: string,
+  ) {
+    const pdfjs = await import('pdfjs-dist')
+    pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
+
+    const arrayBuffer = await file.arrayBuffer()
+    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise
+    const page = await pdf.getPage(1)
+    const viewport = page.getViewport({ scale: 0.5 })
+
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+    if (!context) return
+
+    canvas.width = viewport.width
+    canvas.height = viewport.height
+
+    await page.render({ canvasContext: context, viewport }).promise
+
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/png'),
+    )
+    if (!blob) return
+
+    const thumbPath = `${projectId}/${filePath.split('/').pop() ?? 'thumb'}.thumb.png`
+
+    await supabase.storage
+      .from('drawings')
+      .upload(thumbPath, blob, { upsert: true, contentType: 'image/png' })
   }
 
   function handleDrop(e: React.DragEvent) {

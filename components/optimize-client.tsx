@@ -38,8 +38,9 @@ export function OptimizeClient({
   const router = useRouter()
 
   function handleCalculate() {
+    const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
     const pieces: PieceInput[] = []
-    for (const seg of segments) {
+    for (const seg of rebarSegments) {
       for (let i = 0; i < seg.quantity; i++) {
         pieces.push({
           segmentId: seg.id,
@@ -143,7 +144,7 @@ export function OptimizeClient({
       {/* 入力サマリ */}
       <section className="rounded-lg border border-border bg-white p-5">
         <h2 className="text-base font-semibold mb-3">入力データ</h2>
-        {segments.length === 0 ? (
+        {segments.filter((s) => s.bar_type !== 'SPACING').length === 0 ? (
           <p className="text-sm text-muted">線分データがありません。</p>
         ) : (
           <div className="space-y-2">
@@ -157,7 +158,9 @@ export function OptimizeClient({
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {segments.map((seg) => (
+                {segments
+                  .filter((seg) => seg.bar_type !== 'SPACING')
+                  .map((seg) => (
                   <tr key={seg.id}>
                     <td className="py-2 font-mono">{segmentLabelById[seg.id] ?? '-'}</td>
                     <td className="py-2 font-mono">{seg.length_mm.toLocaleString()}</td>
@@ -168,7 +171,11 @@ export function OptimizeClient({
               </tbody>
             </table>
             <p className="text-xs text-muted">
-              合計 {segments.reduce((s, seg) => s + seg.quantity, 0)} 本の部材
+              合計{' '}
+              {segments
+                .filter((seg) => seg.bar_type !== 'SPACING')
+                .reduce((s, seg) => s + seg.quantity, 0)}{' '}
+              本の部材
             </p>
           </div>
         )}

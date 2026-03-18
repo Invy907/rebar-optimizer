@@ -1,15 +1,60 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { CreateProjectButton } from '@/components/create-project-button'
-import type { Project } from '@/lib/types/database'
+import type { Project, Drawing } from '@/lib/types/database'
 
 export default async function ProjectsPage() {
   const supabase = await createClient()
   const { data: projects } = await supabase
     .from('projects')
     .select('*')
+    .order('updated_at', { ascending: false })
     .order('created_at', { ascending: false })
     .returns<Project[]>()
+
+  const projectIds = projects?.map((p) => p.id) ?? []
+  const thumbnails: Record<
+    string,
+    { url: string; fileType: Drawing['file_type'] }
+  > = {}
+
+  if (projectIds.length > 0) {
+    const { data: drawings } = await supabase
+      .from('drawings')
+      .select('id, project_id, file_path, file_type, created_at')
+      .in('project_id', projectIds)
+      .order('created_at', { ascending: false })
+      .returns<Pick<Drawing, 'id' | 'project_id' | 'file_path' | 'file_type' | 'created_at'>[]>()
+
+    type SimpleDrawing = Pick<
+      Drawing,
+      'id' | 'project_id' | 'file_path' | 'file_type' | 'created_at'
+    >
+
+    const latestByProject = new Map<string, SimpleDrawing>()
+    for (const d of (drawings ?? []) as SimpleDrawing[]) {
+      if (!latestByProject.has(d.project_id)) {
+        latestByProject.set(d.project_id, d)
+      }
+    }
+
+    for (const [projectId, d] of latestByProject.entries()) {
+      let path = d.file_path
+
+      // If this is a PDF, try to use generated thumbnail
+      if (d.file_type === 'pdf') {
+        const baseName = d.file_path.split('/').pop() ?? ''
+        path = `${d.project_id}/${baseName}.thumb.png`
+      }
+
+      const { data: signed } = await supabase.storage
+        .from('drawings')
+        .createSignedUrl(path, 3600)
+      if (signed?.signedUrl) {
+        thumbnails[projectId] = { url: signed.signedUrl, fileType: d.file_type }
+      }
+    }
+  }
 
   return (
     <div>
@@ -21,27 +66,52 @@ export default async function ProjectsPage() {
       {(!projects || projects.length === 0) ? (
         <div className="rounded-lg border border-dashed border-border p-12 text-center">
           <p className="text-muted text-sm">まだプロジェクトがありません。</p>
-          <p className="text-muted text-sm mt-1">新しいプロジェクトを作成して開始してください。</p>
+          <p className="text-muted text-sm mt-1">
+            新しいプロジェクトを作成して開始してください。
+          </p>
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="space-y-3">
           {projects.map((project) => (
             <Link
               key={project.id}
               href={`/projects/${project.id}`}
-              className="group rounded-lg border border-border bg-white p-5 hover:border-primary/30 hover:shadow-sm transition-all"
+              className="flex items-center justify-between gap-6 rounded-xl border border-border bg-white px-6 py-4 shadow-sm hover:shadow-md hover:border-primary/40 transition-all"
             >
-              <h2 className="font-semibold group-hover:text-primary transition-colors">
-                {project.name}
-              </h2>
-              {project.description && (
-                <p className="mt-1 text-sm text-muted line-clamp-2">
-                  {project.description}
-                </p>
-              )}
-              <p className="mt-3 text-xs text-muted">
-                {new Date(project.created_at).toLocaleDateString('ja-JP')}
-              </p>
+              <div className="flex items-center gap-4 min-w-0">
+                <div className="w-24 h-16 rounded-md bg-gray-50 border border-border/60 overflow-hidden shrink-0 flex items-center justify-center text-[11px] text-muted">
+                  {thumbnails[project.id] ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={thumbnails[project.id].url}
+                      alt={`${project.name} 図面`}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <span>図面なし</span>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-3 mb-1">
+                    <h2 className="text-base font-semibold truncate">
+                      {project.name}
+                    </h2>
+                  </div>
+                  {project.description && (
+                    <p className="text-xs text-muted truncate">
+                      {project.description}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="text-right shrink-0 text-[11px] text-muted">
+                <div>
+                  最終更新:{' '}
+                  {new Date(
+                    project.updated_at ?? project.created_at,
+                  ).toLocaleDateString('ja-JP')}
+                </div>
+              </div>
             </Link>
           ))}
         </div>
