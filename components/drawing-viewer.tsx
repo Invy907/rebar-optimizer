@@ -6,6 +6,14 @@ import { useRouter } from 'next/navigation'
 import type { DrawingSegment } from '@/lib/types/database'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { SegmentPanel } from '@/components/segment-panel'
+import {
+  encodeSegmentMeta,
+  getSegmentBars,
+  getSegmentColor,
+  legacyFieldsFromBars,
+  type SegmentBarItem,
+  type SegmentColor,
+} from '@/lib/segment-meta'
 
 interface Point {
   x: number
@@ -61,8 +69,8 @@ export function DrawingViewer({
     p1: Point
     p2: Point
     lengthMm: string
-    barType: string
-    quantity: string
+    color: SegmentColor
+    bars: { barType: string; quantity: string }[]
     label: string
   } | null>(null)
   const [tool, setTool] = useState<'select' | 'draw' | 'spacing'>('select')
@@ -105,14 +113,19 @@ export function DrawingViewer({
       ctx.beginPath()
       ctx.moveTo(seg.x1, seg.y1)
       ctx.lineTo(seg.x2, seg.y2)
+      const segColor = getSegmentColor(seg)
       const baseStroke = isSpacing
         ? isSelected
           ? '#0f766e'
           : '#22c55e'
-        : isSelected
-          ? '#2563eb'
-          : '#ef4444'
-      ctx.strokeStyle = isLastSplit && !isSelected ? '#7c3aed' : baseStroke
+        : segColor === 'blue'
+          ? isSelected
+            ? '#1d4ed8'
+            : '#2563eb'
+          : isSelected
+            ? '#b91c1c'
+            : '#ef4444'
+      ctx.strokeStyle = isLastSplit && !isSelected ? baseStroke : baseStroke
       ctx.lineWidth =
         isSelected ? 3 / scale : isLastSplit ? 3 / scale : 2 / scale
       if (isSpacing) {
@@ -129,15 +142,19 @@ export function DrawingViewer({
         ? isSelected
           ? '#0f766e'
           : '#16a34a'
-        : isSelected
-          ? '#2563eb'
-          : '#ef4444'
-      ctx.fillStyle = isLastSplit && !isSelected ? '#7c3aed' : baseFill
+        : segColor === 'blue'
+          ? isSelected
+            ? '#1d4ed8'
+            : '#2563eb'
+          : isSelected
+            ? '#b91c1c'
+            : '#ef4444'
+      ctx.fillStyle = baseFill
       ctx.font = `${12 / scale}px sans-serif`
       const label = isSpacing ? (seg.label ?? 'SP') : labelById[seg.id] ?? '-'
       const text = isSpacing
         ? `${label} ${seg.length_mm}mm`
-        : `${label} ${seg.length_mm}mm ${seg.bar_type}`
+        : `${label} ${seg.length_mm}mm`
       ctx.fillText(text, midX, midY - 6 / scale)
     })
 
@@ -155,10 +172,10 @@ export function DrawingViewer({
       const p = lastSplitMarker.point
       ctx.beginPath()
       ctx.arc(p.x, p.y, 7 / scale, 0, Math.PI * 2)
-      ctx.fillStyle = 'rgba(124, 58, 237, 0.18)'
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.18)'
       ctx.fill()
       ctx.lineWidth = 3 / scale
-      ctx.strokeStyle = '#7c3aed'
+      ctx.strokeStyle = '#ef4444'
       ctx.stroke()
 
       ctx.beginPath()
@@ -457,9 +474,10 @@ export function DrawingViewer({
 
     // デフォルトの鉄筋種別は、直前の線分が通常の鉄筋ならそれを引き継ぎ、
     // そうでなければ D10 にする。間隔線の場合は常に 'SPACING' を内部的に使う。
+    const lastBars = last ? getSegmentBars(last) : []
     const defaultBarTypeForRebar =
-      last && BAR_TYPES.includes(last.bar_type as (typeof BAR_TYPES)[number])
-        ? last.bar_type
+      lastBars[0]?.barType && BAR_TYPES.includes(lastBars[0].barType as (typeof BAR_TYPES)[number])
+        ? lastBars[0].barType
         : 'D10'
 
     setNewSegmentDraft({
@@ -467,8 +485,8 @@ export function DrawingViewer({
       p1,
       p2,
       lengthMm: '',
-      barType: kind === 'spacing' ? 'SPACING' : defaultBarTypeForRebar,
-      quantity: kind === 'spacing' ? '0' : '1',
+      color: 'red',
+      bars: kind === 'spacing' ? [] : [{ barType: defaultBarTypeForRebar, quantity: '1' }],
       label: kind === 'spacing' ? '間隔' : nextLabel,
     })
   }
@@ -478,13 +496,33 @@ export function DrawingViewer({
     const { p1, p2 } = newSegmentDraft
     const lengthMm = parseInt(newSegmentDraft.lengthMm, 10)
     const isSpacing = newSegmentDraft.kind === 'spacing'
-    const quantity = isSpacing
-      ? 0
-      : Math.max(1, parseInt(newSegmentDraft.quantity, 10) || 1)
+    const bars: SegmentBarItem[] = isSpacing
+      ? []
+      : newSegmentDraft.bars
+          .map((b) => ({
+            barType: b.barType,
+            quantity: Math.max(0, parseInt(b.quantity, 10) || 0),
+          }))
+          .filter((b) => b.barType && b.quantity > 0)
     if (isNaN(lengthMm) || lengthMm <= 0) {
       alert('有効な長さ (mm) を入力してください。')
       return
     }
+    if (!isSpacing && bars.length === 0) {
+      alert('鉄筋種別と数量を入力してください。')
+      return
+    }
+    const legacy = isSpacing
+      ? { bar_type: 'SPACING', quantity: 0 }
+      : legacyFieldsFromBars(bars)
+    const memo = isSpacing
+      ? null
+      : encodeSegmentMeta({
+          v: 1,
+          color: newSegmentDraft.color,
+          bars,
+          note: null,
+        })
 
     const { data, error } = await supabase
       .from('drawing_segments')
@@ -495,9 +533,10 @@ export function DrawingViewer({
         x2: p2.x,
         y2: p2.y,
         length_mm: lengthMm,
-        quantity,
-        bar_type: isSpacing ? 'SPACING' : newSegmentDraft.barType,
+        quantity: legacy.quantity,
+        bar_type: legacy.bar_type,
         label: newSegmentDraft.label.trim() || null,
+        memo,
       })
       .select()
       .single<DrawingSegment>()
@@ -576,6 +615,7 @@ export function DrawingViewer({
         quantity: segment.quantity,
         bar_type: segment.bar_type,
         label: labelA,
+        memo: segment.memo,
       },
       {
         drawing_id: drawingId,
@@ -587,6 +627,7 @@ export function DrawingViewer({
         quantity: segment.quantity,
         bar_type: segment.bar_type,
         label: labelB,
+        memo: segment.memo,
       },
     ] as const
 
@@ -811,42 +852,28 @@ export function DrawingViewer({
               </div>
               {newSegmentDraft.kind === 'rebar' && (
                 <div>
-                  <label className="block text-xs text-muted mb-1">数量</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={newSegmentDraft.quantity}
-                    onChange={(e) =>
-                      setNewSegmentDraft((prev) =>
-                        prev ? { ...prev, quantity: e.target.value } : prev,
-                      )
-                    }
-                    className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
-                  />
-                </div>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {newSegmentDraft.kind === 'rebar' && (
-                <div>
-                  <label className="block text-xs text-muted mb-1">鉄筋種別</label>
+                  <label className="block text-xs text-muted mb-1">線の色</label>
                   <select
-                    value={newSegmentDraft.barType}
+                    value={newSegmentDraft.color}
                     onChange={(e) =>
                       setNewSegmentDraft((prev) =>
-                        prev ? { ...prev, barType: e.target.value } : prev,
+                        prev
+                          ? {
+                              ...prev,
+                              color: (e.target.value as SegmentColor) || 'red',
+                            }
+                          : prev,
                       )
                     }
                     className="w-full rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary"
                   >
-                    {BAR_TYPES.map((bt) => (
-                      <option key={bt} value={bt}>
-                        {bt}
-                      </option>
-                    ))}
+                    <option value="red">赤</option>
+                    <option value="blue">青</option>
                   </select>
                 </div>
               )}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs text-muted mb-1">ラベル</label>
                 <input
@@ -861,6 +888,88 @@ export function DrawingViewer({
                 />
               </div>
             </div>
+            {newSegmentDraft.kind === 'rebar' && (
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-muted">鉄筋（種類と本数）</div>
+                <div className="space-y-2">
+                  {newSegmentDraft.bars.map((row, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <select
+                        value={row.barType}
+                        onChange={(e) =>
+                          setNewSegmentDraft((prev) => {
+                            if (!prev) return prev
+                            const next = [...prev.bars]
+                            next[idx] = { ...next[idx], barType: e.target.value }
+                            return { ...prev, bars: next }
+                          })
+                        }
+                        className="flex-1 rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary bg-white"
+                      >
+                        {BAR_TYPES.map((bt) => (
+                          <option key={bt} value={bt}>
+                            {bt}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min={0}
+                        value={row.quantity}
+                        onChange={(e) =>
+                          setNewSegmentDraft((prev) => {
+                            if (!prev) return prev
+                            const next = [...prev.bars]
+                            next[idx] = { ...next[idx], quantity: e.target.value }
+                            return { ...prev, bars: next }
+                          })
+                        }
+                        className="w-20 rounded border border-border px-2 py-1 text-sm font-mono outline-none focus:border-primary"
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setNewSegmentDraft((prev) => {
+                            if (!prev) return prev
+                            const next = prev.bars.filter((_, i) => i !== idx)
+                            return { ...prev, bars: next.length ? next : prev.bars }
+                          })
+                        }
+                        className="text-xs text-danger hover:underline"
+                        disabled={newSegmentDraft.bars.length <= 1}
+                      >
+                        削除
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setNewSegmentDraft((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            bars: [
+                              ...prev.bars,
+                              {
+                                barType: getNextDefaultBarType(
+                                  prev.bars.map((b) => b.barType),
+                                  BAR_TYPES,
+                                ),
+                                quantity: '1',
+                              },
+                            ],
+                          }
+                        : prev,
+                    )
+                  }
+                  className="text-xs text-primary hover:underline"
+                >
+                  + 追加
+                </button>
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
@@ -911,4 +1020,18 @@ function projectPointToSegment(
     t,
     projectedPoint: { x: a.x + t * dx, y: a.y + t * dy },
   }
+}
+
+// getSegmentColor moved to lib/segment-meta
+
+function getNextDefaultBarType(
+  existingBarTypes: string[],
+  fallbackList: string[],
+): string {
+  const existing = new Set(existingBarTypes.map((b) => (b ?? '').toUpperCase()))
+  const ordered = fallbackList.map((b) => (b ?? '').toUpperCase()).filter(Boolean)
+  for (const bt of ordered) {
+    if (!existing.has(bt)) return bt
+  }
+  return ordered[ordered.length - 1] ?? 'D10'
 }

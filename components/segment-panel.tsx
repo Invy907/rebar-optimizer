@@ -1,9 +1,18 @@
 'use client'
 
-import { useState } from 'react'
 import type { DrawingSegment } from '@/lib/types/database'
 import { getSegmentLabelMapWithMeta } from '@/lib/segment-labels'
 import Link from 'next/link'
+import {
+  decodeSegmentMeta,
+  encodeSegmentMeta,
+  getSegmentBars,
+  getSegmentBarsSummary,
+  getSegmentColor,
+  legacyFieldsFromBars,
+  type SegmentBarItem,
+  type SegmentColor,
+} from '@/lib/segment-meta'
 
 export function SegmentPanel({
   segments,
@@ -37,6 +46,12 @@ export function SegmentPanel({
   const selected = segments.find((s) => s.id === selectedSegmentId) ?? null
   const selectedIsSpacing = selected?.bar_type === 'SPACING'
   const segmentLabelById = getSegmentLabelMapWithMeta(rebarSegments)
+  const selectedColor: SegmentColor = selected ? getSegmentColor(selected) : 'red'
+  const selectedBars: SegmentBarItem[] = selected ? getSegmentBars(selected) : []
+  const decoded = selected ? decodeSegmentMeta(selected.memo) : null
+  const selectedNote = selected
+    ? (decoded?.meta?.note ?? decoded?.legacyNote ?? '')
+    : ''
 
   return (
     <div className="w-80 shrink-0 flex flex-col rounded-lg border border-border bg-white overflow-hidden">
@@ -92,10 +107,23 @@ export function SegmentPanel({
                 <button
                   type="button"
                   onClick={() =>
-                    onUpdate(selected.id, {
-                      bar_type: barTypes[0] ?? 'D10',
-                      quantity: 1,
-                    })
+                    (() => {
+                      const bars: SegmentBarItem[] = [
+                        { barType: barTypes[0] ?? 'D10', quantity: 1 },
+                      ]
+                      const legacy = legacyFieldsFromBars(bars)
+                      const memo = encodeSegmentMeta({
+                        v: 1,
+                        color: 'red',
+                        bars,
+                        note: decodeSegmentMeta(selected.memo).legacyNote ?? null,
+                      })
+                      onUpdate(selected.id, {
+                        memo,
+                        bar_type: legacy.bar_type,
+                        quantity: legacy.quantity,
+                      })
+                    })()
                   }
                   className="text-[11px] text-emerald-700 hover:underline"
                 >
@@ -126,39 +154,158 @@ export function SegmentPanel({
             </div>
             {!selectedIsSpacing && (
               <div>
-                <label className="block text-xs text-muted mb-0.5">数量</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={selected.quantity}
-                  onChange={(e) =>
-                    onUpdate(selected.id, {
-                      quantity: parseInt(e.target.value) || 1,
+                <label className="block text-xs text-muted mb-0.5">線の色</label>
+                <select
+                  value={selectedColor}
+                  onChange={(e) => {
+                    const nextColor = (e.target.value as SegmentColor) || 'red'
+                    const { meta, legacyNote } = decodeSegmentMeta(selected.memo)
+                    const bars = getSegmentBars(selected)
+                    const note = meta?.note ?? legacyNote ?? null
+                    const memo = encodeSegmentMeta({
+                      v: 1,
+                      color: nextColor,
+                      bars,
+                      note,
                     })
-                  }
-                  className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
-                />
+                    onUpdate(selected.id, { memo })
+                  }}
+                  className="w-full rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary bg-white"
+                >
+                  <option value="red">赤</option>
+                  <option value="blue">青</option>
+                </select>
               </div>
             )}
           </div>
           {!selectedIsSpacing && (
-            <div>
-              <label className="block text-xs text-muted mb-0.5">鉄筋種別</label>
-              <select
-                value={selected.bar_type}
-                onChange={(e) => onUpdate(selected.id, { bar_type: e.target.value })}
-                className="w-full rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary"
-              >
-                {barTypes.map((bt) => (
-                  <option key={bt} value={bt}>
-                    {bt}
-                  </option>
-                ))}
-              </select>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs text-muted">鉄筋（種類と本数）</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const bars = getSegmentBars(selected)
+                    const next = [
+                      ...bars,
+                      {
+                        barType: getNextDefaultBarType(
+                          bars.map((b) => b.barType),
+                          barTypes,
+                        ),
+                        quantity: 1,
+                      },
+                    ]
+                    const legacy = legacyFieldsFromBars(next)
+                    const { meta, legacyNote } = decodeSegmentMeta(selected.memo)
+                    const memo = encodeSegmentMeta({
+                      v: 1,
+                      color: meta?.color ?? selectedColor,
+                      bars: next,
+                      note: meta?.note ?? legacyNote ?? null,
+                    })
+                    onUpdate(selected.id, {
+                      memo,
+                      bar_type: legacy.bar_type,
+                      quantity: legacy.quantity,
+                    })
+                  }}
+                  className="text-xs text-primary hover:underline"
+                >
+                  + 追加
+                </button>
+              </div>
+              <div className="space-y-2">
+                {(selectedBars.length ? selectedBars : [{ barType: barTypes[0] ?? 'D10', quantity: 1 }]).map(
+                  (row, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <select
+                        value={row.barType}
+                        onChange={(e) => {
+                          const bars = [...selectedBars]
+                          if (bars.length === 0) bars.push(row)
+                          bars[idx] = { ...bars[idx], barType: e.target.value }
+                          const legacy = legacyFieldsFromBars(bars)
+                          const { meta, legacyNote } = decodeSegmentMeta(selected.memo)
+                          const memo = encodeSegmentMeta({
+                            v: 1,
+                            color: meta?.color ?? selectedColor,
+                            bars,
+                            note: meta?.note ?? legacyNote ?? null,
+                          })
+                          onUpdate(selected.id, {
+                            memo,
+                            bar_type: legacy.bar_type,
+                            quantity: legacy.quantity,
+                          })
+                        }}
+                        className="flex-1 rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary bg-white"
+                      >
+                        {barTypes.map((bt) => (
+                          <option key={bt} value={bt}>
+                            {bt}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min={0}
+                        value={row.quantity}
+                        onChange={(e) => {
+                          const bars = [...selectedBars]
+                          if (bars.length === 0) bars.push(row)
+                          bars[idx] = {
+                            ...bars[idx],
+                            quantity: Math.max(0, parseInt(e.target.value) || 0),
+                          }
+                          const legacy = legacyFieldsFromBars(bars)
+                          const { meta, legacyNote } = decodeSegmentMeta(selected.memo)
+                          const memo = encodeSegmentMeta({
+                            v: 1,
+                            color: meta?.color ?? selectedColor,
+                            bars,
+                            note: meta?.note ?? legacyNote ?? null,
+                          })
+                          onUpdate(selected.id, {
+                            memo,
+                            bar_type: legacy.bar_type,
+                            quantity: legacy.quantity,
+                          })
+                        }}
+                        className="w-20 rounded border border-border px-2 py-1 text-sm font-mono outline-none focus:border-primary"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const bars = selectedBars.filter((_, i) => i !== idx)
+                          const nextBars = bars.length ? bars : [{ barType: barTypes[0] ?? 'D10', quantity: 1 }]
+                          const legacy = legacyFieldsFromBars(nextBars)
+                          const { meta, legacyNote } = decodeSegmentMeta(selected.memo)
+                          const memo = encodeSegmentMeta({
+                            v: 1,
+                            color: meta?.color ?? selectedColor,
+                            bars: nextBars,
+                            note: meta?.note ?? legacyNote ?? null,
+                          })
+                          onUpdate(selected.id, {
+                            memo,
+                            bar_type: legacy.bar_type,
+                            quantity: legacy.quantity,
+                          })
+                        }}
+                        className="text-xs text-danger hover:underline"
+                        disabled={(selectedBars.length || 1) <= 1}
+                      >
+                        削除
+                      </button>
+                    </div>
+                  ),
+                )}
+              </div>
             </div>
           )}
           <div>
-            <label className="block text-xs text-muted mb-0.5">ラベル / メモ</label>
+            <label className="block text-xs text-muted mb-0.5">ラベル</label>
             <input
               type="text"
               value={selected.label ?? ''}
@@ -167,6 +314,26 @@ export function SegmentPanel({
               }
               placeholder="任意"
               className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-muted mb-0.5">メモ</label>
+            <textarea
+              value={selectedNote}
+              onChange={(e) => {
+                const { meta } = decodeSegmentMeta(selected.memo)
+                const bars = getSegmentBars(selected)
+                const memo = encodeSegmentMeta({
+                  v: 1,
+                  color: meta?.color ?? selectedColor,
+                  bars,
+                  note: e.target.value || null,
+                })
+                onUpdate(selected.id, { memo })
+              }}
+              placeholder="任意"
+              rows={2}
+              className="w-full resize-y rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
             />
           </div>
         </div>
@@ -205,10 +372,12 @@ export function SegmentPanel({
                     {segmentLabelById[seg.id]?.label ?? '-'}
                   </span>
                   <span className="font-medium">{seg.length_mm}mm</span>
-                  <span className="text-muted ml-1.5">x{seg.quantity}</span>
+                  <span className="text-muted ml-1.5 truncate">
+                    {getSegmentBarsSummary(seg)}
+                  </span>
                 </div>
                 <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono">
-                  {seg.bar_type}
+                  {getSegmentColor(seg) === 'blue' ? '青' : '赤'}
                 </span>
               </li>
             ))}
@@ -259,11 +428,23 @@ export function SegmentPanel({
           <div className="flex justify-between">
             <span>部材本数の合計（数量の合計）</span>
             <span className="font-medium text-foreground">
-              {rebarSegments.reduce((sum, s) => sum + s.quantity, 0)}本
+              {rebarSegments.reduce((sum, s) => sum + getSegmentBars(s).reduce((ss, b) => ss + b.quantity, 0), 0)}本
             </span>
           </div>
         </div>
       )}
     </div>
   )
+}
+
+function getNextDefaultBarType(
+  existingBarTypes: string[],
+  fallbackList: string[],
+): string {
+  const existing = new Set(existingBarTypes.map((b) => (b ?? '').toUpperCase()))
+  const ordered = fallbackList.map((b) => (b ?? '').toUpperCase()).filter(Boolean)
+  for (const bt of ordered) {
+    if (!existing.has(bt)) return bt
+  }
+  return ordered[ordered.length - 1] ?? 'D10'
 }

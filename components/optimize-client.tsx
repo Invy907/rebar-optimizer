@@ -7,6 +7,7 @@ import type { DrawingSegment, OptimizationRun } from '@/lib/types/database'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput, type AlgorithmType } from '@/lib/optimizer'
 import { OptimizationResultView } from '@/components/optimization-result-view'
+import { getSegmentBars, getSegmentBarsSummary } from '@/lib/segment-meta'
 
 export function OptimizeClient({
   projectId,
@@ -27,7 +28,9 @@ export function OptimizeClient({
   const [stockLength, setStockLength] = useState(6000)
   const [algorithm, setAlgorithm] = useState<AlgorithmType>('best-fit')
   const [cuttingLossMm, setCuttingLossMm] = useState(0)
+  const [pieceLengthAdjustmentMm, setPieceLengthAdjustmentMm] = useState(-30)
   const [result, setResult] = useState<OptimizationOutput | null>(null)
+  const [barSummaryTable, setBarSummaryTable] = useState<BarSummaryRow[] | null>(null)
   const [focusSegmentId, setFocusSegmentId] = useState<string | null>(
     initialFocusSegmentId ?? null,
   )
@@ -41,12 +44,22 @@ export function OptimizeClient({
     const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
     const pieces: PieceInput[] = []
     for (const seg of rebarSegments) {
-      for (let i = 0; i < seg.quantity; i++) {
-        pieces.push({
-          segmentId: seg.id,
-          lengthMm: seg.length_mm,
-          barType: seg.bar_type,
-        })
+      const adjusted = seg.length_mm + (pieceLengthAdjustmentMm || 0)
+      if (!Number.isFinite(adjusted) || adjusted <= 0) {
+        alert(
+          `部材長さ補正の結果、0mm以下になりました。\n長さ: ${seg.length_mm}mm / 補正: ${pieceLengthAdjustmentMm}mm`,
+        )
+        return
+      }
+      const bars = getSegmentBars(seg)
+      for (const b of bars) {
+        for (let i = 0; i < b.quantity; i++) {
+          pieces.push({
+            segmentId: seg.id,
+            lengthMm: Math.round(adjusted),
+            barType: b.barType,
+          })
+        }
       }
     }
 
@@ -62,6 +75,7 @@ export function OptimizeClient({
         cuttingLossMm: cuttingLossMm || 0,
       })
       setResult(output)
+      setBarSummaryTable(buildBarSummaryTable(pieces))
       setSaved(false)
       setCalculating(false)
     })
@@ -153,8 +167,7 @@ export function OptimizeClient({
                 <tr className="border-b border-border text-left text-muted">
                   <th className="pb-2 font-medium">ラベル</th>
                   <th className="pb-2 font-medium">長さ (mm)</th>
-                  <th className="pb-2 font-medium">数量</th>
-                  <th className="pb-2 font-medium">鉄筋種別</th>
+                  <th className="pb-2 font-medium">鉄筋</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -164,8 +177,7 @@ export function OptimizeClient({
                   <tr key={seg.id}>
                     <td className="py-2 font-mono">{segmentLabelById[seg.id] ?? '-'}</td>
                     <td className="py-2 font-mono">{seg.length_mm.toLocaleString()}</td>
-                    <td className="py-2">{seg.quantity}</td>
-                    <td className="py-2 font-mono">{seg.bar_type}</td>
+                    <td className="py-2 font-mono text-xs">{getSegmentBarsSummary(seg)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -174,7 +186,7 @@ export function OptimizeClient({
               合計{' '}
               {segments
                 .filter((seg) => seg.bar_type !== 'SPACING')
-                .reduce((s, seg) => s + seg.quantity, 0)}{' '}
+                .reduce((s, seg) => s + getSegmentBars(seg).reduce((ss, b) => ss + b.quantity, 0), 0)}{' '}
               本の部材
             </p>
           </div>
@@ -221,6 +233,24 @@ export function OptimizeClient({
               className="w-40 rounded-lg border border-border px-3 py-2 text-sm font-mono outline-none focus:border-primary"
             />
           </div>
+          <div>
+            <label className="block text-sm text-muted mb-1">
+              部材長さ補正 (mm)
+            </label>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                value={pieceLengthAdjustmentMm}
+                onChange={(e) =>
+                  setPieceLengthAdjustmentMm(parseInt(e.target.value) || 0)
+                }
+                className="w-40 rounded-lg border border-border px-3 py-2 text-sm font-mono outline-none focus:border-primary"
+              />
+              <span className="text-[11px] text-muted whitespace-nowrap">
+                マイナスで短く、プラスで長くします（例: -30）
+              </span>
+            </div>
+          </div>
           <button
             onClick={handleCalculate}
             disabled={segments.length === 0 || calculating}
@@ -262,6 +292,13 @@ export function OptimizeClient({
               {saved ? '保存済み' : saving ? '保存中...' : '結果を保存'}
             </button>
           </div>
+          {barSummaryTable && barSummaryTable.length > 0 && (
+            <BarSummarySection
+              rows={barSummaryTable}
+              adjustmentMm={pieceLengthAdjustmentMm}
+            />
+          )}
+
           <OptimizationResultView
             result={result}
             stockLengthMm={stockLength}
@@ -297,6 +334,120 @@ export function OptimizeClient({
           </ul>
         </section>
       )}
+    </div>
+  )
+}
+
+interface BarSummaryRow {
+  lengthMm: number
+  byBarType: Record<string, number>
+  total: number
+}
+
+function buildBarSummaryTable(pieces: PieceInput[]): BarSummaryRow[] {
+  const map = new Map<number, Map<string, number>>()
+  for (const p of pieces) {
+    let byType = map.get(p.lengthMm)
+    if (!byType) {
+      byType = new Map()
+      map.set(p.lengthMm, byType)
+    }
+    byType.set(p.barType, (byType.get(p.barType) ?? 0) + 1)
+  }
+  const allBarTypes = new Set<string>()
+  for (const byType of map.values()) {
+    for (const bt of byType.keys()) allBarTypes.add(bt)
+  }
+  const rows: BarSummaryRow[] = []
+  for (const [lengthMm, byType] of map.entries()) {
+    const obj: Record<string, number> = {}
+    let total = 0
+    for (const bt of allBarTypes) {
+      const qty = byType.get(bt) ?? 0
+      obj[bt] = qty
+      total += qty
+    }
+    rows.push({ lengthMm, byBarType: obj, total })
+  }
+  rows.sort((a, b) => b.lengthMm - a.lengthMm)
+  return rows
+}
+
+function BarSummarySection({
+  rows,
+  adjustmentMm,
+}: {
+  rows: BarSummaryRow[]
+  adjustmentMm: number
+}) {
+  const allBarTypes = Array.from(
+    new Set(rows.flatMap((r) => Object.keys(r.byBarType))),
+  ).sort()
+  const totals: Record<string, number> = {}
+  let grandTotal = 0
+  for (const bt of allBarTypes) totals[bt] = 0
+  for (const row of rows) {
+    for (const bt of allBarTypes) {
+      totals[bt] += row.byBarType[bt] ?? 0
+    }
+    grandTotal += row.total
+  }
+
+  return (
+    <div className="rounded-lg border-2 border-primary bg-white p-5">
+      <h3 className="text-base font-semibold mb-1">鉄筋種類別の必要本数</h3>
+      {adjustmentMm !== 0 && (
+        <p className="text-xs text-muted mb-3">
+          部材長さ補正: {adjustmentMm > 0 ? '+' : ''}
+          {adjustmentMm}mm 適用済み
+        </p>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b-2 border-border text-left">
+              <th className="pb-2 pr-4 font-semibold">長さ (mm)</th>
+              {allBarTypes.map((bt) => (
+                <th key={bt} className="pb-2 px-3 font-semibold text-center">
+                  {bt}
+                </th>
+              ))}
+              <th className="pb-2 pl-3 font-semibold text-center">合計</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((row) => (
+              <tr key={row.lengthMm}>
+                <td className="py-2 pr-4 font-mono font-medium">
+                  {row.lengthMm.toLocaleString()}
+                </td>
+                {allBarTypes.map((bt) => (
+                  <td
+                    key={bt}
+                    className="py-2 px-3 text-center font-mono"
+                  >
+                    {row.byBarType[bt] || '-'}
+                  </td>
+                ))}
+                <td className="py-2 pl-3 text-center font-mono font-medium">
+                  {row.total}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-border font-semibold">
+              <td className="pt-2 pr-4">合計</td>
+              {allBarTypes.map((bt) => (
+                <td key={bt} className="pt-2 px-3 text-center font-mono">
+                  {totals[bt]}
+                </td>
+              ))}
+              <td className="pt-2 pl-3 text-center font-mono">{grandTotal}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
     </div>
   )
 }
