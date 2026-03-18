@@ -51,6 +51,11 @@ export function DrawingViewer({
   const [splitArmedSegmentId, setSplitArmedSegmentId] = useState<string | null>(
     null,
   )
+  const [splitHoverPoint, setSplitHoverPoint] = useState<Point | null>(null)
+  const [lastSplitMarker, setLastSplitMarker] = useState<{
+    point: Point
+    segmentIds: [string, string]
+  } | null>(null)
   const [newSegmentDraft, setNewSegmentDraft] = useState<{
     kind: 'rebar' | 'spacing'
     p1: Point
@@ -95,11 +100,21 @@ export function DrawingViewer({
     segments.forEach((seg) => {
       const isSelected = seg.id === selectedSegmentId
       const isSpacing = seg.bar_type === 'SPACING' && seg.quantity === 0
+      const isLastSplit =
+        !!lastSplitMarker && lastSplitMarker.segmentIds.includes(seg.id)
       ctx.beginPath()
       ctx.moveTo(seg.x1, seg.y1)
       ctx.lineTo(seg.x2, seg.y2)
-      ctx.strokeStyle = isSpacing ? (isSelected ? '#0f766e' : '#22c55e') : isSelected ? '#2563eb' : '#ef4444'
-      ctx.lineWidth = isSelected ? 3 / scale : 2 / scale
+      const baseStroke = isSpacing
+        ? isSelected
+          ? '#0f766e'
+          : '#22c55e'
+        : isSelected
+          ? '#2563eb'
+          : '#ef4444'
+      ctx.strokeStyle = isLastSplit && !isSelected ? '#7c3aed' : baseStroke
+      ctx.lineWidth =
+        isSelected ? 3 / scale : isLastSplit ? 3 / scale : 2 / scale
       if (isSpacing) {
         ctx.setLineDash([4 / scale, 4 / scale])
       }
@@ -110,7 +125,14 @@ export function DrawingViewer({
 
       const midX = (seg.x1 + seg.x2) / 2
       const midY = (seg.y1 + seg.y2) / 2
-      ctx.fillStyle = isSpacing ? (isSelected ? '#0f766e' : '#16a34a') : isSelected ? '#2563eb' : '#ef4444'
+      const baseFill = isSpacing
+        ? isSelected
+          ? '#0f766e'
+          : '#16a34a'
+        : isSelected
+          ? '#2563eb'
+          : '#ef4444'
+      ctx.fillStyle = isLastSplit && !isSelected ? '#7c3aed' : baseFill
       ctx.font = `${12 / scale}px sans-serif`
       const label = isSpacing ? (seg.label ?? 'SP') : labelById[seg.id] ?? '-'
       const text = isSpacing
@@ -118,6 +140,32 @@ export function DrawingViewer({
         : `${label} ${seg.length_mm}mm ${seg.bar_type}`
       ctx.fillText(text, midX, midY - 6 / scale)
     })
+
+    if (splitArmedSegmentId && splitHoverPoint) {
+      ctx.beginPath()
+      ctx.arc(splitHoverPoint.x, splitHoverPoint.y, 6 / scale, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(37, 99, 235, 0.25)'
+      ctx.fill()
+      ctx.lineWidth = 2 / scale
+      ctx.strokeStyle = '#2563eb'
+      ctx.stroke()
+    }
+
+    if (lastSplitMarker) {
+      const p = lastSplitMarker.point
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, 7 / scale, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(124, 58, 237, 0.18)'
+      ctx.fill()
+      ctx.lineWidth = 3 / scale
+      ctx.strokeStyle = '#7c3aed'
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, 3.5 / scale, 0, Math.PI * 2)
+      ctx.fillStyle = '#ffffff'
+      ctx.fill()
+    }
 
     if (drawing && startPoint && currentPoint) {
       ctx.beginPath()
@@ -131,7 +179,19 @@ export function DrawingViewer({
     }
 
     ctx.restore()
-  }, [segments, selectedSegmentId, drawing, startPoint, currentPoint, imgLoaded, scale, offset])
+  }, [
+    segments,
+    selectedSegmentId,
+    drawing,
+    startPoint,
+    currentPoint,
+    imgLoaded,
+    scale,
+    offset,
+    splitArmedSegmentId,
+    splitHoverPoint,
+    lastSplitMarker,
+  ])
 
   useEffect(() => {
     drawCanvas()
@@ -141,13 +201,23 @@ export function DrawingViewer({
     if (!splitArmedSegmentId) return
     if (selectedSegmentId !== splitArmedSegmentId) {
       setSplitArmedSegmentId(null)
+      setSplitHoverPoint(null)
     }
   }, [selectedSegmentId, splitArmedSegmentId])
+
+  useEffect(() => {
+    if (!lastSplitMarker) return
+    if (!selectedSegmentId) return
+    if (!lastSplitMarker.segmentIds.includes(selectedSegmentId)) {
+      setLastSplitMarker(null)
+    }
+  }, [selectedSegmentId, lastSplitMarker])
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         setSplitArmedSegmentId(null)
+        setSplitHoverPoint(null)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -269,6 +339,7 @@ export function DrawingViewer({
         const target = segments.find((s) => s.id === splitArmedSegmentId)
         if (!target) {
           setSplitArmedSegmentId(null)
+          setSplitHoverPoint(null)
           return
         }
         const distance = distToSegment(
@@ -292,6 +363,32 @@ export function DrawingViewer({
     if (panning) {
       setOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y })
       return
+    }
+    if (tool === 'select' && splitArmedSegmentId) {
+      const pt = screenToCanvas(e)
+      const target = segments.find((s) => s.id === splitArmedSegmentId)
+      if (!target) {
+        setSplitHoverPoint(null)
+      } else {
+        const clickRadius = 10 / scale
+        const distance = distToSegment(
+          pt,
+          { x: target.x1, y: target.y1 },
+          { x: target.x2, y: target.y2 },
+        )
+        if (distance < clickRadius) {
+          const { projectedPoint } = projectPointToSegment(
+            pt,
+            { x: target.x1, y: target.y1 },
+            { x: target.x2, y: target.y2 },
+          )
+          setSplitHoverPoint(projectedPoint)
+        } else {
+          setSplitHoverPoint(null)
+        }
+      }
+    } else if (splitHoverPoint) {
+      setSplitHoverPoint(null)
     }
     if (drawing) {
       let pt = screenToCanvas(e)
@@ -529,6 +626,11 @@ export function DrawingViewer({
     ])
     setSelectedSegmentId(createdA.id)
     setSplitArmedSegmentId(null)
+    setSplitHoverPoint(null)
+    setLastSplitMarker({
+      point: projectedPoint,
+      segmentIds: [createdA.id, createdB.id],
+    })
     setLastAction({
       type: 'split',
       before: segment,
@@ -679,6 +781,8 @@ export function DrawingViewer({
           setTool('select')
           setSelectedSegmentId(id)
           setSplitArmedSegmentId(id)
+          setSplitHoverPoint(null)
+          setLastSplitMarker(null)
         }}
         barTypes={BAR_TYPES}
         projectId={projectId}
