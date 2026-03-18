@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { notFound, redirect } from 'next/navigation'
+import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import type { Project, Drawing } from '@/lib/types/database'
 import { DrawingUpload } from '@/components/drawing-upload'
@@ -29,13 +29,6 @@ export default async function ProjectDetailPage({
     .eq('project_id', id)
     .order('created_at', { ascending: false })
     .returns<Drawing[]>()
-
-  // If this project already has a drawing, redirect directly to its drawing page.
-  // Only the most recent drawing is used, and projects are limited to a single drawing
-  // via checks in the upload component.
-  if (drawings && drawings.length > 0) {
-    redirect(`/projects/${id}/drawings/${drawings[0].id}`)
-  }
 
   return (
     <div>

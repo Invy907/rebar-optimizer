@@ -7,9 +7,11 @@ import { useRouter } from 'next/navigation'
 export function EditProjectName({
   projectId,
   initialName,
+  onEditingChange,
 }: {
   projectId: string
   initialName: string
+  onEditingChange?: (editing: boolean) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(initialName)
@@ -28,6 +30,7 @@ export function EditProjectName({
     setSaving(false)
     if (error) return
     setEditing(false)
+    onEditingChange?.(false)
     router.refresh()
   }
 
@@ -39,7 +42,10 @@ export function EditProjectName({
         </h1>
         <button
           type="button"
-          onClick={() => setEditing(true)}
+          onClick={() => {
+            setEditing(true)
+            onEditingChange?.(true)
+          }}
           className="text-xs text-muted hover:text-foreground"
         >
           編集
@@ -58,7 +64,10 @@ export function EditProjectName({
       />
       <button
         type="button"
-        onClick={() => setEditing(false)}
+        onClick={() => {
+          setEditing(false)
+          onEditingChange?.(false)
+        }}
         className="text-xs text-muted hover:text-foreground"
         disabled={saving}
       >

@@ -1,10 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import Link from 'next/link'
 import type { Drawing, DrawingSegment, Project } from '@/lib/types/database'
 import { DrawingViewer } from '@/components/drawing-viewer'
-import { EditProjectName } from '@/components/edit-project-name'
-import { DeleteProjectButton } from '@/components/delete-project-button'
+import { DrawingHeader } from '@/components/drawing-header'
 
 export default async function DrawingDetailPage({
   params,
@@ -44,34 +42,13 @@ export default async function DrawingDetailPage({
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem-4rem)]">
-      <div className="mb-4 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2 min-w-0">
-          <Link
-            href={`/projects/${projectId}`}
-            className="text-sm text-muted hover:text-foreground transition-colors shrink-0"
-          >
-            &larr; プロジェクトに戻る
-          </Link>
-          <span className="text-sm text-muted shrink-0">/</span>
-          {project && (
-            <>
-              <div className="min-w-0">
-                <EditProjectName
-                  projectId={project.id}
-                  initialName={project.name}
-                />
-              </div>
-              <span className="text-sm text-muted shrink-0">/</span>
-            </>
-          )}
-          <span className="text-sm font-medium truncate">
-            {drawing.file_name}
-          </span>
-        </div>
-        {project && (
-          <DeleteProjectButton projectId={project.id} />
-        )}
-      </div>
+      {project && (
+        <DrawingHeader
+          projectId={project.id}
+          projectName={project.name}
+          drawingFileName={drawing.file_name}
+        />
+      )}
 
       <DrawingViewer
         drawingId={drawingId}

@@ -17,6 +17,7 @@ export default async function ProjectsPage() {
     string,
     { url: string; fileType: Drawing['file_type'] }
   > = {}
+  const latestDrawingIdByProject: Record<string, string> = {}
 
   if (projectIds.length > 0) {
     const { data: drawings } = await supabase
@@ -39,6 +40,7 @@ export default async function ProjectsPage() {
     }
 
     for (const [projectId, d] of latestByProject.entries()) {
+      latestDrawingIdByProject[projectId] = d.id
       let path = d.file_path
 
       // If this is a PDF, try to use generated thumbnail
@@ -75,7 +77,11 @@ export default async function ProjectsPage() {
           {projects.map((project) => (
             <Link
               key={project.id}
-              href={`/projects/${project.id}`}
+              href={
+                latestDrawingIdByProject[project.id]
+                  ? `/projects/${project.id}/drawings/${latestDrawingIdByProject[project.id]}`
+                  : `/projects/${project.id}`
+              }
               className="flex items-center justify-between gap-6 rounded-xl border border-border bg-white px-6 py-4 shadow-sm hover:shadow-md hover:border-primary/40 transition-all"
             >
               <div className="flex items-center gap-4 min-w-0">
