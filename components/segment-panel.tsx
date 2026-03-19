@@ -59,27 +59,37 @@ export function SegmentPanel({
     ? (decoded?.meta?.note ?? decoded?.legacyNote ?? '')
     : ''
 
-  // Canvasで使用する「円番号」は、長い長さ順（降順）で 1 から採番します。
-  // そのため、新しく追加された線の長さが既存より長ければ、その線の番号が自動で小さくなります。
-  const uniqueRebarLengths = Array.from(
-    new Set(rebarSegments.map((s) => s.length_mm)),
-  ).sort((a, b) => b - a)
-  const circleNoByLength = new Map<number, number>(
-    uniqueRebarLengths.map((len, idx) => [len, idx + 1]),
-  )
-  const circleCountByNo: Record<
-    number,
-    {
-      red: number
-      blue: number
+  // 円番号は「赤グループ」と「青グループ」で別々に採番します（それぞれ長い順で 1 から）。
+  const circleSummaryRows = (() => {
+    const redCountByLen = new Map<number, number>()
+    const blueCountByLen = new Map<number, number>()
+    for (const seg of rebarSegments) {
+      const c = getSegmentColor(seg)
+      if (c === 'blue') {
+        blueCountByLen.set(seg.length_mm, (blueCountByLen.get(seg.length_mm) ?? 0) + 1)
+      } else {
+        redCountByLen.set(seg.length_mm, (redCountByLen.get(seg.length_mm) ?? 0) + 1)
+      }
     }
-  > = {}
-  for (const seg of rebarSegments) {
-    const no = circleNoByLength.get(seg.length_mm) ?? 1
-    if (!circleCountByNo[no]) circleCountByNo[no] = { red: 0, blue: 0 }
-    const c = getSegmentColor(seg)
-    circleCountByNo[no][c]++
-  }
+
+    const redLens = Array.from(redCountByLen.keys()).sort((a, b) => b - a)
+    const blueLens = Array.from(blueCountByLen.keys()).sort((a, b) => b - a)
+    const redNoByLen = new Map<number, number>(redLens.map((len, idx) => [len, idx + 1]))
+    const blueNoByLen = new Map<number, number>(blueLens.map((len, idx) => [len, idx + 1]))
+
+    return {
+      red: redLens.map((len) => ({
+        len,
+        no: redNoByLen.get(len) ?? 1,
+        count: redCountByLen.get(len) ?? 0,
+      })),
+      blue: blueLens.map((len) => ({
+        len,
+        no: blueNoByLen.get(len) ?? 1,
+        count: blueCountByLen.get(len) ?? 0,
+      })),
+    }
+  })()
 
   return (
     <div className="w-72 shrink-0 flex flex-col rounded-lg border border-border bg-white overflow-hidden">
@@ -384,23 +394,21 @@ export function SegmentPanel({
         ) : (
           <div>
             <div className="px-4 py-3 border-b border-border space-y-0.5 text-xs font-mono">
-              {uniqueRebarLengths.map((len) => {
-                const no = circleNoByLength.get(len) ?? 1
-                const c = circleCountByNo[no] ?? { red: 0, blue: 0 }
-                if (c.red === 0) return null
+              {circleSummaryRows.red.map((r) => {
+                if (r.count <= 0) return null
                 return (
-                  <div key={`r-${len}`} style={{ color: '#ef4444' }}>
-                    {circledNumber(no)}{len.toLocaleString()} × {c.red}
+                  <div key={`red-${r.len}`} style={{ color: '#ef4444' }}>
+                    {circledNumber(r.no)}
+                    {r.len.toLocaleString()} × {r.count}
                   </div>
                 )
               })}
-              {uniqueRebarLengths.map((len) => {
-                const no = circleNoByLength.get(len) ?? 1
-                const c = circleCountByNo[no] ?? { red: 0, blue: 0 }
-                if (c.blue === 0) return null
+              {circleSummaryRows.blue.map((r) => {
+                if (r.count <= 0) return null
                 return (
-                  <div key={`b-${len}`} style={{ color: '#3b82f6' }}>
-                    {circledNumber(no)}{len.toLocaleString()} × {c.blue}
+                  <div key={`blue-${r.len}`} style={{ color: '#3b82f6' }}>
+                    {circledNumber(r.no)}
+                    {r.len.toLocaleString()} × {r.count}
                   </div>
                 )
               })}

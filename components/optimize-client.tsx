@@ -11,6 +11,7 @@ import {
   getSegmentBars,
   getSegmentBarsSummary,
   getSegmentColor,
+  type SegmentColor,
 } from '@/lib/segment-meta'
 
 export function OptimizeClient({
@@ -391,35 +392,38 @@ function buildBarSummaryTable(pieces: PieceInput[]): BarSummaryRow[] {
 
 interface CircleSummaryRow {
   lengthMm: number
-  red: number
-  blue: number
+  color: SegmentColor
+  count: number
 }
 
-function buildCircleInputSummaryRows(segments: DrawingSegment[]): CircleSummaryRow[] {
+function buildCircleInputSummaryRows(
+  segments: DrawingSegment[],
+): CircleSummaryRow[] {
   const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
-  const uniqueLengths = Array.from(new Set(rebarSegments.map((s) => s.length_mm))).sort(
-    (a, b) => b - a,
-  )
-
-  const countByLength: Record<
-    number,
-    {
-      red: number
-      blue: number
-    }
-  > = {}
-  for (const len of uniqueLengths) countByLength[len] = { red: 0, blue: 0 }
+  const countsByKey = new Map<string, CircleSummaryRow>()
 
   for (const seg of rebarSegments) {
-    const c = getSegmentColor(seg)
-    countByLength[seg.length_mm][c]++
+    const color = getSegmentColor(seg)
+    const key = `${seg.length_mm}|${color}`
+    const cur =
+      countsByKey.get(key) ??
+      ({
+        lengthMm: seg.length_mm,
+        color,
+        count: 0,
+      } satisfies CircleSummaryRow)
+    cur.count++
+    countsByKey.set(key, cur)
   }
 
-  return uniqueLengths.map((len) => ({
-    lengthMm: len,
-    red: countByLength[len].red,
-    blue: countByLength[len].blue,
-  }))
+  const rows = Array.from(countsByKey.values())
+  rows.sort((a, b) => {
+    if (b.lengthMm !== a.lengthMm) return b.lengthMm - a.lengthMm
+    const caOrder = a.color === 'red' ? 0 : 1
+    const cbOrder = b.color === 'red' ? 0 : 1
+    return caOrder - cbOrder
+  })
+  return rows
 }
 
 function CircleInputSummary({
@@ -427,30 +431,44 @@ function CircleInputSummary({
 }: {
   rows: CircleSummaryRow[]
 }) {
-  const lengths = rows.map((r) => r.lengthMm) // 長い順（降順）
-  const circleNoByLength = new Map<number, number>(
-    lengths.map((len, idx) => [len, idx + 1]),
+  const redRows = rows
+    .filter((r) => r.color === 'red')
+    .sort((a, b) => b.lengthMm - a.lengthMm)
+  const blueRows = rows
+    .filter((r) => r.color === 'blue')
+    .sort((a, b) => b.lengthMm - a.lengthMm)
+  const redNoByLen = new Map<number, number>(
+    redRows.map((r, idx) => [r.lengthMm, idx + 1]),
+  )
+  const blueNoByLen = new Map<number, number>(
+    blueRows.map((r, idx) => [r.lengthMm, idx + 1]),
   )
 
   return (
     <div className="space-y-0.5 text-[11px] font-mono leading-relaxed">
-      {rows.map((r) => {
-        if (r.red === 0) return null
-        const no = circleNoByLength.get(r.lengthMm) ?? 1
+      {redRows.map((r) => {
+        if (r.count <= 0) return null
+        const no = redNoByLen.get(r.lengthMm) ?? 1
         return (
-          <div key={`red-${r.lengthMm}`} style={{ color: '#ef4444' }}>
+          <div
+            key={`${r.lengthMm}|${r.color}`}
+            style={{ color: '#ef4444' }}
+          >
             {circledNumber(no)}
-            {r.lengthMm.toLocaleString('en-US')} × {r.red}
+            {r.lengthMm.toLocaleString('en-US')} × {r.count}
           </div>
         )
       })}
-      {rows.map((r) => {
-        if (r.blue === 0) return null
-        const no = circleNoByLength.get(r.lengthMm) ?? 1
+      {blueRows.map((r) => {
+        if (r.count <= 0) return null
+        const no = blueNoByLen.get(r.lengthMm) ?? 1
         return (
-          <div key={`blue-${r.lengthMm}`} style={{ color: '#2563eb' }}>
+          <div
+            key={`${r.lengthMm}|${r.color}`}
+            style={{ color: '#2563eb' }}
+          >
             {circledNumber(no)}
-            {r.lengthMm.toLocaleString('en-US')} × {r.blue}
+            {r.lengthMm.toLocaleString('en-US')} × {r.count}
           </div>
         )
       })}

@@ -191,12 +191,14 @@ export function DrawingViewer({
     const rebarOnly = segmentsSortedForLabels.filter(
       (s) => !(s.bar_type === 'SPACING' && s.quantity === 0),
     )
-    const uniqueRebarLengths = Array.from(
-      new Set(rebarOnly.map((s) => s.length_mm)),
+    const redLens = Array.from(
+      new Set(rebarOnly.filter((s) => getSegmentColor(s) === 'red').map((s) => s.length_mm)),
     ).sort((a, b) => b - a)
-    const lengthIndexByValue = new Map<number, number>(
-      uniqueRebarLengths.map((len, idx) => [len, idx + 1]),
-    )
+    const blueLens = Array.from(
+      new Set(rebarOnly.filter((s) => getSegmentColor(s) === 'blue').map((s) => s.length_mm)),
+    ).sort((a, b) => b - a)
+    const redNoByLen = new Map<number, number>(redLens.map((len, idx) => [len, idx + 1]))
+    const blueNoByLen = new Map<number, number>(blueLens.map((len, idx) => [len, idx + 1]))
 
     segments.forEach((seg) => {
       const isSelected = seg.id === selectedSegmentId
@@ -255,7 +257,10 @@ export function DrawingViewer({
         ctx.fillText(`${seg.length_mm}`, 0, 0)
         ctx.restore()
       } else {
-        const circleNum = lengthIndexByValue.get(seg.length_mm) ?? 1
+        const circleNum =
+          segColor === 'blue'
+            ? (blueNoByLen.get(seg.length_mm) ?? 1)
+            : (redNoByLen.get(seg.length_mm) ?? 1)
         const stroke = segColor === 'blue' ? '#2563eb' : '#ef4444'
         const r = 9 / scale
         const yCenter = midY - 2 / scale
