@@ -188,6 +188,16 @@ export function DrawingViewer({
     applyRotationTransform(ctx, img.width, img.height, rotationSteps)
     ctx.drawImage(img, 0, 0)
 
+    const rebarOnly = segmentsSortedForLabels.filter(
+      (s) => !(s.bar_type === 'SPACING' && s.quantity === 0),
+    )
+    const uniqueRebarLengths = Array.from(
+      new Set(rebarOnly.map((s) => s.length_mm)),
+    ).sort((a, b) => b - a)
+    const lengthIndexByValue = new Map<number, number>(
+      uniqueRebarLengths.map((len, idx) => [len, idx + 1]),
+    )
+
     segments.forEach((seg) => {
       const isSelected = seg.id === selectedSegmentId
       const isSpacing = seg.bar_type === 'SPACING' && seg.quantity === 0
@@ -233,12 +243,56 @@ export function DrawingViewer({
             ? '#b91c1c'
             : '#ef4444'
       ctx.fillStyle = baseFill
-      ctx.font = `${12 / scale}px sans-serif`
-      const label = isSpacing ? (seg.label ?? 'SP') : labelById[seg.id] ?? '-'
-      const text = isSpacing
-        ? `${label} ${seg.length_mm}mm`
-        : `${label} ${seg.length_mm}mm`
-      ctx.fillText(text, midX, midY - 6 / scale)
+
+      const s = ((rotationSteps % 4) + 4) % 4
+      const counterAngleRad = (-s * Math.PI) / 2 // テキストのみ回転を打ち消して画面基準で正立
+
+      if (isSpacing) {
+        ctx.save()
+        ctx.translate(midX, midY - 6 / scale)
+        ctx.rotate(counterAngleRad)
+        ctx.font = `${10 / scale}px sans-serif`
+        ctx.fillText(`${seg.length_mm}`, 0, 0)
+        ctx.restore()
+      } else {
+        const circleNum = lengthIndexByValue.get(seg.length_mm) ?? 1
+        const stroke = segColor === 'blue' ? '#2563eb' : '#ef4444'
+        const r = 9 / scale
+        const yCenter = midY - 2 / scale
+
+        // Circle marker
+        ctx.beginPath()
+        ctx.arc(midX, yCenter, r, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
+        ctx.fill()
+        ctx.lineWidth = 2 / scale
+        ctx.strokeStyle = isSelected ? '#2563eb' : stroke
+        ctx.stroke()
+
+        // Number inside circle (画面基準で正立表示)
+        ctx.save()
+        ctx.translate(midX, yCenter)
+        ctx.rotate(counterAngleRad)
+        ctx.font = `bold ${11 / scale}px sans-serif`
+        ctx.fillStyle = isSelected ? '#2563eb' : stroke
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(String(circleNum), 0, 0)
+        ctx.restore()
+
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'alphabetic'
+
+        // 円内の下段は長さ（mmは省略）。色はグループで区別する
+        // 円内の下段（長さ）も画面基準で正立表示
+        ctx.save()
+        ctx.translate(midX, yCenter + 12 / scale)
+        ctx.rotate(counterAngleRad)
+        ctx.font = `${9 / scale}px sans-serif`
+        ctx.fillStyle = stroke
+        ctx.fillText(`${seg.length_mm}`, 0, 0)
+        ctx.restore()
+      }
     })
 
     if (splitArmedSegmentId && splitHoverPoint) {

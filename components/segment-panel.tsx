@@ -14,6 +14,12 @@ import {
   type SegmentColor,
 } from '@/lib/segment-meta'
 
+const CIRCLED_NUMS = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
+function circledNumber(n: number): string {
+  const chars = [...CIRCLED_NUMS]
+  return n >= 1 && n <= chars.length ? chars[n - 1] : `(${n})`
+}
+
 export function SegmentPanel({
   segments,
   selectedSegmentId,
@@ -52,6 +58,28 @@ export function SegmentPanel({
   const selectedNote = selected
     ? (decoded?.meta?.note ?? decoded?.legacyNote ?? '')
     : ''
+
+  // Canvasで使用する「円番号」は、長い長さ順（降順）で 1 から採番します。
+  // そのため、新しく追加された線の長さが既存より長ければ、その線の番号が自動で小さくなります。
+  const uniqueRebarLengths = Array.from(
+    new Set(rebarSegments.map((s) => s.length_mm)),
+  ).sort((a, b) => b - a)
+  const circleNoByLength = new Map<number, number>(
+    uniqueRebarLengths.map((len, idx) => [len, idx + 1]),
+  )
+  const circleCountByNo: Record<
+    number,
+    {
+      red: number
+      blue: number
+    }
+  > = {}
+  for (const seg of rebarSegments) {
+    const no = circleNoByLength.get(seg.length_mm) ?? 1
+    if (!circleCountByNo[no]) circleCountByNo[no] = { red: 0, blue: 0 }
+    const c = getSegmentColor(seg)
+    circleCountByNo[no][c]++
+  }
 
   return (
     <div className="w-80 shrink-0 flex flex-col rounded-lg border border-border bg-white overflow-hidden">
@@ -94,6 +122,13 @@ export function SegmentPanel({
               {selectedIsSpacing ? '間隔線の編集' : '線分の編集'}
             </span>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onSelect(null)}
+                className="text-[11px] text-muted hover:text-foreground transition-colors"
+              >
+                閉じる
+              </button>
               {onSplit && (
                 <button
                   type="button"
@@ -347,41 +382,67 @@ export function SegmentPanel({
             図面上に線分を追加してください。
           </div>
         ) : (
-          <ul className="divide-y divide-border">
-            {rebarSegments.map((seg) => (
-              <li
-                key={seg.id}
-                onClick={() => onSelect(seg.id)}
-                className={`flex items-center justify-between px-4 py-2.5 cursor-pointer text-sm transition-colors ${
-                  seg.id === selectedSegmentId
-                    ? 'bg-primary/5 text-primary'
-                    : 'hover:bg-gray-50'
-                }`}
-              >
-                <div className="min-w-0">
-                  <span
-                    className={`font-mono text-xs mr-2 ${
-                      segmentLabelById[seg.id]?.isAuto ? 'text-muted' : 'text-foreground'
-                    }`}
-                    title={
-                      segmentLabelById[seg.id]?.isAuto
-                        ? '自動ラベル（未入力）'
-                        : 'ラベル'
-                    }
-                  >
-                    {segmentLabelById[seg.id]?.label ?? '-'}
+          <div>
+            <div className="px-4 py-3 border-b border-border space-y-0.5 text-xs font-mono">
+              {uniqueRebarLengths.map((len) => {
+                const no = circleNoByLength.get(len) ?? 1
+                const c = circleCountByNo[no] ?? { red: 0, blue: 0 }
+                if (c.red === 0) return null
+                return (
+                  <div key={`r-${len}`} style={{ color: '#ef4444' }}>
+                    {circledNumber(no)}{len.toLocaleString()} × {c.red}
+                  </div>
+                )
+              })}
+              {uniqueRebarLengths.map((len) => {
+                const no = circleNoByLength.get(len) ?? 1
+                const c = circleCountByNo[no] ?? { red: 0, blue: 0 }
+                if (c.blue === 0) return null
+                return (
+                  <div key={`b-${len}`} style={{ color: '#3b82f6' }}>
+                    {circledNumber(no)}{len.toLocaleString()} × {c.blue}
+                  </div>
+                )
+              })}
+            </div>
+            <ul className="divide-y divide-border">
+              {rebarSegments.map((seg) => (
+                <li
+                  key={seg.id}
+                  onClick={() => onSelect(seg.id)}
+                  className={`flex items-center justify-between px-4 py-2.5 cursor-pointer text-sm transition-colors ${
+                    seg.id === selectedSegmentId
+                      ? 'bg-primary/5 text-primary'
+                      : 'hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <span
+                      className={`font-mono text-xs mr-2 ${
+                        segmentLabelById[seg.id]?.isAuto
+                          ? 'text-muted'
+                          : 'text-foreground'
+                      }`}
+                      title={
+                        segmentLabelById[seg.id]?.isAuto
+                          ? '自動ラベル（未入力）'
+                          : 'ラベル'
+                      }
+                    >
+                      {segmentLabelById[seg.id]?.label ?? '-'}
+                    </span>
+                    <span className="font-medium">{seg.length_mm}mm</span>
+                    <span className="text-muted ml-1.5 truncate">
+                      {getSegmentBarsSummary(seg)}
+                    </span>
+                  </div>
+                  <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono">
+                    {getSegmentColor(seg) === 'blue' ? '青' : '赤'}
                   </span>
-                  <span className="font-medium">{seg.length_mm}mm</span>
-                  <span className="text-muted ml-1.5 truncate">
-                    {getSegmentBarsSummary(seg)}
-                  </span>
-                </div>
-                <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono">
-                  {getSegmentColor(seg) === 'blue' ? '青' : '赤'}
-                </span>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </div>
 

@@ -1,13 +1,17 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import type { DrawingSegment, OptimizationRun } from '@/lib/types/database'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput, type AlgorithmType } from '@/lib/optimizer'
 import { OptimizationResultView } from '@/components/optimization-result-view'
-import { getSegmentBars, getSegmentBarsSummary } from '@/lib/segment-meta'
+import {
+  getSegmentBars,
+  getSegmentBarsSummary,
+  getSegmentColor,
+} from '@/lib/segment-meta'
 
 export function OptimizeClient({
   projectId,
@@ -39,6 +43,11 @@ export function OptimizeClient({
   const [saved, setSaved] = useState(false)
   const supabase = createClient()
   const router = useRouter()
+
+  const circleInputSummaryRows = useMemo(
+    () => buildCircleInputSummaryRows(segments),
+    [segments],
+  )
 
   function handleCalculate() {
     const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
@@ -162,6 +171,7 @@ export function OptimizeClient({
           <p className="text-sm text-muted">線分データがありません。</p>
         ) : (
           <div className="space-y-2">
+            <CircleInputSummary rows={circleInputSummaryRows} />
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-muted">
@@ -344,6 +354,12 @@ interface BarSummaryRow {
   total: number
 }
 
+const CIRCLED_NUMS = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
+function circledNumber(n: number): string {
+  const chars = [...CIRCLED_NUMS]
+  return n >= 1 && n <= chars.length ? chars[n - 1] : `(${n})`
+}
+
 function buildBarSummaryTable(pieces: PieceInput[]): BarSummaryRow[] {
   const map = new Map<number, Map<string, number>>()
   for (const p of pieces) {
@@ -371,6 +387,75 @@ function buildBarSummaryTable(pieces: PieceInput[]): BarSummaryRow[] {
   }
   rows.sort((a, b) => b.lengthMm - a.lengthMm)
   return rows
+}
+
+interface CircleSummaryRow {
+  lengthMm: number
+  red: number
+  blue: number
+}
+
+function buildCircleInputSummaryRows(segments: DrawingSegment[]): CircleSummaryRow[] {
+  const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
+  const uniqueLengths = Array.from(new Set(rebarSegments.map((s) => s.length_mm))).sort(
+    (a, b) => b - a,
+  )
+
+  const countByLength: Record<
+    number,
+    {
+      red: number
+      blue: number
+    }
+  > = {}
+  for (const len of uniqueLengths) countByLength[len] = { red: 0, blue: 0 }
+
+  for (const seg of rebarSegments) {
+    const c = getSegmentColor(seg)
+    countByLength[seg.length_mm][c]++
+  }
+
+  return uniqueLengths.map((len) => ({
+    lengthMm: len,
+    red: countByLength[len].red,
+    blue: countByLength[len].blue,
+  }))
+}
+
+function CircleInputSummary({
+  rows,
+}: {
+  rows: CircleSummaryRow[]
+}) {
+  const lengths = rows.map((r) => r.lengthMm) // 長い順（降順）
+  const circleNoByLength = new Map<number, number>(
+    lengths.map((len, idx) => [len, idx + 1]),
+  )
+
+  return (
+    <div className="space-y-0.5 text-[11px] font-mono leading-relaxed">
+      {rows.map((r) => {
+        if (r.red === 0) return null
+        const no = circleNoByLength.get(r.lengthMm) ?? 1
+        return (
+          <div key={`red-${r.lengthMm}`} style={{ color: '#ef4444' }}>
+            {circledNumber(no)}
+            {r.lengthMm.toLocaleString('en-US')} × {r.red}
+          </div>
+        )
+      })}
+      {rows.map((r) => {
+        if (r.blue === 0) return null
+        const no = circleNoByLength.get(r.lengthMm) ?? 1
+        return (
+          <div key={`blue-${r.lengthMm}`} style={{ color: '#2563eb' }}>
+            {circledNumber(no)}
+            {r.lengthMm.toLocaleString('en-US')} × {r.blue}
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 function BarSummarySection({
