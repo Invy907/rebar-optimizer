@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -35,9 +36,17 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold tracking-tight">鉄筋切断最適化</h1>
-          <p className="mt-2 text-sm text-muted">ログインして開始します</p>
+        <div className="mb-8 flex flex-col items-center text-center gap-3">
+          <Image
+            src="/logo.png"
+            alt="会社ロゴ"
+            width={240}
+            height={40}
+            className="h-auto w-auto object-contain"
+            priority
+          />
+          <h1 className="text-2xl font-bold tracking-tight">鉄筋資材算定システム</h1>
+          <p className="text-sm text-muted">ログインして開始します</p>
         </div>
 
         <form onSubmit={handleLogin} className="space-y-4">
