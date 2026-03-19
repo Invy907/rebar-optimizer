@@ -48,6 +48,8 @@ export function DrawingViewer({
   initialSegments: DrawingSegment[]
   initialSelectedSegmentId?: string
 }) {
+  const rotationStorageKey = `drawing:${drawingId}:rotationSteps`
+
   const [segments, setSegments] = useState<DrawingSegment[]>(initialSegments)
   const [drawing, setDrawing] = useState(false)
   const [startPoint, setStartPoint] = useState<Point | null>(null)
@@ -64,6 +66,33 @@ export function DrawingViewer({
     point: Point
     segmentIds: [string, string]
   } | null>(null)
+  const [rotationSteps, setRotationSteps] = useState<number>(0) // 0/1/2/3 => 0/90/180/270deg clockwise
+  const thumbUploadTimerRef = useRef<number | null>(null)
+  const didInitThumbRef = useRef(false)
+
+  function normalizeRotationSteps(steps: number): number {
+    return ((steps % 4) + 4) % 4
+  }
+
+  function readSavedRotationSteps(): number | null {
+    try {
+      const raw = window.localStorage.getItem(rotationStorageKey)
+      if (raw == null) return null
+      const n = Number.parseInt(raw, 10)
+      if (!Number.isFinite(n)) return null
+      return normalizeRotationSteps(n)
+    } catch {
+      return null
+    }
+  }
+
+  function saveRotationSteps(steps: number) {
+    try {
+      window.localStorage.setItem(rotationStorageKey, String(normalizeRotationSteps(steps)))
+    } catch {
+      // ignore
+    }
+  }
   const [newSegmentDraft, setNewSegmentDraft] = useState<{
     kind: 'rebar' | 'spacing'
     p1: Point
@@ -73,6 +102,59 @@ export function DrawingViewer({
     bars: { barType: string; quantity: string }[]
     label: string
   } | null>(null)
+
+  const lastUsedRebarDraftKey = `project:${projectId}:lastUsedRebarDraft:v1`
+
+  type StoredRebarDraft = {
+    color: SegmentColor
+    bars: SegmentBarItem[]
+  }
+
+  function readLastUsedRebarDraft(): StoredRebarDraft | null {
+    try {
+      const raw = window.localStorage.getItem(lastUsedRebarDraftKey)
+      if (!raw) return null
+      const obj = JSON.parse(raw) as unknown
+      if (!obj || typeof obj !== 'object') return null
+      const rec = obj as Record<string, unknown>
+      const colorRaw = rec.color
+      const color: SegmentColor | null =
+        colorRaw === 'red' || colorRaw === 'blue' ? colorRaw : null
+
+      const barsRaw = rec.bars
+      const bars: SegmentBarItem[] = Array.isArray(barsRaw)
+        ? barsRaw
+            .map((x) => {
+              if (!x || typeof x !== 'object') return null
+              const xx = x as Record<string, unknown>
+              const barType = String(xx.barType ?? '').trim()
+              const quantity = Math.floor(Number(xx.quantity) || 0)
+              if (!barType || quantity <= 0) return null
+              return { barType, quantity }
+            })
+            .filter((x): x is SegmentBarItem => !!x)
+        : []
+
+      if (!color || bars.length === 0) return null
+      return { color, bars }
+    } catch {
+      return null
+    }
+  }
+
+  function writeLastUsedRebarDraft(draft: StoredRebarDraft) {
+    try {
+      window.localStorage.setItem(
+        lastUsedRebarDraftKey,
+        JSON.stringify({
+          color: draft.color,
+          bars: draft.bars.map((b) => ({ barType: b.barType, quantity: b.quantity })),
+        }),
+      )
+    } catch {
+      // ignore
+    }
+  }
   const [tool, setTool] = useState<'select' | 'draw' | 'spacing'>('select')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -103,6 +185,7 @@ export function DrawingViewer({
     ctx.save()
     ctx.translate(offset.x, offset.y)
     ctx.scale(scale, scale)
+    applyRotationTransform(ctx, img.width, img.height, rotationSteps)
     ctx.drawImage(img, 0, 0)
 
     segments.forEach((seg) => {
@@ -208,11 +291,36 @@ export function DrawingViewer({
     splitArmedSegmentId,
     splitHoverPoint,
     lastSplitMarker,
+    rotationSteps,
   ])
 
   useEffect(() => {
     drawCanvas()
   }, [drawCanvas])
+
+  useEffect(() => {
+    if (!imgLoaded) return
+    saveRotationSteps(rotationSteps)
+  }, [rotationSteps, imgLoaded])
+
+  useEffect(() => {
+    if (!imgLoaded) return
+    if (!didInitThumbRef.current) {
+      // Skip initial mount thumbnail generation; wait for a real edit.
+      didInitThumbRef.current = true
+      return
+    }
+    if (thumbUploadTimerRef.current) {
+      window.clearTimeout(thumbUploadTimerRef.current)
+    }
+    thumbUploadTimerRef.current = window.setTimeout(() => {
+      void uploadCompositeThumbnail()
+    }, 1200)
+    return () => {
+      if (thumbUploadTimerRef.current) window.clearTimeout(thumbUploadTimerRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [segments, imgLoaded, rotationSteps])
 
   useEffect(() => {
     if (!splitArmedSegmentId) return
@@ -272,9 +380,19 @@ export function DrawingViewer({
             if (canvas && container) {
               canvas.width = container.clientWidth
               canvas.height = container.clientHeight
+              const defaultSteps = img.width < img.height ? 1 : 0
+              const savedSteps = readSavedRotationSteps()
+              const stepsToUse = savedSteps ?? defaultSteps
+              setRotationSteps(stepsToUse)
+              setOffset({ x: 0, y: 0 })
+              const { w: rotW, h: rotH } = getRotatedDims(
+                img.width,
+                img.height,
+                stepsToUse,
+              )
               const fitScale = Math.min(
-                container.clientWidth / img.width,
-                container.clientHeight / img.height,
+                container.clientWidth / rotW,
+                container.clientHeight / rotH,
                 1,
               )
               setScale(fitScale)
@@ -299,9 +417,15 @@ export function DrawingViewer({
       if (canvas && container) {
         canvas.width = container.clientWidth
         canvas.height = container.clientHeight
+        const defaultSteps = img.width < img.height ? 1 : 0
+        const savedSteps = readSavedRotationSteps()
+        const stepsToUse = savedSteps ?? defaultSteps
+        setRotationSteps(stepsToUse)
+        setOffset({ x: 0, y: 0 })
+        const { w: rotW, h: rotH } = getRotatedDims(img.width, img.height, stepsToUse)
         const fitScale = Math.min(
-          container.clientWidth / img.width,
-          container.clientHeight / img.height,
+          container.clientWidth / rotW,
+          container.clientHeight / rotH,
           1,
         )
         setScale(fitScale)
@@ -329,10 +453,21 @@ export function DrawingViewer({
     const canvas = canvasRef.current
     if (!canvas) return { x: 0, y: 0 }
     const rect = canvas.getBoundingClientRect()
-    return {
-      x: (e.clientX - rect.left - offset.x) / scale,
-      y: (e.clientY - rect.top - offset.y) / scale,
-    }
+    const xr = (e.clientX - rect.left - offset.x) / scale
+    const yr = (e.clientY - rect.top - offset.y) / scale
+    const img = imgRef.current
+    if (!img) return { x: xr, y: yr }
+
+    const w = img.width
+    const h = img.height
+    const steps = ((rotationSteps % 4) + 4) % 4
+
+    // The rendering applies rotation after the offset/scale transform.
+    // Here we undo it so mouse input stays aligned with segment coordinates.
+    if (steps === 0) return { x: xr, y: yr }
+    if (steps === 1) return { x: yr, y: h - xr } // 90deg clockwise
+    if (steps === 2) return { x: w - xr, y: h - yr } // 180deg
+    return { x: w - yr, y: xr } // 270deg clockwise
   }
 
   function handleMouseDown(e: React.MouseEvent) {
@@ -472,21 +607,37 @@ export function DrawingViewer({
           ? `S${String(Number(RegExp.$1) + 1).padStart(2, '0')}`
           : `S${String(segmentsSortedForLabels.length + 1).padStart(2, '0')}`
 
-    // デフォルトの鉄筋種別は、直前の線分が通常の鉄筋ならそれを引き継ぎ、
-    // そうでなければ D10 にする。間隔線の場合は常に 'SPACING' を内部的に使う。
+    // モーダルのデフォルトは「同一プロジェクト内で直前に使った値」を優先。
+    // ない場合は直前の線分から引き継ぐ。最後まで無ければ D10。
+    const stored = kind === 'rebar' ? readLastUsedRebarDraft() : null
+
     const lastBars = last ? getSegmentBars(last) : []
-    const defaultBarTypeForRebar =
-      lastBars[0]?.barType && BAR_TYPES.includes(lastBars[0].barType as (typeof BAR_TYPES)[number])
-        ? lastBars[0].barType
-        : 'D10'
+    const defaultBars =
+      stored?.bars?.length
+        ? stored.bars
+        : lastBars.length
+          ? lastBars
+          : [{ barType: 'D10', quantity: 1 }]
+
+    const supportedBars = defaultBars.filter((b) => BAR_TYPES.includes(b.barType as (typeof BAR_TYPES)[number]))
+    const finalBars = supportedBars.length ? supportedBars : [{ barType: 'D10', quantity: 1 }]
+
+    const defaultColor: SegmentColor =
+      kind === 'rebar' ? stored?.color ?? (last ? getSegmentColor(last) : 'red') : 'red'
 
     setNewSegmentDraft({
       kind,
       p1,
       p2,
       lengthMm: '',
-      color: 'red',
-      bars: kind === 'spacing' ? [] : [{ barType: defaultBarTypeForRebar, quantity: '1' }],
+      color: defaultColor,
+      bars:
+        kind === 'spacing'
+          ? []
+          : finalBars.map((b) => ({
+              barType: b.barType,
+              quantity: String(b.quantity),
+            })),
       label: kind === 'spacing' ? '間隔' : nextLabel,
     })
   }
@@ -545,6 +696,12 @@ export function DrawingViewer({
       setSegments((prev) => [...prev, data])
       setSelectedSegmentId(data.id)
       setLastAction({ type: 'create', segment: data })
+      if (!isSpacing) {
+        writeLastUsedRebarDraft({
+          color: newSegmentDraft.color,
+          bars,
+        })
+      }
       setNewSegmentDraft(null)
     }
   }
@@ -746,6 +903,87 @@ export function DrawingViewer({
     }
   }
 
+  function refitForRotation(nextSteps: number) {
+    const img = imgRef.current
+    const container = containerRef.current
+    if (!img || !container) return
+    const { w: rotW, h: rotH } = getRotatedDims(img.width, img.height, nextSteps)
+    const fitScale = Math.min(container.clientWidth / rotW, container.clientHeight / rotH, 1)
+    setRotationSteps(nextSteps)
+    setScale(fitScale)
+    setOffset({ x: 0, y: 0 })
+  }
+
+  function rotateRight90() {
+    const nextSteps = ((rotationSteps + 1) % 4 + 4) % 4
+    refitForRotation(nextSteps)
+  }
+
+  function rotateLeft90() {
+    const nextSteps = ((rotationSteps + 3) % 4 + 4) % 4
+    refitForRotation(nextSteps)
+    void uploadCompositeThumbnail(nextSteps)
+  }
+
+  async function uploadCompositeThumbnail(stepsOverride?: number) {
+    const img = imgRef.current
+    if (!img || !imgLoaded) return
+
+    const segmentsToDraw = segments.filter(
+      (s) => !(s.bar_type === 'SPACING' && s.quantity === 0),
+    )
+
+    const steps = typeof stepsOverride === 'number' ? stepsOverride : rotationSteps
+    const normalizedSteps = normalizeRotationSteps(steps)
+
+    const { w: rotW, h: rotH } = getRotatedDims(
+      img.width,
+      img.height,
+      normalizedSteps,
+    )
+    const maxDim = 320
+    const scaleDown = Math.min(1, maxDim / Math.max(rotW, rotH))
+
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(rotW * scaleDown))
+    canvas.height = Math.max(1, Math.round(rotH * scaleDown))
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    ctx.save()
+    ctx.scale(scaleDown, scaleDown)
+    applyRotationTransform(ctx, img.width, img.height, normalizedSteps)
+    ctx.drawImage(img, 0, 0)
+    ctx.lineCap = 'round'
+
+    segmentsToDraw.forEach((seg) => {
+      const segColor = getSegmentColor(seg)
+      ctx.beginPath()
+      ctx.moveTo(seg.x1, seg.y1)
+      ctx.lineTo(seg.x2, seg.y2)
+      ctx.strokeStyle = segColor === 'blue' ? '#2563eb' : '#ef4444'
+      ctx.lineWidth = 2
+      ctx.stroke()
+    })
+
+    ctx.restore()
+
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/png'),
+    )
+    if (!blob) return
+
+    const thumbPath = `${projectId}/${drawingId}.thumb.png`
+    const { error } = await supabase.storage
+      .from('drawings')
+      .upload(thumbPath, blob, { upsert: true, contentType: 'image/png' })
+    if (error) {
+      // Thumbnail generation is a best-effort feature.
+      console.warn('Thumbnail upload error:', error)
+    }
+  }
+
   const selectedSegment = segments.find((s) => s.id === selectedSegmentId)
 
   return (
@@ -782,6 +1020,17 @@ export function DrawingViewer({
             }`}
           >
             間隔線
+          </button>
+          <button
+            type="button"
+            onClick={rotateLeft90}
+            disabled={!imgLoaded}
+            className={`rounded-md px-2 py-1.5 text-sm transition-colors ${
+              !imgLoaded ? 'bg-gray-100 text-muted cursor-not-allowed' : 'bg-gray-100 text-foreground hover:bg-gray-200'
+            }`}
+            title="左に90度回転"
+          >
+            ↺ 90°
           </button>
           <span className="text-xs text-muted ml-2">
             {splitArmedSegmentId
@@ -991,6 +1240,42 @@ export function DrawingViewer({
       )}
     </div>
   )
+}
+
+function getRotatedDims(w: number, h: number, steps: number): { w: number; h: number } {
+  const s = ((steps % 4) + 4) % 4
+  if (s % 2 === 1) {
+    return { w: h, h: w }
+  }
+  return { w, h }
+}
+
+function applyRotationTransform(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  steps: number,
+) {
+  const s = ((steps % 4) + 4) % 4
+  // Mapping (original -> rotated) for clockwise steps:
+  // s=0:  (x, y) -> (x, y)
+  // s=1:  (x, y) -> (h - y, x)
+  // s=2:  (x, y) -> (w - x, h - y)
+  // s=3:  (x, y) -> (y, w - x)
+  if (s === 0) return
+  if (s === 1) {
+    // x' = -y + h, y' = x
+    ctx.transform(0, 1, -1, 0, h, 0)
+    return
+  }
+  if (s === 2) {
+    // x' = -x + w, y' = -y + h
+    ctx.transform(-1, 0, 0, -1, w, h)
+    return
+  }
+  // s === 3
+  // x' = y, y' = -x + w
+  ctx.transform(0, -1, 1, 0, 0, w)
 }
 
 function distToSegment(p: Point, a: Point, b: Point): number {

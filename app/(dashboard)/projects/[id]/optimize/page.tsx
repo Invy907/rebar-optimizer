@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import type { Project, DrawingSegment, OptimizationRun } from '@/lib/types/database'
+import type { Project, DrawingSegment, OptimizationRun, Drawing } from '@/lib/types/database'
 import { OptimizeClient } from '@/components/optimize-client'
 
 export default async function OptimizePage({
@@ -22,6 +22,14 @@ export default async function OptimizePage({
     .single<Project>()
 
   if (!project) notFound()
+
+  const { data: latestDrawing } = await supabase
+    .from('drawings')
+    .select('id')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single<Pick<Drawing, 'id'> | null>()
 
   const { data: segments } = await supabase
     .from('drawing_segments')
@@ -48,7 +56,11 @@ export default async function OptimizePage({
     <div>
       <div className="mb-6">
         <Link
-          href={`/projects/${projectId}`}
+          href={
+            latestDrawing?.id
+              ? `/projects/${projectId}/drawings/${latestDrawing.id}`
+              : `/projects/${projectId}`
+          }
           className="text-sm text-muted hover:text-foreground transition-colors"
         >
           &larr; プロジェクトに戻る
