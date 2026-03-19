@@ -1041,7 +1041,7 @@ export function DrawingViewer({
   const selectedSegment = segments.find((s) => s.id === selectedSegmentId)
 
   return (
-    <div className="flex flex-1 gap-4 min-h-0">
+    <div className="flex flex-1 gap-2 min-h-0">
       {/* Canvas area */}
       <div className="flex-1 flex flex-col min-w-0">
         <div className="mb-2 flex items-center gap-2">
