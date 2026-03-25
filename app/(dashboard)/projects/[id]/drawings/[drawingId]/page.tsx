@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import type { Drawing, DrawingSegment, Project } from '@/lib/types/database'
+import type { Drawing, DrawingSegment, Project, Unit } from '@/lib/types/database'
 import { DrawingViewer } from '@/components/drawing-viewer'
 import { DrawingHeader } from '@/components/drawing-header'
 
@@ -40,6 +40,12 @@ export default async function DrawingDetailPage({
     .order('created_at', { ascending: true })
     .returns<DrawingSegment[]>()
 
+  const { data: units } = await supabase
+    .from('units')
+    .select('*')
+    .order('created_at', { ascending: true })
+    .returns<Unit[]>()
+
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem-4rem)]">
       {project && (
@@ -57,6 +63,7 @@ export default async function DrawingDetailPage({
         fileType={drawing.file_type}
         initialSegments={segments ?? []}
         initialSelectedSegmentId={segmentId}
+        units={units ?? []}
       />
     </div>
   )

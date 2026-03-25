@@ -1,9 +1,12 @@
+// components/segment-panel.tsx
+
 'use client'
 
-import type { DrawingSegment } from '@/lib/types/database'
-import { getSegmentLabelMapWithMeta } from '@/lib/segment-labels'
+import { useState } from 'react'
+import type { DrawingSegment, Unit } from '@/lib/types/database'
 import Link from 'next/link'
 import {
+  buildCircleSummaryByColor,
   decodeSegmentMeta,
   encodeSegmentMeta,
   getSegmentBars,
@@ -13,17 +16,40 @@ import {
   type SegmentBarItem,
   type SegmentColor,
 } from '@/lib/segment-meta'
+import {
+  getSegmentColorLabelJa,
+  getSegmentStrokeHex,
+  normalizeSegmentColor,
+  SEGMENT_COLOR_DEFINITIONS,
+} from '@/lib/segment-colors'
 
 const CIRCLED_NUMS = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
-function circledNumber(n: number): string {
+
+/** 手動で色・鉄筋を変えたときはユニット参照を外す（メモの値はそのまま更新） */
+const CLEAR_UNIT_LINK = {
+  unit_id: null as string | null,
+  unit_code: null as string | null,
+  unit_name: null as string | null,
+  mark_number: null as number | null,
+}
+
+function circledNumber(n: number | null): string {
+  if (n == null) return '—'
   const chars = [...CIRCLED_NUMS]
   return n >= 1 && n <= chars.length ? chars[n - 1] : `(${n})`
 }
 
+/** DBの units.id（UUID）のみ unit_id に保存可能（mock/local は FK 制約回避のため割当不可） */
+function isPersistedUnitId(id: string): boolean {
+  return !id.startsWith('mock-') && !id.startsWith('local-')
+}
+
 export function SegmentPanel({
   segments,
-  selectedSegmentId,
-  onSelect,
+  selectedSegmentIds,
+  onReplaceSelection,
+  onToggleSegmentSelection,
+  onBulkApplyTemplateColor,
   onUpdate,
   onDelete,
   onSplit,
@@ -31,10 +57,16 @@ export function SegmentPanel({
   projectId,
   canUndo,
   onUndo,
+  units = [],
+  templateOptions = [],
+  activeTemplateId = '',
+  activeTemplateColor = 'red',
 }: {
   segments: DrawingSegment[]
-  selectedSegmentId: string | null
-  onSelect: (id: string | null) => void
+  selectedSegmentIds: string[]
+  onReplaceSelection: (ids: string[]) => void
+  onToggleSegmentSelection: (id: string) => void
+  onBulkApplyTemplateColor: (templateId: string, color: SegmentColor) => void | Promise<void>
   onUpdate: (id: string, updates: Partial<DrawingSegment>) => void
   onDelete: (id: string) => void
   onSplit?: (id: string) => void
@@ -42,54 +74,49 @@ export function SegmentPanel({
   projectId: string
   canUndo?: boolean
   onUndo?: () => void
+  units?: Unit[]
+  templateOptions?: Array<{ id: string; name: string }>
+  activeTemplateId?: string
+  activeTemplateColor?: SegmentColor
 }) {
+  const persistedUnits = units.filter(
+    (u) => u.is_active !== false && isPersistedUnitId(u.id),
+  )
+  const [bulkTemplateId, setBulkTemplateId] = useState('')
+  const [bulkColor, setBulkColor] = useState<SegmentColor>(activeTemplateColor)
+  const resolvedBulkTemplateId =
+    bulkTemplateId && templateOptions.some((t) => t.id === bulkTemplateId)
+      ? bulkTemplateId
+      : activeTemplateId || templateOptions[0]?.id || ''
   const rebarSegments = segments.filter(
     (s) => !(s.bar_type === 'SPACING' && s.quantity === 0),
   )
   const spacingSegments = segments.filter(
     (s) => s.bar_type === 'SPACING' && s.quantity === 0,
   )
-  const selected = segments.find((s) => s.id === selectedSegmentId) ?? null
+  const singleSelectedId =
+    selectedSegmentIds.length === 1 ? selectedSegmentIds[0]! : null
+  const selected = singleSelectedId
+    ? segments.find((s) => s.id === singleSelectedId) ?? null
+    : null
   const selectedIsSpacing = selected?.bar_type === 'SPACING'
-  const segmentLabelById = getSegmentLabelMapWithMeta(rebarSegments)
-  const selectedColor: SegmentColor = selected ? getSegmentColor(selected) : 'red'
-  const selectedBars: SegmentBarItem[] = selected ? getSegmentBars(selected) : []
+  const selectedColor: SegmentColor = selected
+    ? getSegmentColor(selected, units)
+    : 'red'
+  const selectedBars: SegmentBarItem[] = selected
+    ? getSegmentBars(selected, units)
+    : []
   const decoded = selected ? decodeSegmentMeta(selected.memo) : null
   const selectedNote = selected
     ? (decoded?.meta?.note ?? decoded?.legacyNote ?? '')
     : ''
+  const selectedAssignedUnit =
+    selected?.unit_id != null
+      ? units.find((u) => u.id === selected.unit_id) ?? null
+      : null
 
-  // 円番号は「赤グループ」と「青グループ」で別々に採番します（それぞれ長い順で 1 から）。
-  const circleSummaryRows = (() => {
-    const redCountByLen = new Map<number, number>()
-    const blueCountByLen = new Map<number, number>()
-    for (const seg of rebarSegments) {
-      const c = getSegmentColor(seg)
-      if (c === 'blue') {
-        blueCountByLen.set(seg.length_mm, (blueCountByLen.get(seg.length_mm) ?? 0) + 1)
-      } else {
-        redCountByLen.set(seg.length_mm, (redCountByLen.get(seg.length_mm) ?? 0) + 1)
-      }
-    }
-
-    const redLens = Array.from(redCountByLen.keys()).sort((a, b) => b - a)
-    const blueLens = Array.from(blueCountByLen.keys()).sort((a, b) => b - a)
-    const redNoByLen = new Map<number, number>(redLens.map((len, idx) => [len, idx + 1]))
-    const blueNoByLen = new Map<number, number>(blueLens.map((len, idx) => [len, idx + 1]))
-
-    return {
-      red: redLens.map((len) => ({
-        len,
-        no: redNoByLen.get(len) ?? 1,
-        count: redCountByLen.get(len) ?? 0,
-      })),
-      blue: blueLens.map((len) => ({
-        len,
-        no: blueNoByLen.get(len) ?? 1,
-        count: blueCountByLen.get(len) ?? 0,
-      })),
-    }
-  })()
+  // 円番号はユニット/コード由来の番号を表示。長さ順フォールバックは使わない。
+  const circleSummarySections = buildCircleSummaryByColor(rebarSegments, units)
 
   return (
     <div className="w-72 shrink-0 flex flex-col rounded-lg border border-border bg-white overflow-hidden">
@@ -113,8 +140,8 @@ export function SegmentPanel({
         {rebarSegments.length > 0 && (
           <Link
             href={
-              selectedSegmentId
-                ? `/projects/${projectId}/optimize?segmentId=${selectedSegmentId}`
+              singleSelectedId
+                ? `/projects/${projectId}/optimize?segmentId=${singleSelectedId}`
                 : `/projects/${projectId}/optimize`
             }
             className="rounded bg-primary px-3 py-1 text-xs font-medium text-white hover:bg-primary-hover transition-colors"
@@ -123,6 +150,74 @@ export function SegmentPanel({
           </Link>
         )}
       </div>
+
+      {/* 複数選択: 一括ユニット */}
+      {selectedSegmentIds.length > 1 && (
+        <div className="border-b border-border p-4 space-y-2 bg-amber-50/60">
+          <div className="text-xs font-medium text-amber-900">
+            {selectedSegmentIds.filter((sid) => {
+              const s = segments.find((x) => x.id === sid)
+              return s && !(s.bar_type === 'SPACING' && s.quantity === 0)
+            }).length}
+            本の鉄筋線を選択中
+          </div>
+          {persistedUnits.length > 0 ? (
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex-1 min-w-[140px]">
+                <label className="block text-[10px] text-muted mb-0.5">
+                  テンプレート一括適用
+                </label>
+                <select
+                  value={resolvedBulkTemplateId}
+                  onChange={(e) => setBulkTemplateId(e.target.value)}
+                  className="w-full rounded border border-border px-2 py-1.5 text-xs outline-none focus:border-primary bg-white"
+                >
+                  {templateOptions.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="w-[92px]">
+                <label className="block text-[10px] text-muted mb-0.5">色</label>
+                <select
+                  value={bulkColor}
+                  onChange={(e) => setBulkColor(normalizeSegmentColor(e.target.value))}
+                  className="w-full rounded border border-border px-2 py-1.5 text-xs outline-none focus:border-primary bg-white"
+                >
+                  {SEGMENT_COLOR_DEFINITIONS.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.labelJa}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                type="button"
+                className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-hover"
+                onClick={() => {
+                  if (!resolvedBulkTemplateId) return
+                  void onBulkApplyTemplateColor(resolvedBulkTemplateId, bulkColor)
+                }}
+              >
+                適用
+              </button>
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted">
+              保存済みユニットがないため一括適用できません。
+            </p>
+          )}
+          <button
+            type="button"
+            className="text-[11px] text-muted hover:text-foreground underline"
+            onClick={() => onReplaceSelection([])}
+          >
+            選択を解除
+          </button>
+        </div>
+      )}
 
       {/* Selected segment editor */}
       {selected && (
@@ -134,7 +229,7 @@ export function SegmentPanel({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => onSelect(null)}
+                onClick={() => onReplaceSelection([])}
                 className="text-[11px] text-muted hover:text-foreground transition-colors"
               >
                 閉じる
@@ -167,6 +262,7 @@ export function SegmentPanel({
                         memo,
                         bar_type: legacy.bar_type,
                         quantity: legacy.quantity,
+                        ...CLEAR_UNIT_LINK,
                       })
                     })()
                   }
@@ -201,11 +297,11 @@ export function SegmentPanel({
               <div>
                 <label className="block text-xs text-muted mb-0.5">線の色</label>
                 <select
-                  value={selectedColor}
+                  value={normalizeSegmentColor(selectedColor)}
                   onChange={(e) => {
-                    const nextColor = (e.target.value as SegmentColor) || 'red'
+                    const nextColor = normalizeSegmentColor(e.target.value)
                     const { meta, legacyNote } = decodeSegmentMeta(selected.memo)
-                    const bars = getSegmentBars(selected)
+                    const bars = getSegmentBars(selected, units)
                     const note = meta?.note ?? legacyNote ?? null
                     const memo = encodeSegmentMeta({
                       v: 1,
@@ -213,12 +309,15 @@ export function SegmentPanel({
                       bars,
                       note,
                     })
-                    onUpdate(selected.id, { memo })
+                    onUpdate(selected.id, { memo, ...CLEAR_UNIT_LINK })
                   }}
                   className="w-full rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary bg-white"
                 >
-                  <option value="red">赤</option>
-                  <option value="blue">青</option>
+                  {SEGMENT_COLOR_DEFINITIONS.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.labelJa}
+                    </option>
+                  ))}
                 </select>
               </div>
             )}
@@ -230,7 +329,7 @@ export function SegmentPanel({
                 <button
                   type="button"
                   onClick={() => {
-                    const bars = getSegmentBars(selected)
+                    const bars = getSegmentBars(selected, units)
                     const next = [
                       ...bars,
                       {
@@ -253,6 +352,7 @@ export function SegmentPanel({
                       memo,
                       bar_type: legacy.bar_type,
                       quantity: legacy.quantity,
+                      ...CLEAR_UNIT_LINK,
                     })
                   }}
                   className="text-xs text-primary hover:underline"
@@ -282,6 +382,7 @@ export function SegmentPanel({
                             memo,
                             bar_type: legacy.bar_type,
                             quantity: legacy.quantity,
+                            ...CLEAR_UNIT_LINK,
                           })
                         }}
                         className="flex-1 rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary bg-white"
@@ -315,6 +416,7 @@ export function SegmentPanel({
                             memo,
                             bar_type: legacy.bar_type,
                             quantity: legacy.quantity,
+                            ...CLEAR_UNIT_LINK,
                           })
                         }}
                         className="w-20 rounded border border-border px-2 py-1 text-sm font-mono outline-none focus:border-primary"
@@ -336,6 +438,7 @@ export function SegmentPanel({
                             memo,
                             bar_type: legacy.bar_type,
                             quantity: legacy.quantity,
+                            ...CLEAR_UNIT_LINK,
                           })
                         }}
                         className="text-xs text-danger hover:underline"
@@ -349,25 +452,90 @@ export function SegmentPanel({
               </div>
             </div>
           )}
-          <div>
-            <label className="block text-xs text-muted mb-0.5">ラベル</label>
-            <input
-              type="text"
-              value={selected.label ?? ''}
-              onChange={(e) =>
-                onUpdate(selected.id, { label: e.target.value || null })
-              }
-              placeholder="任意"
-              className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
-            />
-          </div>
+          {/* ユニット連結（登録済みユニットから選択） */}
+          {units.filter((u) => u.is_active !== false && isPersistedUnitId(u.id)).length > 0 &&
+            !selectedIsSpacing && (
+            <div>
+              <div className="mb-1 flex items-center gap-1.5">
+                <label className="block text-xs text-muted">ユニット割当</label>
+                {(selectedAssignedUnit?.detail_spec || selectedAssignedUnit?.detail_geometry) && (
+                  <span className="rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
+                    詳細形状あり
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                {units
+                  .filter((u) => u.is_active !== false && isPersistedUnitId(u.id))
+                  .map((u) => {
+                    const uc = normalizeSegmentColor(u.color)
+                    const stroke = getSegmentStrokeHex(uc, false)
+                    const tint = getSegmentStrokeHex(uc, true)
+                    const isAssigned = selected.unit_id === u.id
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        title={u.name}
+                        onClick={() => {
+                          const bars: SegmentBarItem[] = u.bars.map((b) => ({
+                            barType: b.diameter,
+                            quantity: b.qtyPerUnit,
+                          }))
+                          const legacy = legacyFieldsFromBars(bars)
+                          const { meta, legacyNote } = decodeSegmentMeta(selected.memo)
+                          const memo = encodeSegmentMeta({
+                            v: 1,
+                            color: uc,
+                            bars,
+                            note: meta?.note ?? legacyNote ?? null,
+                          })
+                          const markNum = u.mark_number ?? 1
+                          onUpdate(selected.id, {
+                            memo,
+                            bar_type: legacy.bar_type,
+                            quantity: legacy.quantity,
+                            label: u.code ?? u.name,
+                            unit_id: u.id,
+                            unit_code: u.code ?? null,
+                            unit_name: u.name ?? null,
+                            mark_number: markNum,
+                          })
+                        }}
+                        className={`rounded-md border text-[10px] px-2 py-0.5 transition-colors font-medium ${
+                          isAssigned
+                            ? 'ring-1 ring-offset-0.5'
+                            : 'hover:brightness-95'
+                        }`}
+                        style={{
+                          borderColor: stroke,
+                          background: isAssigned ? stroke : '#fff',
+                          color: isAssigned ? '#fff' : tint,
+                        }}
+                      >
+                        {u.code ?? u.name}
+                      </button>
+                    )
+                  })}
+              </div>
+              {selected.unit_id && (
+                <button
+                  type="button"
+                  className="mt-1.5 text-[11px] text-muted hover:text-foreground underline"
+                  onClick={() => onUpdate(selected.id, { ...CLEAR_UNIT_LINK })}
+                >
+                  割当を解除（参照のみ外す）
+                </button>
+              )}
+            </div>
+          )}
           <div>
             <label className="block text-xs text-muted mb-0.5">メモ</label>
             <textarea
               value={selectedNote}
               onChange={(e) => {
                 const { meta } = decodeSegmentMeta(selected.memo)
-                const bars = getSegmentBars(selected)
+                const bars = getSegmentBars(selected, units)
                 const memo = encodeSegmentMeta({
                   v: 1,
                   color: meta?.color ?? selectedColor,
@@ -394,58 +562,45 @@ export function SegmentPanel({
         ) : (
           <div>
             <div className="px-4 py-3 border-b border-border space-y-0.5 text-xs font-mono">
-              {circleSummaryRows.red.map((r) => {
-                if (r.count <= 0) return null
-                return (
-                  <div key={`red-${r.len}`} style={{ color: '#ef4444' }}>
-                    {circledNumber(r.no)}
-                    {r.len.toLocaleString()} × {r.count}
-                  </div>
-                )
-              })}
-              {circleSummaryRows.blue.map((r) => {
-                if (r.count <= 0) return null
-                return (
-                  <div key={`blue-${r.len}`} style={{ color: '#3b82f6' }}>
-                    {circledNumber(r.no)}
-                    {r.len.toLocaleString()} × {r.count}
-                  </div>
-                )
-              })}
+              {circleSummarySections.flatMap((sec) =>
+                sec.rows
+                  .filter((r) => r.count > 0)
+                  .map((r) => (
+                    <div
+                      key={`${sec.color}-${r.len}`}
+                      style={{ color: getSegmentStrokeHex(sec.color, false) }}
+                    >
+                      {circledNumber(r.no)}
+                      {r.len.toLocaleString()} × {r.count}
+                    </div>
+                  )),
+              )}
             </div>
             <ul className="divide-y divide-border">
               {rebarSegments.map((seg) => (
                 <li
                   key={seg.id}
-                  onClick={() => onSelect(seg.id)}
+                  onClick={(e) => {
+                    if (e.ctrlKey || e.metaKey) {
+                      onToggleSegmentSelection(seg.id)
+                    } else {
+                      onReplaceSelection([seg.id])
+                    }
+                  }}
                   className={`flex items-center justify-between px-4 py-2.5 cursor-pointer text-sm transition-colors ${
-                    seg.id === selectedSegmentId
+                    selectedSegmentIds.includes(seg.id)
                       ? 'bg-primary/5 text-primary'
                       : 'hover:bg-gray-50'
                   }`}
                 >
                   <div className="min-w-0">
-                    <span
-                      className={`font-mono text-xs mr-2 ${
-                        segmentLabelById[seg.id]?.isAuto
-                          ? 'text-muted'
-                          : 'text-foreground'
-                      }`}
-                      title={
-                        segmentLabelById[seg.id]?.isAuto
-                          ? '自動ラベル（未入力）'
-                          : 'ラベル'
-                      }
-                    >
-                      {segmentLabelById[seg.id]?.label ?? '-'}
-                    </span>
                     <span className="font-medium">{seg.length_mm}mm</span>
                     <span className="text-muted ml-1.5 truncate">
-                      {getSegmentBarsSummary(seg)}
+                      {getSegmentBarsSummary(seg, units)}
                     </span>
                   </div>
                   <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono">
-                    {getSegmentColor(seg) === 'blue' ? '青' : '赤'}
+                    {getSegmentColorLabelJa(getSegmentColor(seg, units))}
                   </span>
                 </li>
               ))}
@@ -463,17 +618,27 @@ export function SegmentPanel({
               <li
                 key={seg.id}
                 className={`flex items-center justify-between text-[11px] cursor-pointer ${
-                  seg.id === selectedSegmentId
+                  selectedSegmentIds.includes(seg.id)
                     ? 'text-emerald-700 bg-emerald-50 rounded px-2 py-1'
                     : 'text-muted'
                 }`}
-                onClick={() => onSelect(seg.id)}
+                onClick={(e) => {
+                  if (e.ctrlKey || e.metaKey) {
+                    onToggleSegmentSelection(seg.id)
+                  } else {
+                    onReplaceSelection([seg.id])
+                  }
+                }}
               >
                 <span className="truncate">
                   {seg.label ?? '間隔'} {seg.length_mm}mm
                 </span>
                 <button
-                  onClick={() => onDelete(seg.id)}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDelete(seg.id)
+                  }}
                   className="ml-2 text-[11px] text-danger hover:underline"
                 >
                   削除
@@ -497,7 +662,11 @@ export function SegmentPanel({
           <div className="flex justify-between">
             <span>部材本数の合計（数量の合計）</span>
             <span className="font-medium text-foreground">
-              {rebarSegments.reduce((sum, s) => sum + getSegmentBars(s).reduce((ss, b) => ss + b.quantity, 0), 0)}本
+              {rebarSegments.reduce(
+                (sum, s) =>
+                  sum + getSegmentBars(s, units).reduce((ss, b) => ss + b.quantity, 0),
+                0,
+              )}本
             </span>
           </div>
         </div>

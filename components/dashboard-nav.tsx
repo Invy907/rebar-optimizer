@@ -37,6 +37,12 @@ export function DashboardNav({ userEmail }: { userEmail: string }) {
         </Link>
         <div className="flex items-center gap-4">
           <span className="text-sm text-muted">{userEmail}</span>
+          <Link
+            href="/units"
+            className="rounded-md px-3 py-1.5 text-sm text-muted hover:bg-gray-100 transition-colors"
+          >
+            ユニット管理
+          </Link>
           <button
             onClick={handleLogout}
             className="rounded-md px-3 py-1.5 text-sm text-muted hover:bg-gray-100 transition-colors"

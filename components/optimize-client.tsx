@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import type { DrawingSegment, OptimizationRun } from '@/lib/types/database'
+import type { DrawingSegment, OptimizationRun, Unit } from '@/lib/types/database'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput, type AlgorithmType } from '@/lib/optimizer'
 import { OptimizationResultView } from '@/components/optimization-result-view'
@@ -13,17 +13,24 @@ import {
   getSegmentColor,
   type SegmentColor,
 } from '@/lib/segment-meta'
+import {
+  compareSegmentColorOrder,
+  getSegmentStrokeHex,
+  SEGMENT_COLOR_ORDER,
+} from '@/lib/segment-colors'
 
 export function OptimizeClient({
   projectId,
   segments,
   pastRuns,
   initialFocusSegmentId,
+  units = [],
 }: {
   projectId: string
   segments: DrawingSegment[]
   pastRuns: OptimizationRun[]
   initialFocusSegmentId?: string | null
+  units?: Unit[]
 }) {
   const segmentLabelById = getSegmentLabelMap(segments)
   const segmentDrawingIdById = Object.fromEntries(
@@ -46,8 +53,8 @@ export function OptimizeClient({
   const router = useRouter()
 
   const circleInputSummaryRows = useMemo(
-    () => buildCircleInputSummaryRows(segments),
-    [segments],
+    () => buildCircleInputSummaryRows(segments, units),
+    [segments, units],
   )
 
   function handleCalculate() {
@@ -61,7 +68,7 @@ export function OptimizeClient({
         )
         return
       }
-      const bars = getSegmentBars(seg)
+      const bars = getSegmentBars(seg, units)
       for (const b of bars) {
         for (let i = 0; i < b.quantity; i++) {
           pieces.push({
@@ -188,7 +195,7 @@ export function OptimizeClient({
                   <tr key={seg.id}>
                     <td className="py-2 font-mono">{segmentLabelById[seg.id] ?? '-'}</td>
                     <td className="py-2 font-mono">{seg.length_mm.toLocaleString()}</td>
-                    <td className="py-2 font-mono text-xs">{getSegmentBarsSummary(seg)}</td>
+                    <td className="py-2 font-mono text-xs">{getSegmentBarsSummary(seg, units)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -197,7 +204,11 @@ export function OptimizeClient({
               合計{' '}
               {segments
                 .filter((seg) => seg.bar_type !== 'SPACING')
-                .reduce((s, seg) => s + getSegmentBars(seg).reduce((ss, b) => ss + b.quantity, 0), 0)}{' '}
+                .reduce(
+                  (s, seg) =>
+                    s + getSegmentBars(seg, units).reduce((ss, b) => ss + b.quantity, 0),
+                  0,
+                )}{' '}
               本の部材
             </p>
           </div>
@@ -398,12 +409,13 @@ interface CircleSummaryRow {
 
 function buildCircleInputSummaryRows(
   segments: DrawingSegment[],
+  units?: Unit[] | null,
 ): CircleSummaryRow[] {
   const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
   const countsByKey = new Map<string, CircleSummaryRow>()
 
   for (const seg of rebarSegments) {
-    const color = getSegmentColor(seg)
+    const color = getSegmentColor(seg, units)
     const key = `${seg.length_mm}|${color}`
     const cur =
       countsByKey.get(key) ??
@@ -419,9 +431,7 @@ function buildCircleInputSummaryRows(
   const rows = Array.from(countsByKey.values())
   rows.sort((a, b) => {
     if (b.lengthMm !== a.lengthMm) return b.lengthMm - a.lengthMm
-    const caOrder = a.color === 'red' ? 0 : 1
-    const cbOrder = b.color === 'red' ? 0 : 1
-    return caOrder - cbOrder
+    return compareSegmentColorOrder(a.color, b.color)
   })
   return rows
 }
@@ -431,46 +441,26 @@ function CircleInputSummary({
 }: {
   rows: CircleSummaryRow[]
 }) {
-  const redRows = rows
-    .filter((r) => r.color === 'red')
-    .sort((a, b) => b.lengthMm - a.lengthMm)
-  const blueRows = rows
-    .filter((r) => r.color === 'blue')
-    .sort((a, b) => b.lengthMm - a.lengthMm)
-  const redNoByLen = new Map<number, number>(
-    redRows.map((r, idx) => [r.lengthMm, idx + 1]),
-  )
-  const blueNoByLen = new Map<number, number>(
-    blueRows.map((r, idx) => [r.lengthMm, idx + 1]),
-  )
-
   return (
     <div className="space-y-0.5 text-[11px] font-mono leading-relaxed">
-      {redRows.map((r) => {
-        if (r.count <= 0) return null
-        const no = redNoByLen.get(r.lengthMm) ?? 1
-        return (
-          <div
-            key={`${r.lengthMm}|${r.color}`}
-            style={{ color: '#ef4444' }}
-          >
-            {circledNumber(no)}
-            {r.lengthMm.toLocaleString('en-US')} × {r.count}
-          </div>
+      {SEGMENT_COLOR_ORDER.flatMap((color) => {
+        const colorRows = rows
+          .filter((r) => r.color === color && r.count > 0)
+          .sort((a, b) => b.lengthMm - a.lengthMm)
+        if (colorRows.length === 0) return []
+        const noByLen = new Map<number, number>(
+          colorRows.map((r, idx) => [r.lengthMm, idx + 1]),
         )
-      })}
-      {blueRows.map((r) => {
-        if (r.count <= 0) return null
-        const no = blueNoByLen.get(r.lengthMm) ?? 1
-        return (
-          <div
-            key={`${r.lengthMm}|${r.color}`}
-            style={{ color: '#2563eb' }}
-          >
-            {circledNumber(no)}
-            {r.lengthMm.toLocaleString('en-US')} × {r.count}
-          </div>
-        )
+        const hex = getSegmentStrokeHex(color, false)
+        return colorRows.map((r) => {
+          const no = noByLen.get(r.lengthMm) ?? 1
+          return (
+            <div key={`${r.lengthMm}|${r.color}`} style={{ color: hex }}>
+              {circledNumber(no)}
+              {r.lengthMm.toLocaleString('en-US')} × {r.count}
+            </div>
+          )
+        })
       })}
     </div>
   )

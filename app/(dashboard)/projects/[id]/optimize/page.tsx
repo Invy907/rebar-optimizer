@@ -1,7 +1,13 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import type { Project, DrawingSegment, OptimizationRun, Drawing } from '@/lib/types/database'
+import type {
+  Project,
+  DrawingSegment,
+  OptimizationRun,
+  Drawing,
+  Unit,
+} from '@/lib/types/database'
 import { OptimizeClient } from '@/components/optimize-client'
 
 export default async function OptimizePage({
@@ -52,6 +58,11 @@ export default async function OptimizePage({
     .order('created_at', { ascending: false })
     .returns<OptimizationRun[]>()
 
+  const { data: units } = await supabase
+    .from('units')
+    .select('*')
+    .returns<Unit[]>()
+
   return (
     <div>
       <div className="mb-6">
@@ -75,6 +86,7 @@ export default async function OptimizePage({
         segments={segments ?? []}
         pastRuns={pastRuns ?? []}
         initialFocusSegmentId={segmentId}
+        units={units ?? []}
       />
     </div>
   )

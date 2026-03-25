@@ -1,26 +1,76 @@
+// components/drawing-viewer.tsx
+
 'use client'
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import type { DrawingSegment } from '@/lib/types/database'
+import type { Unit } from '@/lib/types/database'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { SegmentPanel } from '@/components/segment-panel'
 import {
+  decodeSegmentMeta,
   encodeSegmentMeta,
   getSegmentBars,
   getSegmentColor,
+  getSegmentMarkNumberForCanvas,
   legacyFieldsFromBars,
   type SegmentBarItem,
   type SegmentColor,
 } from '@/lib/segment-meta'
+import {
+  pushRecentUnitId,
+  readFavoriteUnitIds,
+  readRecentUnitIds,
+  toggleFavoriteUnitId,
+} from '@/lib/drawing-unit-prefs'
+import {
+  getSegmentStrokeHex,
+  isSegmentColor,
+  normalizeSegmentColor,
+  SEGMENT_COLOR_DEFINITIONS,
+} from '@/lib/segment-colors'
+import {
+  buildShapeSketch,
+  getDefaultDetailSpec,
+  normalizeDetailSpecForTemplate,
+  shapeTypeToDetailTemplate,
+} from '@/lib/unit-detail-shape'
+import {
+  buildTemplateSummaries,
+  resolveVariantByTemplateColorLength,
+  snapLengthMm,
+  type TemplateSummary,
+} from '@/lib/unit-variant-resolver'
 
 interface Point {
   x: number
   y: number
 }
 
+function getPolylineAnchorFromSegments(list: DrawingSegment[]): Point | null {
+  if (list.length === 0) return null
+  const nonSpacing = list.filter((s) => !(s.bar_type === 'SPACING' && s.quantity === 0))
+  const targetList = nonSpacing.length > 0 ? nonSpacing : list
+
+  const latest = [...targetList].sort((a, b) =>
+    (a.created_at ?? '').localeCompare(b.created_at ?? ''),
+  )[targetList.length - 1]
+  if (!latest) return null
+  return { x: latest.x2, y: latest.y2 }
+}
+
 const BAR_TYPES = ['D10', 'D13', 'D16', 'D19', 'D22', 'D25', 'D29', 'D32']
+
+function isPersistedUnitId(id: string): boolean {
+  return !id.startsWith('mock-') && !id.startsWith('local-')
+}
+
+/** 図面上のピクセル距離を mm として扱う（1px≒1mm 想定。必要なら後で係数を追加） */
+function canvasDistanceToLengthMm(p1: Point, p2: Point): number {
+  return Math.max(1, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y)))
+}
 
 type LastAction =
   | { type: 'create'; segment: DrawingSegment }
@@ -40,6 +90,7 @@ export function DrawingViewer({
   fileType,
   initialSegments,
   initialSelectedSegmentId,
+  units: serverUnits = [],
 }: {
   drawingId: string
   projectId: string
@@ -47,16 +98,38 @@ export function DrawingViewer({
   fileType: string
   initialSegments: DrawingSegment[]
   initialSelectedSegmentId?: string
+  units?: Unit[]
 }) {
+  const enableTemplateVariantFlow = process.env.NEXT_PUBLIC_TEMPLATE_VARIANT_FLOW !== '0'
   const rotationStorageKey = `drawing:${drawingId}:rotationSteps`
 
   const [segments, setSegments] = useState<DrawingSegment[]>(initialSegments)
   const [drawing, setDrawing] = useState(false)
   const [startPoint, setStartPoint] = useState<Point | null>(null)
   const [currentPoint, setCurrentPoint] = useState<Point | null>(null)
-  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(
-    initialSelectedSegmentId ?? null,
+
+  // 連続描画時の始点（直前線分の終点から自動で繋ぐ）
+  const [polylineLastPoint, setPolylineLastPoint] = useState<Point | null>(null)
+
+  const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>(() =>
+    initialSelectedSegmentId ? [initialSelectedSegmentId] : [],
   )
+  const [unitPrefsTick, setUnitPrefsTick] = useState(0)
+
+  const focusedSegmentId =
+    selectedSegmentIds.length > 0
+      ? selectedSegmentIds[selectedSegmentIds.length - 1]!
+      : null
+
+  const recentUnitIds = useMemo(() => {
+    void unitPrefsTick
+    return readRecentUnitIds(projectId)
+  }, [projectId, unitPrefsTick])
+
+  const favoriteUnitIds = useMemo(() => {
+    void unitPrefsTick
+    return readFavoriteUnitIds(projectId)
+  }, [projectId, unitPrefsTick])
   const [lastAction, setLastAction] = useState<LastAction>(null)
   const [splitArmedSegmentId, setSplitArmedSegmentId] = useState<string | null>(
     null,
@@ -118,8 +191,9 @@ export function DrawingViewer({
       if (!obj || typeof obj !== 'object') return null
       const rec = obj as Record<string, unknown>
       const colorRaw = rec.color
-      const color: SegmentColor | null =
-        colorRaw === 'red' || colorRaw === 'blue' ? colorRaw : null
+      const color: SegmentColor | null = isSegmentColor(colorRaw)
+        ? colorRaw
+        : null
 
       const barsRaw = rec.bars
       const bars: SegmentBarItem[] = Array.isArray(barsRaw)
@@ -156,6 +230,13 @@ export function DrawingViewer({
     }
   }
   const [tool, setTool] = useState<'select' | 'draw' | 'spacing'>('select')
+
+  // 連続描画(끝점 이어붙이기) 모드의 시작점/끝점 연결 상태를 관리합니다.
+  // select로 나가면 체인을 끊습니다.
+  useEffect(() => {
+    if (tool === 'select') setPolylineLastPoint(null)
+  }, [tool])
+
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -168,10 +249,167 @@ export function DrawingViewer({
   const supabase = createClient()
   const router = useRouter()
 
+  /** サーバーで空でも、ブラウザのセッションで再取得（RLS/SSR差異のフォロー） */
+  const [clientUnits, setClientUnits] = useState<Unit[] | null>(null)
+
+  useEffect(() => {
+    if (serverUnits.length > 0) {
+      setClientUnits(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase
+        .from('units')
+        .select('*')
+        .order('created_at', { ascending: true })
+        .returns<Unit[]>()
+      if (cancelled) return
+      if (error) {
+        console.warn('[DrawingViewer] units の読み込みに失敗:', error.message)
+        setClientUnits([])
+        return
+      }
+      setClientUnits(data ?? [])
+    })()
+    return () => {
+      cancelled = true
+    }
+    // supabase は createClient() の参照が変わるため依存に含めない
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 上記
+  }, [serverUnits.length])
+
+  const effectiveUnits = serverUnits.length > 0 ? serverUnits : (clientUnits ?? [])
+  const focusedSegment = useMemo(
+    () => (focusedSegmentId ? segments.find((s) => s.id === focusedSegmentId) ?? null : null),
+    [focusedSegmentId, segments],
+  )
+  const focusedSegmentUnit = useMemo(() => {
+    if (!focusedSegment?.unit_id) return null
+    return effectiveUnits.find((u) => u.id === focusedSegment.unit_id) ?? null
+  }, [focusedSegment, effectiveUnits])
+
+  /** DB保存済み（UUID）かつ無効でないユニットのみモーダル・割当に使う */
+  const persistedActiveUnits = useMemo(
+    () => effectiveUnits.filter((u) => u.is_active !== false && isPersistedUnitId(u.id)),
+    [effectiveUnits],
+  )
+
   const segmentsSortedForLabels = [...segments].sort((a, b) =>
     (a.created_at ?? '').localeCompare(b.created_at ?? ''),
   )
   const labelById = getSegmentLabelMap(segments)
+
+  function computeNextSegmentLabel(): string {
+    const last = segmentsSortedForLabels[segmentsSortedForLabels.length - 1]
+    if (segmentsSortedForLabels.length === 0) return 'S01'
+    const lb = labelById[last.id]
+    const m = lb?.match(/^S(\d{2})$/)
+    if (m) return `S${String(Number(m[1]) + 1).padStart(2, '0')}`
+    return `S${String(segmentsSortedForLabels.length + 1).padStart(2, '0')}`
+  }
+
+  const activeUnitStorageKey = `project:${projectId}:activeDrawingUnitId`
+  const activeTemplateStorageKey = `project:${projectId}:activeTemplateId`
+  const activeColorStorageKey = `project:${projectId}:activeTemplateColor`
+  const [activeDrawingUnitId, setActiveDrawingUnitId] = useState<string | null>(null)
+  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null)
+  const [activeTemplateColor, setActiveTemplateColor] = useState<SegmentColor>('red')
+
+  const templateSummaries = useMemo<TemplateSummary[]>(
+    () => buildTemplateSummaries(persistedActiveUnits),
+    [persistedActiveUnits],
+  )
+
+  const activeUnit = useMemo(
+    () =>
+      activeDrawingUnitId
+        ? persistedActiveUnits.find((u) => u.id === activeDrawingUnitId) ?? null
+        : null,
+    [activeDrawingUnitId, persistedActiveUnits],
+  )
+
+  const activeTemplate = useMemo(
+    () => templateSummaries.find((t) => t.id === activeTemplateId) ?? null,
+    [templateSummaries, activeTemplateId],
+  )
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(activeUnitStorageKey)
+      if (raw && isPersistedUnitId(raw)) setActiveDrawingUnitId(raw)
+    } catch {
+      // ignore
+    }
+  }, [activeUnitStorageKey, projectId])
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(activeTemplateStorageKey)
+      if (!raw) return
+      setActiveTemplateId(raw)
+    } catch {
+      // ignore
+    }
+  }, [activeTemplateStorageKey, projectId])
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(activeColorStorageKey)
+      if (!raw) return
+      setActiveTemplateColor(normalizeSegmentColor(raw))
+    } catch {
+      // ignore
+    }
+  }, [activeColorStorageKey, projectId])
+
+  useEffect(() => {
+    try {
+      if (activeDrawingUnitId) {
+        window.localStorage.setItem(activeUnitStorageKey, activeDrawingUnitId)
+      } else {
+        window.localStorage.removeItem(activeUnitStorageKey)
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeDrawingUnitId, activeUnitStorageKey])
+
+  useEffect(() => {
+    try {
+      if (activeTemplateId) {
+        window.localStorage.setItem(activeTemplateStorageKey, activeTemplateId)
+      } else {
+        window.localStorage.removeItem(activeTemplateStorageKey)
+      }
+      window.localStorage.setItem(activeColorStorageKey, activeTemplateColor)
+    } catch {
+      // ignore
+    }
+  }, [activeTemplateId, activeTemplateStorageKey, activeTemplateColor, activeColorStorageKey])
+
+  useEffect(() => {
+    if (!activeDrawingUnitId) return
+    if (!persistedActiveUnits.some((u) => u.id === activeDrawingUnitId)) {
+      setActiveDrawingUnitId(null)
+    }
+  }, [activeDrawingUnitId, persistedActiveUnits])
+
+  /** 保存済みユニットが1件だけなら、アクティブ未設定時に自動選択（連続描画の摩擦を減らす） */
+  useEffect(() => {
+    if (activeDrawingUnitId) return
+    if (persistedActiveUnits.length !== 1) return
+    setActiveDrawingUnitId(persistedActiveUnits[0].id)
+  }, [activeDrawingUnitId, persistedActiveUnits])
+
+  useEffect(() => {
+    if (templateSummaries.length === 0) {
+      setActiveTemplateId(null)
+      return
+    }
+    if (activeTemplateId && templateSummaries.some((t) => t.id === activeTemplateId)) return
+    setActiveTemplateId(templateSummaries[0].id)
+  }, [activeTemplateId, templateSummaries])
 
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current
@@ -188,38 +426,20 @@ export function DrawingViewer({
     applyRotationTransform(ctx, img.width, img.height, rotationSteps)
     ctx.drawImage(img, 0, 0)
 
-    const rebarOnly = segmentsSortedForLabels.filter(
-      (s) => !(s.bar_type === 'SPACING' && s.quantity === 0),
-    )
-    const redLens = Array.from(
-      new Set(rebarOnly.filter((s) => getSegmentColor(s) === 'red').map((s) => s.length_mm)),
-    ).sort((a, b) => b - a)
-    const blueLens = Array.from(
-      new Set(rebarOnly.filter((s) => getSegmentColor(s) === 'blue').map((s) => s.length_mm)),
-    ).sort((a, b) => b - a)
-    const redNoByLen = new Map<number, number>(redLens.map((len, idx) => [len, idx + 1]))
-    const blueNoByLen = new Map<number, number>(blueLens.map((len, idx) => [len, idx + 1]))
-
     segments.forEach((seg) => {
-      const isSelected = seg.id === selectedSegmentId
+      const isSelected = selectedSegmentIds.includes(seg.id)
       const isSpacing = seg.bar_type === 'SPACING' && seg.quantity === 0
       const isLastSplit =
         !!lastSplitMarker && lastSplitMarker.segmentIds.includes(seg.id)
       ctx.beginPath()
       ctx.moveTo(seg.x1, seg.y1)
       ctx.lineTo(seg.x2, seg.y2)
-      const segColor = getSegmentColor(seg)
+      const segColor = getSegmentColor(seg, effectiveUnits)
       const baseStroke = isSpacing
         ? isSelected
           ? '#0f766e'
           : '#22c55e'
-        : segColor === 'blue'
-          ? isSelected
-            ? '#1d4ed8'
-            : '#2563eb'
-          : isSelected
-            ? '#b91c1c'
-            : '#ef4444'
+        : getSegmentStrokeHex(segColor, isSelected)
       ctx.strokeStyle = isLastSplit && !isSelected ? baseStroke : baseStroke
       ctx.lineWidth =
         isSelected ? 3 / scale : isLastSplit ? 3 / scale : 2 / scale
@@ -237,13 +457,7 @@ export function DrawingViewer({
         ? isSelected
           ? '#0f766e'
           : '#16a34a'
-        : segColor === 'blue'
-          ? isSelected
-            ? '#1d4ed8'
-            : '#2563eb'
-          : isSelected
-            ? '#b91c1c'
-            : '#ef4444'
+        : getSegmentStrokeHex(segColor, isSelected)
       ctx.fillStyle = baseFill
 
       const s = ((rotationSteps % 4) + 4) % 4
@@ -257,11 +471,8 @@ export function DrawingViewer({
         ctx.fillText(`${seg.length_mm}`, 0, 0)
         ctx.restore()
       } else {
-        const circleNum =
-          segColor === 'blue'
-            ? (blueNoByLen.get(seg.length_mm) ?? 1)
-            : (redNoByLen.get(seg.length_mm) ?? 1)
-        const stroke = segColor === 'blue' ? '#2563eb' : '#ef4444'
+        const circleNum = getSegmentMarkNumberForCanvas(seg, effectiveUnits)
+        const stroke = getSegmentStrokeHex(segColor, false)
         const r = 9 / scale
         const yCenter = midY - 2 / scale
 
@@ -271,7 +482,7 @@ export function DrawingViewer({
         ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
         ctx.fill()
         ctx.lineWidth = 2 / scale
-        ctx.strokeStyle = isSelected ? '#2563eb' : stroke
+        ctx.strokeStyle = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
         ctx.stroke()
 
         // Number inside circle (画面基準で正立表示)
@@ -279,10 +490,10 @@ export function DrawingViewer({
         ctx.translate(midX, yCenter)
         ctx.rotate(counterAngleRad)
         ctx.font = `bold ${11 / scale}px sans-serif`
-        ctx.fillStyle = isSelected ? '#2563eb' : stroke
+        ctx.fillStyle = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
-        ctx.fillText(String(circleNum), 0, 0)
+        ctx.fillText(circleNum != null ? String(circleNum) : '-', 0, 0)
         ctx.restore()
 
         ctx.textAlign = 'left'
@@ -299,6 +510,9 @@ export function DrawingViewer({
         ctx.restore()
       }
     })
+
+    // 直角で接続する線分の交点に、短い境界ティック（|）を描画
+    drawRightAngleBoundaryTicks(ctx, segments, scale, effectiveUnits)
 
     if (splitArmedSegmentId && splitHoverPoint) {
       ctx.beginPath()
@@ -340,7 +554,7 @@ export function DrawingViewer({
     ctx.restore()
   }, [
     segments,
-    selectedSegmentId,
+    selectedSegmentIds,
     drawing,
     startPoint,
     currentPoint,
@@ -351,6 +565,7 @@ export function DrawingViewer({
     splitHoverPoint,
     lastSplitMarker,
     rotationSteps,
+    effectiveUnits,
   ])
 
   useEffect(() => {
@@ -383,30 +598,182 @@ export function DrawingViewer({
 
   useEffect(() => {
     if (!splitArmedSegmentId) return
-    if (selectedSegmentId !== splitArmedSegmentId) {
+    if (!selectedSegmentIds.includes(splitArmedSegmentId)) {
       setSplitArmedSegmentId(null)
       setSplitHoverPoint(null)
     }
-  }, [selectedSegmentId, splitArmedSegmentId])
+  }, [selectedSegmentIds, splitArmedSegmentId])
 
   useEffect(() => {
     if (!lastSplitMarker) return
-    if (!selectedSegmentId) return
-    if (!lastSplitMarker.segmentIds.includes(selectedSegmentId)) {
+    if (!focusedSegmentId) return
+    if (!lastSplitMarker.segmentIds.includes(focusedSegmentId)) {
       setLastSplitMarker(null)
     }
-  }, [selectedSegmentId, lastSplitMarker])
+  }, [focusedSegmentId, lastSplitMarker])
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null
+      const tag = t?.tagName?.toUpperCase()
+      const isTyping =
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        t?.isContentEditable
+
       if (e.key === 'Escape') {
+        if (newSegmentDraft) {
+          setNewSegmentDraft(null)
+          return
+        }
         setSplitArmedSegmentId(null)
         setSplitHoverPoint(null)
+        if (drawing) {
+          setDrawing(false)
+          setStartPoint(null)
+          setCurrentPoint(null)
+          return
+        }
+        if (tool === 'draw' || tool === 'spacing') {
+          setPolylineLastPoint(null)
+          setTool('select')
+          return
+        }
+        return
+      }
+
+      if (isTyping) return
+
+      const setActiveByUnitId = (unitId: string) => {
+        setActiveDrawingUnitId(unitId)
+        const picked = persistedActiveUnits.find((u) => u.id === unitId) ?? null
+        if (picked) {
+          setActiveTemplateId(picked.template_id ?? `shape:${picked.shape_type}`)
+          setActiveTemplateColor(normalizeSegmentColor(picked.color))
+        }
+        pushRecentUnitId(projectId, unitId)
+        setUnitPrefsTick((x) => x + 1)
+      }
+
+      const setUnitByCode = (code: string) => {
+        const u = effectiveUnits.find(
+          (x) =>
+            x.is_active !== false && isPersistedUnitId(x.id) && x.code === code,
+        )
+        if (!u) return
+        setActiveByUnitId(u.id)
+      }
+
+      const setUnitByColor = (color: 'red' | 'blue') => {
+        setActiveTemplateColor(color)
+        const list = effectiveUnits
+          .filter(
+            (u) =>
+              u.is_active !== false &&
+              isPersistedUnitId(u.id) &&
+              normalizeSegmentColor(u.color) === color,
+          )
+          .sort((a, b) => (a.mark_number ?? 0) - (b.mark_number ?? 0))
+        const u = list[0]
+        if (!u) return
+        setActiveByUnitId(u.id)
+      }
+
+      if (e.key === '1') {
+        e.preventDefault()
+        setUnitByCode('red-1')
+        return
+      }
+      if (e.key === '2') {
+        e.preventDefault()
+        setUnitByCode('red-2')
+        return
+      }
+      if (e.key === '4') {
+        e.preventDefault()
+        setUnitByCode('blue-4')
+        return
+      }
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault()
+        setUnitByColor('red')
+        return
+      }
+      if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault()
+        setUnitByColor('blue')
+        return
+      }
+
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        const rebarSorted = [...segments]
+          .filter((s) => !(s.bar_type === 'SPACING' && s.quantity === 0))
+          .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+        const last = rebarSorted[0]
+        if (!last) return
+        if (last.unit_id && isPersistedUnitId(last.unit_id)) {
+          setActiveDrawingUnitId(last.unit_id)
+          const lastUnit = effectiveUnits.find((u) => u.id === last.unit_id) ?? null
+          if (lastUnit) {
+            setActiveTemplateId(lastUnit.template_id ?? `shape:${lastUnit.shape_type}`)
+            setActiveTemplateColor(normalizeSegmentColor(lastUnit.color))
+          }
+          pushRecentUnitId(projectId, last.unit_id)
+          setUnitPrefsTick((x) => x + 1)
+        }
+        const color = getSegmentColor(last, effectiveUnits)
+        const bars = getSegmentBars(last, effectiveUnits)
+        if (bars.length > 0) {
+          writeLastUsedRebarDraft({ color, bars })
+        }
+        return
+      }
+
+      if (e.key === 'd' || e.key === 'D') {
+        e.preventDefault()
+        setTool('draw')
+        return
+      }
+      if (e.key === 'g' || e.key === 'G') {
+        e.preventDefault()
+        setTool('spacing')
+        return
+      }
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault()
+        setTool('select')
+        return
+      }
+      if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault()
+        const rebarSorted = [...segments]
+          .filter((s) => !(s.bar_type === 'SPACING' && s.quantity === 0))
+          .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+        const last = rebarSorted[0]
+        if (!last) return
+        if (last.unit_id && isPersistedUnitId(last.unit_id)) {
+          setActiveDrawingUnitId(last.unit_id)
+          const lastUnit = effectiveUnits.find((u) => u.id === last.unit_id) ?? null
+          if (lastUnit) {
+            setActiveTemplateId(lastUnit.template_id ?? `shape:${lastUnit.shape_type}`)
+            setActiveTemplateColor(normalizeSegmentColor(lastUnit.color))
+          }
+          pushRecentUnitId(projectId, last.unit_id)
+          setUnitPrefsTick((x) => x + 1)
+        }
+        const color = getSegmentColor(last, effectiveUnits)
+        const bars = getSegmentBars(last, effectiveUnits)
+        if (bars.length > 0) {
+          writeLastUsedRebarDraft({ color, bars })
+        }
+        return
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [segments, effectiveUnits, projectId, tool, drawing, newSegmentDraft])
 
   useEffect(() => {
     if (fileType === 'pdf') {
@@ -530,7 +897,7 @@ export function DrawingViewer({
   }
 
   function handleMouseDown(e: React.MouseEvent) {
-    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+    if (e.button === 1) {
       setPanning(true)
       setPanStart({ x: e.clientX - offset.x, y: e.clientY - offset.y })
       return
@@ -538,8 +905,9 @@ export function DrawingViewer({
 
     if ((tool === 'draw' || tool === 'spacing') && e.button === 0) {
       const pt = screenToCanvas(e)
+      const start = polylineLastPoint ?? pt
       setDrawing(true)
-      setStartPoint(pt)
+      setStartPoint(start)
       setCurrentPoint(pt)
     }
 
@@ -566,7 +934,16 @@ export function DrawingViewer({
       const found = segments.find((seg) => {
         return distToSegment(pt, { x: seg.x1, y: seg.y1 }, { x: seg.x2, y: seg.y2 }) < clickRadius
       })
-      setSelectedSegmentId(found?.id ?? null)
+      if (e.ctrlKey || e.metaKey) {
+        if (found) {
+          setSelectedSegmentIds((prev) => {
+            if (prev.includes(found.id)) return prev.filter((id) => id !== found.id)
+            return [...prev, found.id]
+          })
+        }
+      } else {
+        setSelectedSegmentIds(found ? [found.id] : [])
+      }
     }
   }
 
@@ -618,19 +995,40 @@ export function DrawingViewer({
     }
   }
 
-  function handleMouseUp() {
+  async function handleMouseUp(e: React.MouseEvent) {
     if (panning) {
       setPanning(false)
       return
     }
 
     if (drawing && startPoint && currentPoint && !newSegmentDraft) {
-      const dx = currentPoint.x - startPoint.x
-      const dy = currentPoint.y - startPoint.y
+      const p1 = startPoint
+      const p2 = currentPoint
+      const dx = p2.x - p1.x
+      const dy = p2.y - p1.y
       const pixelLen = Math.sqrt(dx * dx + dy * dy)
 
       if (pixelLen > 5) {
-        openNewSegmentForm(tool === 'spacing' ? 'spacing' : 'rebar', startPoint, currentPoint)
+        const geomLen = canvasDistanceToLengthMm(p1, p2)
+        const drawSnapCandidates = persistedActiveUnits
+          .filter(
+            (u) =>
+              (u.template_id ?? `shape:${u.shape_type}`) === (activeTemplateId ?? '') &&
+              normalizeSegmentColor(u.color) === normalizeSegmentColor(activeTemplateColor),
+          )
+          .map((u) => u.length_mm)
+          .filter((x): x is number => typeof x === 'number' && Number.isFinite(x) && x > 0)
+        const snappedLen = snapLengthMm(geomLen, drawSnapCandidates)
+        const kind = tool === 'spacing' ? 'spacing' : 'rebar'
+        const useModal = e.altKey
+
+        if (useModal) {
+          openNewSegmentForm(kind, p1, p2, { precomputedLengthMm: snappedLen })
+        } else if (kind === 'spacing') {
+          await quickInsertSpacing(p1, p2, snappedLen)
+        } else {
+          await quickInsertRebar(p1, p2, snappedLen)
+        }
       }
     }
     setDrawing(false)
@@ -657,38 +1055,63 @@ export function DrawingViewer({
     })
   }
 
-  function openNewSegmentForm(kind: 'rebar' | 'spacing', p1: Point, p2: Point) {
+  function openNewSegmentForm(
+    kind: 'rebar' | 'spacing',
+    p1: Point,
+    p2: Point,
+    opts?: { precomputedLengthMm?: number },
+  ) {
     const last = segmentsSortedForLabels[segmentsSortedForLabels.length - 1]
-    const nextLabel =
-      segmentsSortedForLabels.length === 0
-        ? 'S01'
-        : labelById[last.id]?.match(/^S(\d{2})$/)
-          ? `S${String(Number(RegExp.$1) + 1).padStart(2, '0')}`
-          : `S${String(segmentsSortedForLabels.length + 1).padStart(2, '0')}`
+    const nextLabel = computeNextSegmentLabel()
+    const unitDefaults = kind === 'rebar' ? activeUnit : null
 
-    // モーダルのデフォルトは「同一プロジェクト内で直前に使った値」を優先。
-    // ない場合は直前の線分から引き継ぐ。最後まで無ければ D10。
+    // モーダルは例外入力。ただしアクティブユニットがあれば色・鉄筋・ラベルはそこを最優先。
     const stored = kind === 'rebar' ? readLastUsedRebarDraft() : null
 
-    const lastBars = last ? getSegmentBars(last) : []
+    const lastBars = last ? getSegmentBars(last, effectiveUnits) : []
+    const barsFromUnit =
+      unitDefaults?.bars?.length &&
+      unitDefaults.bars.every((b) => BAR_TYPES.includes(b.diameter as (typeof BAR_TYPES)[number]))
+        ? unitDefaults.bars.map((b) => ({
+            barType: b.diameter,
+            quantity: b.qtyPerUnit,
+          }))
+        : null
+
     const defaultBars =
-      stored?.bars?.length
+      barsFromUnit ??
+      (stored?.bars?.length
         ? stored.bars
         : lastBars.length
           ? lastBars
-          : [{ barType: 'D10', quantity: 1 }]
+          : [{ barType: 'D10', quantity: 1 }])
 
     const supportedBars = defaultBars.filter((b) => BAR_TYPES.includes(b.barType as (typeof BAR_TYPES)[number]))
     const finalBars = supportedBars.length ? supportedBars : [{ barType: 'D10', quantity: 1 }]
 
     const defaultColor: SegmentColor =
-      kind === 'rebar' ? stored?.color ?? (last ? getSegmentColor(last) : 'red') : 'red'
+      kind === 'rebar'
+        ? normalizeSegmentColor(
+            activeTemplateColor ??
+              unitDefaults?.color ??
+              stored?.color ??
+              (last ? getSegmentColor(last, effectiveUnits) : 'red'),
+          )
+        : 'red'
+
+    const lengthMmInit =
+      opts?.precomputedLengthMm != null ? String(opts.precomputedLengthMm) : ''
+
+    const labelForRebar =
+      unitDefaults != null
+        ? (unitDefaults.code ?? unitDefaults.name ?? nextLabel)
+        : nextLabel
 
     setNewSegmentDraft({
       kind,
       p1,
       p2,
-      lengthMm: '',
+      lengthMm: lengthMmInit,
       color: defaultColor,
       bars:
         kind === 'spacing'
@@ -697,8 +1120,169 @@ export function DrawingViewer({
               barType: b.barType,
               quantity: String(b.quantity),
             })),
-      label: kind === 'spacing' ? '間隔' : nextLabel,
+      label: kind === 'spacing' ? '間隔' : labelForRebar,
     })
+  }
+
+  async function quickInsertRebar(p1: Point, p2: Point, lengthMm: number) {
+    const nextLabel = computeNextSegmentLabel()
+    const templateId = activeTemplateId ?? templateSummaries[0]?.id ?? null
+    const preferredColor = normalizeSegmentColor(activeTemplateColor)
+
+    let bars: SegmentBarItem[] = []
+    let color: SegmentColor = preferredColor
+    let unitId: string | null = null
+    let unitCode: string | null = null
+    let unitName: string | null = null
+    let markNumber: number | null = null
+    let label: string = nextLabel
+
+    if (enableTemplateVariantFlow && templateId) {
+      const resolved = resolveVariantByTemplateColorLength(
+        persistedActiveUnits,
+        templateId,
+        preferredColor,
+        lengthMm,
+      )
+      let chosen = resolved.matched
+      if (!chosen && resolved.candidates.length > 0) {
+        const list = resolved.candidates
+          .map((c, i) => `${i + 1}. ${c.code ?? c.unitName} (${c.lengthMm ?? '-'}mm)`)
+          .join('\n')
+        const pickRaw = window.prompt(
+          `一致する Variant がありません。\n候補を選択してください（番号入力）\n\n${list}`,
+          '1',
+        )
+        const idx = Number.parseInt((pickRaw ?? '').trim(), 10)
+        if (Number.isFinite(idx) && idx >= 1 && idx <= resolved.candidates.length) {
+          chosen = resolved.candidates[idx - 1]!
+        }
+      }
+      if (!chosen && resolved.createSuggestion) {
+        const goCreate = window.confirm(
+          `Variant が見つかりません。\nTemplate: ${resolved.createSuggestion.templateId}\nColor: ${resolved.createSuggestion.color}\nLength: ${resolved.createSuggestion.lengthMm}mm\n\n/units で新規 Variant を作成しますか？`,
+        )
+        if (goCreate) {
+          router.push(
+            `/units?templateId=${encodeURIComponent(resolved.createSuggestion.templateId)}&color=${encodeURIComponent(resolved.createSuggestion.color)}&length_mm=${resolved.createSuggestion.lengthMm}`,
+          )
+        }
+        return
+      }
+      if (chosen) {
+        const matchedUnit = persistedActiveUnits.find((u) => u.id === chosen.variantId) ?? null
+        color = chosen.color
+        bars = chosen.bars.map((b) => ({ barType: b.diameter, quantity: b.qtyPerUnit }))
+        unitId = chosen.variantId
+        unitCode = chosen.code
+        unitName = chosen.unitName
+        markNumber = chosen.markNumber
+        label = chosen.code ?? chosen.unitName ?? nextLabel
+        setActiveDrawingUnitId(chosen.variantId)
+        setActiveTemplateId(chosen.templateId)
+        setActiveTemplateColor(chosen.color)
+        if (matchedUnit) {
+          pushRecentUnitId(projectId, matchedUnit.id)
+          setUnitPrefsTick((x) => x + 1)
+        }
+      }
+    }
+
+    if (bars.length === 0) {
+      const stored = readLastUsedRebarDraft()
+      const last = segmentsSortedForLabels[segmentsSortedForLabels.length - 1]
+      const lastBars = last ? getSegmentBars(last, effectiveUnits) : []
+      const defaultBars =
+        stored?.bars?.length
+          ? stored.bars
+          : lastBars.length
+            ? lastBars
+            : [{ barType: 'D10', quantity: 1 }]
+      const supportedBars = defaultBars.filter((b) =>
+        BAR_TYPES.includes(b.barType as (typeof BAR_TYPES)[number]),
+      )
+      bars = supportedBars.length ? supportedBars : [{ barType: 'D10', quantity: 1 }]
+      color = normalizeSegmentColor(stored?.color ?? preferredColor)
+      unitId = null
+      unitCode = null
+      unitName = null
+      markNumber = null
+      label = nextLabel
+    }
+
+    const legacy = legacyFieldsFromBars(bars)
+    const memo = encodeSegmentMeta({ v: 1, color, bars, note: null })
+
+    const { data, error } = await supabase
+      .from('drawing_segments')
+      .insert({
+        drawing_id: drawingId,
+        x1: p1.x,
+        y1: p1.y,
+        x2: p2.x,
+        y2: p2.y,
+        length_mm: lengthMm,
+        quantity: legacy.quantity,
+        bar_type: legacy.bar_type,
+        label: label.trim() || null,
+        memo,
+        unit_id: unitId,
+        unit_code: unitCode,
+        unit_name: unitName,
+        mark_number: markNumber,
+      })
+      .select()
+      .single<DrawingSegment>()
+
+    if (error) {
+      alert('保存に失敗しました: ' + error.message)
+      return
+    }
+    if (data) {
+      setSegments((prev) => [...prev, data])
+      setSelectedSegmentIds([data.id])
+      setPolylineLastPoint(p2)
+      setLastAction({ type: 'create', segment: data })
+      writeLastUsedRebarDraft({ color, bars })
+      if (unitId) {
+        pushRecentUnitId(projectId, unitId)
+        setUnitPrefsTick((x) => x + 1)
+      }
+    }
+  }
+
+  async function quickInsertSpacing(p1: Point, p2: Point, lengthMm: number) {
+    const { data, error } = await supabase
+      .from('drawing_segments')
+      .insert({
+        drawing_id: drawingId,
+        x1: p1.x,
+        y1: p1.y,
+        x2: p2.x,
+        y2: p2.y,
+        length_mm: lengthMm,
+        quantity: 0,
+        bar_type: 'SPACING',
+        label: '間隔',
+        memo: null,
+        unit_id: null,
+        unit_code: null,
+        unit_name: null,
+        mark_number: null,
+      })
+      .select()
+      .single<DrawingSegment>()
+
+    if (error) {
+      alert('保存に失敗しました: ' + error.message)
+      return
+    }
+    if (data) {
+      setSegments((prev) => [...prev, data])
+      setSelectedSegmentIds([data.id])
+      setPolylineLastPoint(p2)
+      setLastAction({ type: 'create', segment: data })
+    }
   }
 
   async function confirmNewSegment() {
@@ -729,10 +1313,12 @@ export function DrawingViewer({
       ? null
       : encodeSegmentMeta({
           v: 1,
-          color: newSegmentDraft.color,
+          color: normalizeSegmentColor(newSegmentDraft.color),
           bars,
           note: null,
         })
+
+    const unitRow = !isSpacing && activeUnit ? activeUnit : null
 
     const { data, error } = await supabase
       .from('drawing_segments')
@@ -747,19 +1333,28 @@ export function DrawingViewer({
         bar_type: legacy.bar_type,
         label: newSegmentDraft.label.trim() || null,
         memo,
+        unit_id: unitRow?.id ?? null,
+        unit_code: unitRow?.code ?? null,
+        unit_name: unitRow?.name ?? null,
+        mark_number: unitRow?.mark_number ?? null,
       })
       .select()
       .single<DrawingSegment>()
 
     if (!error && data) {
       setSegments((prev) => [...prev, data])
-      setSelectedSegmentId(data.id)
+      setSelectedSegmentIds([data.id])
+      setPolylineLastPoint(p2)
       setLastAction({ type: 'create', segment: data })
       if (!isSpacing) {
         writeLastUsedRebarDraft({
-          color: newSegmentDraft.color,
+          color: normalizeSegmentColor(newSegmentDraft.color),
           bars,
         })
+        if (unitRow?.id) {
+          pushRecentUnitId(projectId, unitRow.id)
+          setUnitPrefsTick((x) => x + 1)
+        }
       }
       setNewSegmentDraft(null)
     }
@@ -784,6 +1379,62 @@ export function DrawingViewer({
     }
   }
 
+  async function bulkApplyTemplateColorToSelection(templateId: string, color: SegmentColor) {
+    if (!enableTemplateVariantFlow) return
+    const ids = selectedSegmentIds.filter((sid) => {
+      const s = segments.find((x) => x.id === sid)
+      return s && !(s.bar_type === 'SPACING' && s.quantity === 0)
+    })
+    if (ids.length === 0) return
+
+    for (const id of ids) {
+      const seg = segments.find((s) => s.id === id)
+      if (!seg) continue
+      const resolved = resolveVariantByTemplateColorLength(
+        persistedActiveUnits,
+        templateId,
+        color,
+        seg.length_mm,
+      )
+      const chosen = resolved.matched ?? resolved.candidates[0] ?? null
+      if (!chosen) continue
+      const bars: SegmentBarItem[] = chosen.bars.map((b) => ({
+        barType: b.diameter,
+        quantity: b.qtyPerUnit,
+      }))
+      const legacy = legacyFieldsFromBars(bars)
+      const { meta, legacyNote } = decodeSegmentMeta(seg.memo)
+      const memo = encodeSegmentMeta({
+        v: 1,
+        color: chosen.color,
+        bars,
+        note: meta?.note ?? legacyNote ?? null,
+      })
+      await updateSegment(id, {
+        memo,
+        bar_type: legacy.bar_type,
+        quantity: legacy.quantity,
+        label: chosen.code ?? chosen.unitName,
+        unit_id: chosen.variantId,
+        unit_code: chosen.code ?? null,
+        unit_name: chosen.unitName ?? null,
+        mark_number: chosen.markNumber ?? 1,
+      })
+    }
+    const firstApplied = persistedActiveUnits.find(
+      (u) =>
+        (u.template_id ?? `shape:${u.shape_type}`) === templateId &&
+        normalizeSegmentColor(u.color) === normalizeSegmentColor(color),
+    )
+    if (firstApplied) {
+      setActiveDrawingUnitId(firstApplied.id)
+      setActiveTemplateId(templateId)
+      setActiveTemplateColor(normalizeSegmentColor(color))
+      pushRecentUnitId(projectId, firstApplied.id)
+      setUnitPrefsTick((x) => x + 1)
+    }
+  }
+
   async function deleteSegment(id: string) {
     const { error } = await supabase
       .from('drawing_segments')
@@ -794,9 +1445,13 @@ export function DrawingViewer({
       setSegments((prev) => {
         const deleted = prev.find((s) => s.id === id)
         if (deleted) setLastAction({ type: 'delete', segment: deleted })
-        return prev.filter((s) => s.id !== id)
+        const next = prev.filter((s) => s.id !== id)
+        setPolylineLastPoint(getPolylineAnchorFromSegments(next))
+        return next
       })
-      if (selectedSegmentId === id) setSelectedSegmentId(null)
+      if (selectedSegmentIds.includes(id)) {
+        setSelectedSegmentIds((prev) => prev.filter((x) => x !== id))
+      }
     }
   }
 
@@ -820,6 +1475,12 @@ export function DrawingViewer({
     const lengthA = Math.max(1, Math.round(segment.length_mm * t))
     const lengthB = Math.max(1, segment.length_mm - lengthA)
 
+    const unitFields = {
+      unit_id: segment.unit_id ?? null,
+      unit_code: segment.unit_code ?? null,
+      unit_name: segment.unit_name ?? null,
+      mark_number: segment.mark_number ?? null,
+    }
     const insertRows = [
       {
         drawing_id: drawingId,
@@ -832,6 +1493,7 @@ export function DrawingViewer({
         bar_type: segment.bar_type,
         label: labelA,
         memo: segment.memo,
+        ...unitFields,
       },
       {
         drawing_id: drawingId,
@@ -844,6 +1506,7 @@ export function DrawingViewer({
         bar_type: segment.bar_type,
         label: labelB,
         memo: segment.memo,
+        ...unitFields,
       },
     ] as const
 
@@ -881,7 +1544,7 @@ export function DrawingViewer({
       createdA,
       createdB,
     ])
-    setSelectedSegmentId(createdA.id)
+    setSelectedSegmentIds([createdA.id])
     setSplitArmedSegmentId(null)
     setSplitHoverPoint(null)
     setLastSplitMarker({
@@ -904,8 +1567,12 @@ export function DrawingViewer({
         .delete()
         .eq('id', segment.id)
       if (!error) {
-        setSegments((prev) => prev.filter((s) => s.id !== segment.id))
-        setSelectedSegmentId(null)
+        setSegments((prev) => {
+          const next = prev.filter((s) => s.id !== segment.id)
+          setPolylineLastPoint(getPolylineAnchorFromSegments(next))
+          return next
+        })
+        setSelectedSegmentIds([])
         setLastAction(null)
       }
     } else if (lastAction.type === 'delete') {
@@ -916,8 +1583,12 @@ export function DrawingViewer({
         .select()
         .single<DrawingSegment>()
       if (!error && data) {
-        setSegments((prev) => [...prev, data])
-        setSelectedSegmentId(data.id)
+        setSegments((prev) => {
+          const next = [...prev, data]
+          setPolylineLastPoint(getPolylineAnchorFromSegments(next))
+          return next
+        })
+        setSelectedSegmentIds([data.id])
         setLastAction(null)
       }
     } else if (lastAction.type === 'update') {
@@ -929,13 +1600,20 @@ export function DrawingViewer({
           quantity: before.quantity,
           bar_type: before.bar_type,
           label: before.label,
+          memo: before.memo,
+          unit_id: before.unit_id ?? null,
+          unit_code: before.unit_code ?? null,
+          unit_name: before.unit_name ?? null,
+          mark_number: before.mark_number ?? null,
         })
         .eq('id', before.id)
       if (!error) {
-        setSegments((prev) =>
-          prev.map((s) => (s.id === before.id ? before : s)),
-        )
-        setSelectedSegmentId(before.id)
+        setSegments((prev) => {
+          const next = prev.map((s) => (s.id === before.id ? before : s))
+          setPolylineLastPoint(getPolylineAnchorFromSegments(next))
+          return next
+        })
+        setSelectedSegmentIds([before.id])
         setLastAction(null)
       }
     } else if (lastAction.type === 'split') {
@@ -952,11 +1630,15 @@ export function DrawingViewer({
         .select()
         .single<DrawingSegment>()
       if (!restoreError && restored) {
-        setSegments((prev) => [
-          ...prev.filter((s) => !createdIds.includes(s.id)),
-          restored,
-        ])
-        setSelectedSegmentId(restored.id)
+        setSegments((prev) => {
+          const next = [
+            ...prev.filter((s) => !createdIds.includes(s.id)),
+            restored,
+          ]
+          setPolylineLastPoint(getPolylineAnchorFromSegments(next))
+          return next
+        })
+        setSelectedSegmentIds([restored.id])
         setLastAction(null)
       }
     }
@@ -1017,11 +1699,11 @@ export function DrawingViewer({
     ctx.lineCap = 'round'
 
     segmentsToDraw.forEach((seg) => {
-      const segColor = getSegmentColor(seg)
+      const segColor = getSegmentColor(seg, effectiveUnits)
       ctx.beginPath()
       ctx.moveTo(seg.x1, seg.y1)
       ctx.lineTo(seg.x2, seg.y2)
-      ctx.strokeStyle = segColor === 'blue' ? '#2563eb' : '#ef4444'
+      ctx.strokeStyle = getSegmentStrokeHex(segColor, false)
       ctx.lineWidth = 2
       ctx.stroke()
     })
@@ -1043,13 +1725,12 @@ export function DrawingViewer({
     }
   }
 
-  const selectedSegment = segments.find((s) => s.id === selectedSegmentId)
-
   return (
     <div className="flex flex-1 gap-2 min-h-0">
       {/* Canvas area */}
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="mb-2 flex items-center gap-2">
+        <div className="mb-2 flex flex-col gap-1.5">
+          <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setTool('select')}
             className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
@@ -1080,6 +1761,160 @@ export function DrawingViewer({
           >
             間隔線
           </button>
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-md border border-border bg-white/80 px-2 py-1">
+            <span className="text-[11px] font-medium text-muted whitespace-nowrap">
+              テンプレート
+            </span>
+            <select
+              value={activeTemplateId ?? ''}
+              onChange={(ev) => setActiveTemplateId(ev.target.value || null)}
+              className="max-w-[210px] rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
+              title="先にテンプレートと色を選ぶと、線入力時に length から Variant を自動解決します。"
+            >
+              {templateSummaries.length === 0 ? <option value="">（なし）</option> : null}
+              {templateSummaries.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={activeTemplateColor}
+              onChange={(ev) => setActiveTemplateColor(normalizeSegmentColor(ev.target.value))}
+              className="w-[96px] rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
+              title="Variant 자동 매칭 색"
+            >
+              {SEGMENT_COLOR_DEFINITIONS.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.labelJa}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-md border border-border bg-white/80 px-2 py-1">
+            <span className="text-[11px] font-medium text-muted whitespace-nowrap">
+              アクティブユニット
+            </span>
+            <select
+              value={activeDrawingUnitId ?? ''}
+              onChange={(ev) => {
+                const v = ev.target.value ? ev.target.value : null
+                setActiveDrawingUnitId(v)
+                if (v) {
+                  const picked = persistedActiveUnits.find((u) => u.id === v) ?? null
+                  if (picked) {
+                    setActiveTemplateId(picked.template_id ?? `shape:${picked.shape_type}`)
+                    setActiveTemplateColor(normalizeSegmentColor(picked.color))
+                  }
+                  pushRecentUnitId(projectId, v)
+                  setUnitPrefsTick((x) => x + 1)
+                }
+              }}
+              className="max-w-[200px] rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
+              title="先に選ぶと、線を描くだけで色・円番号・鉄筋・unit_id が自動適用されます（推奨）。詳細入力は Alt+描画。"
+            >
+              <option value="">（なし）直前の線分・保存済み既定を継承</option>
+              {persistedActiveUnits.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {(u.code ?? u.name ?? u.id).slice(0, 48)}
+                </option>
+              ))}
+            </select>
+            {activeUnit ? (
+              <>
+                <span
+                  className="hidden sm:inline text-[11px] text-muted truncate max-w-[180px]"
+                  title={activeUnit.name}
+                >
+                  {activeUnit.code ?? activeUnit.name} — {activeUnit.name}
+                </span>
+                {(activeUnit.detail_spec || activeUnit.detail_geometry) && (
+                  <span className="hidden sm:inline rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
+                    詳細形状
+                  </span>
+                )}
+              </>
+            ) : null}
+            <button
+              type="button"
+              disabled={!activeDrawingUnitId}
+              title="お気に入りに追加/解除"
+              className="rounded border border-border px-1.5 py-0.5 text-xs disabled:opacity-40"
+              onClick={() => {
+                if (!activeDrawingUnitId) return
+                toggleFavoriteUnitId(projectId, activeDrawingUnitId)
+                setUnitPrefsTick((x) => x + 1)
+              }}
+            >
+              {activeDrawingUnitId && favoriteUnitIds.includes(activeDrawingUnitId) ? '★' : '☆'}
+            </button>
+          </div>
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 text-[10px]">
+            {favoriteUnitIds.length > 0 ? (
+              <>
+                <span className="text-muted shrink-0">お気に入り</span>
+                {favoriteUnitIds.map((fid) => {
+                  const u = persistedActiveUnits.find((x) => x.id === fid)
+                  if (!u) return null
+                  return (
+                    <button
+                      key={fid}
+                      type="button"
+                      title={u.name}
+                      className={`rounded border px-1.5 py-0.5 font-medium ${
+                        activeDrawingUnitId === fid
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border bg-white hover:bg-gray-50'
+                      }`}
+                      style={{
+                        borderColor: getSegmentStrokeHex(normalizeSegmentColor(u.color), false),
+                        color: getSegmentStrokeHex(normalizeSegmentColor(u.color), true),
+                      }}
+                      onClick={() => {
+                        setActiveDrawingUnitId(fid)
+                        pushRecentUnitId(projectId, fid)
+                        setUnitPrefsTick((x) => x + 1)
+                      }}
+                    >
+                      {u.code ?? u.name}
+                    </button>
+                  )
+                })}
+              </>
+            ) : null}
+            {recentUnitIds.length > 0 ? (
+              <>
+                <span className="text-muted shrink-0 ml-1">最近</span>
+                {recentUnitIds.map((rid) => {
+                  const u = persistedActiveUnits.find((x) => x.id === rid)
+                  if (!u) return null
+                  return (
+                    <button
+                      key={rid}
+                      type="button"
+                      title={u.name}
+                      className={`rounded border px-1.5 py-0.5 font-medium ${
+                        activeDrawingUnitId === rid
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border bg-white hover:bg-gray-50'
+                      }`}
+                      style={{
+                        borderColor: getSegmentStrokeHex(normalizeSegmentColor(u.color), false),
+                        color: getSegmentStrokeHex(normalizeSegmentColor(u.color), true),
+                      }}
+                      onClick={() => {
+                        setActiveDrawingUnitId(rid)
+                        pushRecentUnitId(projectId, rid)
+                        setUnitPrefsTick((x) => x + 1)
+                      }}
+                    >
+                      {u.code ?? u.name}
+                    </button>
+                  )
+                })}
+              </>
+            ) : null}
+          </div>
           <button
             type="button"
             onClick={rotateLeft90}
@@ -1094,13 +1929,28 @@ export function DrawingViewer({
           <span className="text-xs text-muted ml-2">
             {splitArmedSegmentId
               ? '分割: 図面上の線をクリックして分割点を選択（Escでキャンセル）'
-              : 'Alt+ドラッグ: 移動 / ホイール: ズーム / Shift+ドラッグ: 水平・垂直にスナップ'}
+              : '推奨: テンプレート+色を先に選択→線を描く（長さから Variant を自動解決）／Esc:描画中はストロークのみ取消→もう一度Escで選択モード／D:描画 G:間隔 S:選択 Enter/C:直前線をアクティブに／Alt+描画:詳細モーダル'}
           </span>
+          </div>
+          {persistedActiveUnits.length === 0 ? (
+            <p className="text-[11px] leading-snug text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 max-w-3xl">
+              {effectiveUnits.length === 0
+                ? '図面で選べる保存済みユニットがありません。ユニット管理で「新規作成」→「保存」するか、supabase/seed-default-units.sql を実行して初期データを投入してください。'
+                : 'ユニットは読み込めましたが、すべて無効（無効化）か、図面で使えないIDのため一覧に表示されていません。'}
+            </p>
+          ) : null}
         </div>
         <div
           ref={containerRef}
           className="relative flex-1 rounded-lg border border-border bg-gray-50 overflow-hidden"
-          style={{ cursor: tool === 'draw' ? 'crosshair' : panning ? 'grabbing' : 'default' }}
+          style={{
+            cursor:
+              tool === 'draw' || tool === 'spacing'
+                ? 'crosshair'
+                : panning
+                  ? 'grabbing'
+                  : 'default',
+          }}
         >
           {!imgLoaded && fileType === 'pdf' ? (
             <div className="flex items-center justify-center w-full h-full text-muted text-sm">
@@ -1116,19 +1966,39 @@ export function DrawingViewer({
             className="block w-full h-full"
             style={{ display: imgLoaded ? 'block' : 'none' }}
           />
+          {focusedSegmentUnit &&
+          (focusedSegmentUnit.detail_spec || focusedSegmentUnit.detail_geometry) ? (
+            <div className="absolute left-3 bottom-3 z-20 w-72 rounded-md border border-border bg-white/95 shadow-md p-2">
+              <div className="mb-1 flex items-center justify-between">
+                <div className="text-[11px] font-semibold">
+                  詳細形状プレビュー
+                </div>
+                <span className="text-[10px] text-muted">
+                  {focusedSegmentUnit.code ?? focusedSegmentUnit.name}
+                </span>
+              </div>
+              <UnitDetailMiniPreview unit={focusedSegmentUnit} />
+            </div>
+          ) : null}
         </div>
       </div>
 
       {/* Side panel */}
       <SegmentPanel
         segments={segments}
-        selectedSegmentId={selectedSegmentId}
-        onSelect={setSelectedSegmentId}
+        selectedSegmentIds={selectedSegmentIds}
+        onReplaceSelection={(ids) => setSelectedSegmentIds(ids)}
+        onToggleSegmentSelection={(id) =>
+          setSelectedSegmentIds((prev) =>
+            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+          )
+        }
+        onBulkApplyTemplateColor={bulkApplyTemplateColorToSelection}
         onUpdate={updateSegment}
         onDelete={deleteSegment}
         onSplit={(id) => {
           setTool('select')
-          setSelectedSegmentId(id)
+          setSelectedSegmentIds([id])
           setSplitArmedSegmentId(id)
           setSplitHoverPoint(null)
           setLastSplitMarker(null)
@@ -1137,12 +2007,71 @@ export function DrawingViewer({
         projectId={projectId}
         canUndo={!!lastAction}
         onUndo={handleUndo}
+        units={effectiveUnits}
+        templateOptions={templateSummaries.map((t) => ({ id: t.id, name: t.name }))}
+        activeTemplateId={activeTemplateId ?? ''}
+        activeTemplateColor={activeTemplateColor}
       />
 
       {newSegmentDraft && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg space-y-4">
-            <h2 className="text-base font-semibold">新しい線分の入力</h2>
+          <div className="w-full max-w-md rounded-xl bg-white shadow-lg flex flex-col max-h-[90vh]">
+            <div className="px-6 pt-6 pb-4 border-b border-border">
+              <h2 className="text-base font-semibold">新しい線分の入力</h2>
+              {newSegmentDraft.kind === 'rebar' && (
+                <div className="mt-3">
+                  <div className="text-xs font-medium text-muted mb-2">
+                    登録ユニットから反映（任意）
+                  </div>
+                  {persistedActiveUnits.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {persistedActiveUnits.map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => {
+                            setNewSegmentDraft((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    color: normalizeSegmentColor(u.color),
+                                    bars: u.bars.map((b) => ({
+                                      barType: b.diameter,
+                                      quantity: String(b.qtyPerUnit),
+                                    })),
+                                    label: u.code ?? u.name ?? prev.label,
+                                  }
+                                : prev,
+                            )
+                          }}
+                          className="rounded-lg border-2 px-3 py-1.5 text-xs font-medium transition-colors hover:shadow-sm bg-white"
+                          style={{
+                            borderColor: getSegmentStrokeHex(
+                              normalizeSegmentColor(u.color),
+                              false,
+                            ),
+                            color: getSegmentStrokeHex(
+                              normalizeSegmentColor(u.color),
+                              true,
+                            ),
+                          }}
+                        >
+                          {u.code ?? u.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-muted leading-relaxed">
+                      ここにチップが出るのは、
+                      <strong className="text-foreground">ユニット管理</strong>
+                      で<strong>保存済み</strong>の有効なユニットだけです。
+                      画面にだけあるモック／未保存のユニットは表示されません。
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs text-muted mb-1">長さ (mm)</label>
@@ -1162,28 +2091,31 @@ export function DrawingViewer({
                 <div>
                   <label className="block text-xs text-muted mb-1">線の色</label>
                   <select
-                    value={newSegmentDraft.color}
+                    value={normalizeSegmentColor(newSegmentDraft.color)}
                     onChange={(e) =>
                       setNewSegmentDraft((prev) =>
                         prev
                           ? {
                               ...prev,
-                              color: (e.target.value as SegmentColor) || 'red',
+                              color: normalizeSegmentColor(e.target.value),
                             }
                           : prev,
                       )
                     }
                     className="w-full rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary"
                   >
-                    <option value="red">赤</option>
-                    <option value="blue">青</option>
+                    {SEGMENT_COLOR_DEFINITIONS.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.labelJa}
+                      </option>
+                    ))}
                   </select>
                 </div>
               )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs text-muted mb-1">ラベル</label>
+                <label className="block text-xs text-muted mb-1">ユニット</label>
                 <input
                   type="text"
                   value={newSegmentDraft.label}
@@ -1278,7 +2210,8 @@ export function DrawingViewer({
                 </button>
               </div>
             )}
-            <div className="flex justify-end gap-2 pt-2">
+            </div>{/* end overflow scroll area */}
+            <div className="px-6 pb-6 pt-4 border-t border-border flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setNewSegmentDraft(null)}
@@ -1335,6 +2268,115 @@ function applyRotationTransform(
   // s === 3
   // x' = y, y' = -x + w
   ctx.transform(0, -1, 1, 0, 0, w)
+}
+
+function UnitDetailMiniPreview({ unit }: { unit: Unit }) {
+  const template = shapeTypeToDetailTemplate(unit.shape_type)
+  const spec = normalizeDetailSpecForTemplate(
+    template,
+    unit.detail_spec ?? getDefaultDetailSpec(template),
+  )
+  const sketch = buildShapeSketch(template, spec)
+  const byKey = Object.fromEntries(sketch.geometry.points.map((p) => [p.key, p]))
+  const { minX, minY, maxX, maxY } = sketch.geometry.bounds
+  const pad = 18
+  const w = Math.max(120, maxX - minX + pad * 2)
+  const h = Math.max(70, maxY - minY + pad * 2)
+  const color = getSegmentStrokeHex(normalizeSegmentColor(unit.color), false)
+
+  return (
+    <svg viewBox={`${minX - pad} ${minY - pad} ${w} ${h}`} className="h-20 w-full rounded border border-border bg-slate-50">
+      {sketch.geometry.segments.map((s, idx) => {
+        const p1 = byKey[s.from]
+        const p2 = byKey[s.to]
+        if (!p1 || !p2) return null
+        return (
+          <line
+            key={`${s.from}-${s.to}-${idx}`}
+            x1={p1.x}
+            y1={p1.y}
+            x2={p2.x}
+            y2={p2.y}
+            stroke={color}
+            strokeWidth={5}
+            strokeLinecap="round"
+          />
+        )
+      })}
+      <text x={minX - pad + 8} y={maxY + pad - 6} fontSize={10} fill="#334155">
+        pitch: {spec.pitch} / mark: {unit.mark_number ?? '-'}
+      </text>
+    </svg>
+  )
+}
+
+type TickArm = {
+  ux: number
+  uy: number
+  len: number
+  color: SegmentColor
+}
+
+function drawRightAngleBoundaryTicks(
+  ctx: CanvasRenderingContext2D,
+  segments: DrawingSegment[],
+  scale: number,
+  units: Unit[] | null | undefined,
+) {
+  const rebarSegments = segments.filter(
+    (s) => !(s.bar_type === 'SPACING' && s.quantity === 0),
+  )
+
+  const byPoint = new Map<string, { point: Point; arms: TickArm[] }>()
+  const pointKey = (p: Point) => `${Math.round(p.x * 100)},${Math.round(p.y * 100)}`
+
+  for (const seg of rebarSegments) {
+    const c = getSegmentColor(seg, units)
+    const p1 = { x: seg.x1, y: seg.y1 }
+    const p2 = { x: seg.x2, y: seg.y2 }
+    const dx = p2.x - p1.x
+    const dy = p2.y - p1.y
+    const d = Math.hypot(dx, dy)
+    if (d < 1e-6) continue
+
+    const a1: TickArm = { ux: dx / d, uy: dy / d, len: d, color: c }
+    const a2: TickArm = { ux: -dx / d, uy: -dy / d, len: d, color: c }
+
+    const k1 = pointKey(p1)
+    const e1 = byPoint.get(k1) ?? { point: p1, arms: [] }
+    e1.arms.push(a1)
+    byPoint.set(k1, e1)
+
+    const k2 = pointKey(p2)
+    const e2 = byPoint.get(k2) ?? { point: p2, arms: [] }
+    e2.arms.push(a2)
+    byPoint.set(k2, e2)
+  }
+
+  const halfTick = 5 / scale
+
+  ctx.save()
+  ctx.lineWidth = 2 / scale
+
+  for (const { point, arms } of byPoint.values()) {
+    // 端点でちょうど2本の線が繋がる接点だけに境界ティックを出す（直線連結を含む）
+    if (arms.length !== 2) continue
+
+    // 長い方の腕を基準に、その法線方向へ短い境界ティックを描く
+    const [a0, a1] = arms
+    const base = a0.len >= a1.len ? a0 : a1
+    const nx = -base.uy
+    const ny = base.ux
+    const stroke = getSegmentStrokeHex(base.color, false)
+
+    ctx.strokeStyle = stroke
+    ctx.beginPath()
+    ctx.moveTo(point.x - nx * halfTick, point.y - ny * halfTick)
+    ctx.lineTo(point.x + nx * halfTick, point.y + ny * halfTick)
+    ctx.stroke()
+  }
+
+  ctx.restore()
 }
 
 function distToSegment(p: Point, a: Point, b: Point): number {
