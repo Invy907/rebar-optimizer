@@ -67,6 +67,12 @@ function isPersistedUnitId(id: string): boolean {
   return !id.startsWith('mock-') && !id.startsWith('local-')
 }
 
+function getUnitCodeBase(u: Pick<Unit, 'code' | 'name' | 'id'>): string {
+  const raw = (u.code ?? u.name ?? u.id).trim()
+  const m = raw.match(/^([a-zA-Z]+)-\d+$/)
+  return (m?.[1] ?? raw).toLowerCase()
+}
+
 /** 図面上のピクセル距離を mm として扱う（1px≒1mm 想定。必要なら後で係数を追加） */
 function canvasDistanceToLengthMm(p1: Point, p2: Point): number {
   return Math.max(1, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y)))
@@ -295,6 +301,10 @@ export function DrawingViewer({
     [effectiveUnits],
   )
 
+  const unitById = useMemo(() => {
+    return new Map(effectiveUnits.map((u) => [u.id, u]))
+  }, [effectiveUnits])
+
   const segmentsSortedForLabels = [...segments].sort((a, b) =>
     (a.created_at ?? '').localeCompare(b.created_at ?? ''),
   )
@@ -328,6 +338,20 @@ export function DrawingViewer({
         : null,
     [activeDrawingUnitId, persistedActiveUnits],
   )
+
+  // アクティブユニット選択肢: 色ベース（例: red）ごとに 1 件だけ代表を持つ
+  // （描画時には後続 prompt で存在する番号（1/2/3等）を選択）
+  const activeUnitChoices = useMemo(() => {
+    const baseToRep = new Map<string, Unit>()
+    const sorted = [...persistedActiveUnits].sort(
+      (a, b) => (a.mark_number ?? Number.MAX_SAFE_INTEGER) - (b.mark_number ?? Number.MAX_SAFE_INTEGER),
+    )
+    for (const u of sorted) {
+      const base = getUnitCodeBase(u)
+      if (!baseToRep.has(base)) baseToRep.set(base, u)
+    }
+    return [...baseToRep.values()]
+  }, [persistedActiveUnits])
 
   const activeTemplate = useMemo(
     () => templateSummaries.find((t) => t.id === activeTemplateId) ?? null,
@@ -501,12 +525,16 @@ export function DrawingViewer({
 
         // 円内の下段は長さ（mmは省略）。色はグループで区別する
         // 円内の下段（長さ）も画面基準で正立表示
+        const linkedUnit = seg.unit_id ? unitById.get(seg.unit_id) ?? null : null
+        const unitLen = linkedUnit?.length_mm
+        const displayLen =
+          typeof unitLen === 'number' && Number.isFinite(unitLen) ? unitLen : seg.length_mm
         ctx.save()
         ctx.translate(midX, yCenter + 12 / scale)
         ctx.rotate(counterAngleRad)
         ctx.font = `${9 / scale}px sans-serif`
         ctx.fillStyle = stroke
-        ctx.fillText(`${seg.length_mm}`, 0, 0)
+        ctx.fillText(`${displayLen}`, 0, 0)
         ctx.restore()
       }
     })
@@ -1136,8 +1164,48 @@ export function DrawingViewer({
     let unitName: string | null = null
     let markNumber: number | null = null
     let label: string = nextLabel
+    let appliedByPrompt = false
 
-    if (enableTemplateVariantFlow && templateId) {
+    if (activeUnit) {
+      const base = getUnitCodeBase(activeUnit)
+      const numbered = persistedActiveUnits
+        .filter((u) => getUnitCodeBase(u) === base && typeof u.mark_number === 'number')
+        .sort((a, b) => (a.mark_number ?? 0) - (b.mark_number ?? 0))
+
+      if (numbered.length > 0) {
+        const availableMarks = numbered.map((u) => u.mark_number as number)
+        const defaultMark =
+          activeUnit.mark_number && availableMarks.includes(activeUnit.mark_number)
+            ? activeUnit.mark_number
+            : availableMarks[0]
+        const pickedRaw = window.prompt(
+          `${base} の番号を入力してください (${availableMarks.join(', ')})`,
+          String(defaultMark),
+        )
+        if (pickedRaw == null) return
+        const picked = Number.parseInt(pickedRaw.trim(), 10)
+        const chosenUnit = numbered.find((u) => u.mark_number === picked) ?? null
+        if (!Number.isFinite(picked) || !chosenUnit) {
+          alert('存在しないユニットです。')
+          return
+        }
+        bars = chosenUnit.bars
+          .filter((b) => BAR_TYPES.includes(b.diameter as (typeof BAR_TYPES)[number]))
+          .map((b) => ({ barType: b.diameter, quantity: b.qtyPerUnit }))
+        color = normalizeSegmentColor(chosenUnit.color)
+        unitId = chosenUnit.id
+        unitCode = chosenUnit.code ?? null
+        unitName = chosenUnit.name ?? null
+        markNumber = chosenUnit.mark_number ?? picked
+        label = String(markNumber)
+        setActiveDrawingUnitId(chosenUnit.id)
+        setActiveTemplateId(chosenUnit.template_id ?? `shape:${chosenUnit.shape_type}`)
+        setActiveTemplateColor(normalizeSegmentColor(chosenUnit.color))
+        appliedByPrompt = true
+      }
+    }
+
+    if (!appliedByPrompt && enableTemplateVariantFlow && templateId) {
       const resolved = resolveVariantByTemplateColorLength(
         persistedActiveUnits,
         templateId,
@@ -1203,11 +1271,13 @@ export function DrawingViewer({
       )
       bars = supportedBars.length ? supportedBars : [{ barType: 'D10', quantity: 1 }]
       color = normalizeSegmentColor(stored?.color ?? preferredColor)
-      unitId = null
-      unitCode = null
-      unitName = null
-      markNumber = null
-      label = nextLabel
+      if (!appliedByPrompt) {
+        unitId = null
+        unitCode = null
+        unitName = null
+        markNumber = null
+        label = nextLabel
+      }
     }
 
     const legacy = legacyFieldsFromBars(bars)
@@ -1763,36 +1833,6 @@ export function DrawingViewer({
           </button>
           <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-md border border-border bg-white/80 px-2 py-1">
             <span className="text-[11px] font-medium text-muted whitespace-nowrap">
-              テンプレート
-            </span>
-            <select
-              value={activeTemplateId ?? ''}
-              onChange={(ev) => setActiveTemplateId(ev.target.value || null)}
-              className="max-w-[210px] rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
-              title="先にテンプレートと色を選ぶと、線入力時に length から Variant を自動解決します。"
-            >
-              {templateSummaries.length === 0 ? <option value="">（なし）</option> : null}
-              {templateSummaries.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-            <select
-              value={activeTemplateColor}
-              onChange={(ev) => setActiveTemplateColor(normalizeSegmentColor(ev.target.value))}
-              className="w-[96px] rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
-              title="Variant 자동 매칭 색"
-            >
-              {SEGMENT_COLOR_DEFINITIONS.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.labelJa}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-md border border-border bg-white/80 px-2 py-1">
-            <span className="text-[11px] font-medium text-muted whitespace-nowrap">
               アクティブユニット
             </span>
             <select
@@ -1813,12 +1853,26 @@ export function DrawingViewer({
               className="max-w-[200px] rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
               title="先に選ぶと、線を描くだけで色・円番号・鉄筋・unit_id が自動適用されます（推奨）。詳細入力は Alt+描画。"
             >
-              <option value="">（なし）直前の線分・保存済み既定を継承</option>
-              {persistedActiveUnits.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {(u.code ?? u.name ?? u.id).slice(0, 48)}
-                </option>
-              ))}
+              <option value="">ユニットを選択してください</option>
+              {activeUnitChoices.map((u) => {
+                const base = getUnitCodeBase(u)
+                const marks = Array.from(
+                  new Set(
+                    persistedActiveUnits
+                      .filter((x) => getUnitCodeBase(x) === base)
+                      .map((x) => x.mark_number)
+                      .filter((n): n is number => typeof n === 'number' && Number.isFinite(n)),
+                  ),
+                ).sort((a, b) => a - b)
+
+                const label = marks.length ? `${base}(${marks.join(',')})` : base
+
+                return (
+                  <option key={u.id} value={u.id}>
+                    {label.slice(0, 48)}
+                  </option>
+                )
+              })}
             </select>
             {activeUnit ? (
               <>
@@ -1826,7 +1880,7 @@ export function DrawingViewer({
                   className="hidden sm:inline text-[11px] text-muted truncate max-w-[180px]"
                   title={activeUnit.name}
                 >
-                  {activeUnit.code ?? activeUnit.name} — {activeUnit.name}
+                  {activeUnit.name}
                 </span>
                 {(activeUnit.detail_spec || activeUnit.detail_geometry) && (
                   <span className="hidden sm:inline rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
@@ -1882,38 +1936,7 @@ export function DrawingViewer({
                 })}
               </>
             ) : null}
-            {recentUnitIds.length > 0 ? (
-              <>
-                <span className="text-muted shrink-0 ml-1">最近</span>
-                {recentUnitIds.map((rid) => {
-                  const u = persistedActiveUnits.find((x) => x.id === rid)
-                  if (!u) return null
-                  return (
-                    <button
-                      key={rid}
-                      type="button"
-                      title={u.name}
-                      className={`rounded border px-1.5 py-0.5 font-medium ${
-                        activeDrawingUnitId === rid
-                          ? 'border-primary bg-primary/10'
-                          : 'border-border bg-white hover:bg-gray-50'
-                      }`}
-                      style={{
-                        borderColor: getSegmentStrokeHex(normalizeSegmentColor(u.color), false),
-                        color: getSegmentStrokeHex(normalizeSegmentColor(u.color), true),
-                      }}
-                      onClick={() => {
-                        setActiveDrawingUnitId(rid)
-                        pushRecentUnitId(projectId, rid)
-                        setUnitPrefsTick((x) => x + 1)
-                      }}
-                    >
-                      {u.code ?? u.name}
-                    </button>
-                  )
-                })}
-              </>
-            ) : null}
+            {/* 最近: UI상 제거（표시 단순화） */}
           </div>
           <button
             type="button"
@@ -1966,20 +1989,6 @@ export function DrawingViewer({
             className="block w-full h-full"
             style={{ display: imgLoaded ? 'block' : 'none' }}
           />
-          {focusedSegmentUnit &&
-          (focusedSegmentUnit.detail_spec || focusedSegmentUnit.detail_geometry) ? (
-            <div className="absolute left-3 bottom-3 z-20 w-72 rounded-md border border-border bg-white/95 shadow-md p-2">
-              <div className="mb-1 flex items-center justify-between">
-                <div className="text-[11px] font-semibold">
-                  詳細形状プレビュー
-                </div>
-                <span className="text-[10px] text-muted">
-                  {focusedSegmentUnit.code ?? focusedSegmentUnit.name}
-                </span>
-              </div>
-              <UnitDetailMiniPreview unit={focusedSegmentUnit} />
-            </div>
-          ) : null}
         </div>
       </div>
 

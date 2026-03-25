@@ -1065,9 +1065,8 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden md:table-cell">形状プレビュー</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden sm:table-cell">コード</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden md:table-cell">位置</th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden md:table-cell">形状</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted whitespace-nowrap">
-                  色/番号
+                  色
                 </th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden lg:table-cell">鉄筋構成</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden lg:table-cell">間隔</th>
@@ -1350,10 +1349,10 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                 <div ref={detailShapeSectionRef} className="space-y-1 pb-1">
                   <div className="space-y-0.5">
                     <p className="text-[11px] font-medium leading-snug text-foreground/90">
-                      まず下のキャンバスで形状を描きます（点・線 → 鉄筋 → 注記）。
+                      まず下のキャンバスで形状を作成し、その後に鉄筋、間隔・注記を追加します。
                     </p>
                     <p className="text-[10px] leading-snug text-muted/75">
-                      作図モードの切替・プリセット・複製は、下の補助から行えます。
+                      作図モードの切替やプリセット読込、複製は下の補助オプションから行えます。
                     </p>
                   </div>
 
@@ -2237,11 +2236,14 @@ function DetailShapeEditor({
             </button>
           </div>
         </div>
-          {mode === 'annotation' && (
+        {mode === 'annotation' && (
+          <>
+            <p className="rounded border border-dashed border-border/45 bg-slate-50/70 px-2 py-1 text-[10px] font-medium leading-snug text-foreground/80">
+              ドラッグ: 間隔線を作成 / クリック: 注記を追加 / 数値ラベル: ドラッグで移動
+            </p>
             <div className="flex flex-wrap items-center gap-2 rounded border border-border/60 bg-slate-50/80 px-2 py-1.5">
-              <span className="text-[10px] font-semibold text-muted">新規の @ 値</span>
-              <label className="flex items-center gap-2 text-[11px] text-muted">
-                mm
+              <label className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
+                <span className="text-[10px] font-semibold text-muted">新規の間隔値(mm)</span>
                 <input
                   type="number"
                   min={0}
@@ -2268,12 +2270,10 @@ function DetailShapeEditor({
                   className="w-20 rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
                 />
               </label>
-              <span className="w-full text-[10px] leading-snug text-muted/85">
-                クリックしてドラッグすると間隔線を作成します。クリックのみの場合は注記点を作成します。
-              </span>
             </div>
-          )}
-          {mode === 'shape' && startMode === 'free' && (
+          </>
+        )}
+        {mode === 'shape' && startMode === 'free' && (
             <div className="space-y-1.5 rounded border border-border/60 bg-slate-50/50 px-2 py-1.5">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted/90">
                 <span className="font-medium text-foreground/80">基本操作</span>
@@ -2897,9 +2897,11 @@ function DetailShapeEditor({
         <button
           type="button"
           onClick={resetZoom}
+          title="ズームをリセット"
+          aria-label="ズームをリセット"
           className="rounded border border-border/60 px-1.5 py-0.5 hover:bg-slate-50"
         >
-          100
+          100%
         </button>
       </div>
       </div>
@@ -2912,7 +2914,7 @@ function DetailShapeEditor({
               <span className="text-xs font-semibold text-foreground">選択中の要素</span>
               <div className="flex items-center gap-2">
                 <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-muted">
-                  {mode === 'shape' ? '形状' : mode === 'rebar' ? '鉄筋' : '注記'}
+                  {mode === 'shape' ? '形状' : mode === 'rebar' ? '鉄筋' : '注記・間隔'}
                 </span>
                 <button
                   type="button"
@@ -2924,7 +2926,7 @@ function DetailShapeEditor({
               </div>
             </div>
             <p className="text-[10px] leading-snug text-muted">
-              線・鉄筋・注記を選ぶと、ここで設定を変更できます。点の詳細編集は「詳細操作」から行います。
+              選択した線・鉄筋・間隔・注記の設定をここで変更できます。点の詳細編集は「詳細操作」から行います。
             </p>
           </div>
           <div className="mt-3 space-y-3 text-[11px]">
@@ -3206,7 +3208,7 @@ function DetailShapeEditor({
               (mode === 'shape' && startMode === 'template')
             ) && (
               <p className="text-[11px] leading-relaxed text-muted">
-                キャンバス上の点・線・鉄筋・注記を選択してください。
+                キャンバス上の点・線・鉄筋・間隔・注記を選択してください。
               </p>
             )}
           </div>
@@ -3225,22 +3227,59 @@ function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?: boole
     unit.detail_spec ?? getDefaultDetailSpec(template),
   )
   const sketch = buildShapeSketch(template, spec)
+  const storedGeo = unit.detail_geometry
+  const useStoredGeo =
+    !!storedGeo &&
+    Array.isArray(storedGeo.points) &&
+    Array.isArray(storedGeo.segments) &&
+    storedGeo.points.length > 1 &&
+    storedGeo.segments.length > 0
+  const previewGeometry = useStoredGeo ? storedGeo : sketch.geometry
   const dimFields = getEditableDimFields(template)
-  const { minX, minY, maxX, maxY } = sketch.geometry.bounds
+  const geoBounds = previewGeometry.bounds
+  const xs = previewGeometry.points.map((p) => p.x)
+  const ys = previewGeometry.points.map((p) => p.y)
+  const minX = Number.isFinite(geoBounds?.minX) ? geoBounds!.minX : Math.min(...xs, 0)
+  const minY = Number.isFinite(geoBounds?.minY) ? geoBounds!.minY : Math.min(...ys, 0)
+  const maxX = Number.isFinite(geoBounds?.maxX) ? geoBounds!.maxX : Math.max(...xs, 100)
+  const maxY = Number.isFinite(geoBounds?.maxY) ? geoBounds!.maxY : Math.max(...ys, 60)
   const pad = 24
   const w = Math.max(110, maxX - minX + pad * 2)
   const h = Math.max(66, maxY - minY + pad * 2)
-  const byKey = Object.fromEntries(sketch.geometry.points.map((p) => [p.key, p]))
+  const byKey = Object.fromEntries(previewGeometry.points.map((p) => [p.key, p]))
   const stroke = getSegmentStrokeHex(normalizeSegmentColor(unit.color), false)
+  const previewRebarLayout = normalizeRebarLayout(unit.rebar_layout)
+  const previewRebars = previewRebarLayout.rebars.filter(
+    (rb) => Number.isFinite(rb.x) && Number.isFinite(rb.y),
+  )
+  const previewSpacings = previewRebarLayout.spacings
+    .filter(
+      (sp) =>
+        Number.isFinite(sp.x1) &&
+        Number.isFinite(sp.y1) &&
+        Number.isFinite(sp.x2) &&
+        Number.isFinite(sp.y2),
+    )
+    .map((sp) => ({
+      ...sp,
+      x1: Number(sp.x1),
+      y1: Number(sp.y1),
+      x2: Number(sp.x2),
+      y2: Number(sp.y2),
+    }))
+  const rebarR = large ? 8 : 3.2
+  const rebarStrokeW = large ? 2 : 1
+  const rebarFont = large ? 12 : 6.5
+  const spacingFont = large ? 11 : 7
 
   return (
     <svg
       viewBox={`${minX - pad} ${minY - pad} ${w} ${h}`}
       preserveAspectRatio="xMidYMid meet"
-      className={large ? 'h-64 w-full rounded border border-border bg-white' : 'h-12 w-28 rounded border border-border bg-white'}
+      className={large ? 'h-72 w-full rounded border border-border bg-white' : 'h-12 w-28 rounded border border-border bg-white'}
       aria-label="shape thumbnail"
     >
-      {sketch.geometry.segments.map((seg, i) => {
+      {previewGeometry.segments.map((seg, i) => {
         const p1 = byKey[seg.from]
         const p2 = byKey[seg.to]
         if (!p1 || !p2) return null
@@ -3257,13 +3296,73 @@ function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?: boole
           />
         )
       })}
+      {previewSpacings.map((sp) => {
+        const midX = (sp.x1 + sp.x2) / 2
+        const midY = (sp.y1 + sp.y2) / 2
+        const raw = String(sp.label ?? '')
+        const spacingText = raw.match(/@?(\d+)/)?.[1] ?? raw
+        const tx =
+          typeof sp.label_x === 'number'
+            ? sp.label_x
+            : midX
+        const ty =
+          typeof sp.label_y === 'number'
+            ? sp.label_y
+            : midY
+        return (
+          <g key={`sp-${sp.id}`}>
+            <line
+              x1={sp.x1}
+              y1={sp.y1}
+              x2={sp.x2}
+              y2={sp.y2}
+              stroke="#64748b"
+              strokeWidth={large ? 2 : 1.2}
+              strokeDasharray={large ? '5 3' : '3 2'}
+            />
+            {spacingText ? (
+              <text
+                x={tx}
+                y={ty}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fontSize={spacingFont}
+                fill="#334155"
+                fontWeight={700}
+              >
+                {spacingText}
+              </text>
+            ) : null}
+          </g>
+        )
+      })}
+      {previewRebars.map((rb) => {
+        const txt = rb.label || rb.diameter
+        return (
+          <g key={`rb-${rb.id}`}>
+            <circle cx={rb.x} cy={rb.y} r={rebarR} fill="#ffffff" stroke="#2563eb" strokeWidth={rebarStrokeW} />
+            {large ? (
+              <text
+                x={rb.x + rebarR + 2}
+                y={rb.y - rebarR - 1}
+                fontSize={rebarFont}
+                fill="#1d4ed8"
+                fontWeight={700}
+              >
+                {txt}
+              </text>
+            ) : null}
+          </g>
+        )
+      })}
       {large &&
+        !useStoredGeo &&
         sketch.handles.map((h) => (
           <g key={`pt-${h.key}`}>
             <circle cx={h.x} cy={h.y} r={5} fill="#ffffff" stroke="#334155" strokeWidth={1.5} />
           </g>
         ))}
-      {large && (
+      {large && !useStoredGeo && (
         <g>
           <rect
             x={minX - pad + 8}
@@ -3350,10 +3449,6 @@ function UnitRow({
       <td className={`px-4 py-3 hidden md:table-cell ${dimInactiveCell}`}>
         <span className="text-xs">{unit.location_type ?? '-'}</span>
       </td>
-      {/* 形状 */}
-      <td className={`px-4 py-3 hidden md:table-cell ${dimInactiveCell}`}>
-        <span className="text-xs">{getShapeLabel(unit.shape_type)}</span>
-      </td>
       {/* 色/番号 */}
       <td className={`px-4 py-3 whitespace-nowrap ${dimInactiveCell}`}>
         <span
@@ -3361,7 +3456,6 @@ function UnitRow({
           style={{ background: tint, color: stroke }}
         >
           {colorLabel}
-          {unit.mark_number != null ? ` #${unit.mark_number}` : null}
         </span>
       </td>
       {/* 鉄筋構成 */}

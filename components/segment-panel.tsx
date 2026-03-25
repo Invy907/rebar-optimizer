@@ -2,13 +2,13 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
 import Link from 'next/link'
 import {
-  buildCircleSummaryByColor,
   decodeSegmentMeta,
   encodeSegmentMeta,
+  getSegmentResolvedMarkNumber,
   getSegmentBars,
   getSegmentBarsSummary,
   getSegmentColor,
@@ -115,8 +115,33 @@ export function SegmentPanel({
       ? units.find((u) => u.id === selected.unit_id) ?? null
       : null
 
-  // 円番号はユニット/コード由来の番号を表示。長さ順フォールバックは使わない。
-  const circleSummarySections = buildCircleSummaryByColor(rebarSegments, units)
+  const unitById = useMemo(() => new Map(units.map((u) => [u.id, u])), [units])
+
+  // 円番号(ユニット由来)で集計し、表示長さは「割当ユニットの長さ」を優先する
+  type CircleRow = { len: number; no: number | null; count: number; color: SegmentColor }
+  const circleRows = (() => {
+    const m = new Map<string, CircleRow>()
+    for (const seg of rebarSegments) {
+      const no = getSegmentResolvedMarkNumber(seg, units)
+      const color = getSegmentColor(seg, units)
+      const linkedUnit = seg.unit_id ? unitById.get(seg.unit_id) ?? null : null
+      const unitLen = linkedUnit?.length_mm
+      const len = typeof unitLen === 'number' && Number.isFinite(unitLen) ? unitLen : seg.length_mm
+      const key = `${color}::${no ?? 'none'}`
+      const existing = m.get(key)
+      if (!existing) {
+        m.set(key, { len, no, count: 1, color })
+      } else {
+        existing.count += 1
+      }
+    }
+    return [...m.values()].sort((a, b) => {
+      const aNo = a.no ?? Number.MAX_SAFE_INTEGER
+      const bNo = b.no ?? Number.MAX_SAFE_INTEGER
+      if (aNo !== bNo) return aNo - bNo
+      return b.len - a.len
+    })
+  })()
 
   return (
     <div className="w-72 shrink-0 flex flex-col rounded-lg border border-border bg-white overflow-hidden">
@@ -561,50 +586,19 @@ export function SegmentPanel({
           </div>
         ) : (
           <div>
-            <div className="px-4 py-3 border-b border-border space-y-0.5 text-xs font-mono">
-              {circleSummarySections.flatMap((sec) =>
-                sec.rows
-                  .filter((r) => r.count > 0)
-                  .map((r) => (
-                    <div
-                      key={`${sec.color}-${r.len}`}
-                      style={{ color: getSegmentStrokeHex(sec.color, false) }}
-                    >
-                      {circledNumber(r.no)}
-                      {r.len.toLocaleString()} × {r.count}
-                    </div>
-                  )),
-              )}
-            </div>
-            <ul className="divide-y divide-border">
-              {rebarSegments.map((seg) => (
-                <li
-                  key={seg.id}
-                  onClick={(e) => {
-                    if (e.ctrlKey || e.metaKey) {
-                      onToggleSegmentSelection(seg.id)
-                    } else {
-                      onReplaceSelection([seg.id])
-                    }
-                  }}
-                  className={`flex items-center justify-between px-4 py-2.5 cursor-pointer text-sm transition-colors ${
-                    selectedSegmentIds.includes(seg.id)
-                      ? 'bg-primary/5 text-primary'
-                      : 'hover:bg-gray-50'
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <span className="font-medium">{seg.length_mm}mm</span>
-                    <span className="text-muted ml-1.5 truncate">
-                      {getSegmentBarsSummary(seg, units)}
-                    </span>
+            <div className="px-4 py-3 border-b border-border space-y-1 text-[13px] font-semibold font-mono">
+              {circleRows
+                .filter((r) => r.count > 0)
+                .map((r) => (
+                  <div
+                    key={`${r.color}-${r.no ?? 'none'}`}
+                    style={{ color: getSegmentStrokeHex(r.color, false) }}
+                  >
+                    {circledNumber(r.no)}
+                    {r.len.toLocaleString()} × {r.count}
                   </div>
-                  <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono">
-                    {getSegmentColorLabelJa(getSegmentColor(seg, units))}
-                  </span>
-                </li>
-              ))}
-            </ul>
+                ))}
+            </div>
           </div>
         )}
       </div>
