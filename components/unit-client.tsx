@@ -1765,6 +1765,7 @@ function DetailShapeEditor({
     current: { x: number; y: number }
     shiftLock: boolean
   } | null>(null)
+  const [dragSpacingLabelId, setDragSpacingLabelId] = useState<string | null>(null)
   const suppressCanvasGestureRef = useRef(false)
 
   function clearCanvasSelections() {
@@ -1806,6 +1807,7 @@ function DetailShapeEditor({
     }
     if (mode !== 'annotation') {
       setSpacingDrawGesture(null)
+      setDragSpacingLabelId(null)
     }
   }, [mode])
 
@@ -2000,6 +2002,25 @@ function DetailShapeEditor({
 
     selectSpacing(id)
     return true
+  }
+
+  function moveSpacingLabel(spacingId: string, p: { x: number; y: number }) {
+    const nextSpacings = rebarLayout.spacings.map((sp) =>
+      sp.id === spacingId
+        ? {
+            ...sp,
+            label_x: p.x,
+            label_y: p.y,
+          }
+        : sp,
+    )
+
+    onRebarLayoutChange(
+      normalizeRebarLayout({
+        ...rebarLayout,
+        spacings: nextSpacings,
+      }),
+    )
   }
 
   function onRebarClick(rebarId: string) {
@@ -2395,6 +2416,11 @@ function DetailShapeEditor({
             return
           }
 
+          if (mode === 'annotation' && dragSpacingLabelId) {
+            moveSpacingLabel(dragSpacingLabelId, p)
+            return
+          }
+
           if (mode === 'shape' && startMode === 'free') {
             if (drawGesture) {
               setDrawGesture((prev) => (prev ? { ...prev, current: p, shiftLock: e.shiftKey } : prev))
@@ -2414,10 +2440,12 @@ function DetailShapeEditor({
             setDraggingKey(null)
             setDrawGesture(null)
             setSpacingDrawGesture(null)
+            setDragSpacingLabelId(null)
             return
           }
 
           setDraggingKey(null)
+          setDragSpacingLabelId(null)
 
           if (mode === 'shape' && startMode === 'free' && drawGesture) {
             addPolylineByDrag(
@@ -2445,6 +2473,7 @@ function DetailShapeEditor({
         onPointerLeave={() => {
           suppressCanvasGestureRef.current = false
           setDraggingKey(null)
+          setDragSpacingLabelId(null)
           if (mode === 'annotation') setSpacingDrawGesture(null)
         }}
       >
@@ -2671,58 +2700,80 @@ function DetailShapeEditor({
           const tickStroke = '#64748b'
           const labelFill = isSpacingSelected ? '#7c3aed' : '#334155'
           return (
-            <g key={sp.id} pointerEvents="none" opacity={mode === 'annotation' ? 1 : 0.85}>
-              <line
-                x1={a.x}
-                y1={a.y}
-                x2={b.x}
-                y2={b.y}
-                stroke={mainStroke}
-                strokeWidth={isSpacingSelected ? 2.2 : 1.6}
-                strokeLinecap="butt"
-              />
-              <line
-                x1={a.x - nx * tickHalf}
-                y1={a.y - ny * tickHalf}
-                x2={a.x + nx * tickHalf}
-                y2={a.y + ny * tickHalf}
-                stroke={tickStroke}
-                strokeWidth={isSpacingSelected ? 2.1 : 1.6}
-                strokeLinecap="butt"
-              />
-              <line
-                x1={b.x - nx * tickHalf}
-                y1={b.y - ny * tickHalf}
-                x2={b.x + nx * tickHalf}
-                y2={b.y + ny * tickHalf}
-                stroke={tickStroke}
-                strokeWidth={isSpacingSelected ? 2.1 : 1.6}
-                strokeLinecap="butt"
-              />
-              {txt && typeof sp.label_x === 'number' && typeof sp.label_y === 'number' && (
-                <text
-                  data-canvas-hit="item"
-                  x={sp.label_x}
-                  y={sp.label_y}
-                  fontSize={11}
-                  fill={labelFill}
-                  fontWeight={700}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  pointerEvents={mode === 'annotation' ? 'auto' : 'none'}
-                  style={{ cursor: mode === 'annotation' ? 'pointer' : 'default' }}
-                  onPointerDownCapture={() => {
-                    markObjectPointer()
-                  }}
-                  onPointerDown={(e) => {
-                    if (mode !== 'annotation') return
-                    beginObjectPointer(e)
-                    selectSpacing(sp.id)
-                  }}
-                >
-                  {txt}
-                </text>
-              )}
+            <g key={sp.id} opacity={mode === 'annotation' ? 1 : 0.85}>
+              <g pointerEvents="none">
+                <line
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  stroke={mainStroke}
+                  strokeWidth={isSpacingSelected ? 2.2 : 1.6}
+                  strokeLinecap="butt"
+                />
+                <line
+                  x1={a.x - nx * tickHalf}
+                  y1={a.y - ny * tickHalf}
+                  x2={a.x + nx * tickHalf}
+                  y2={a.y + ny * tickHalf}
+                  stroke={tickStroke}
+                  strokeWidth={isSpacingSelected ? 2.1 : 1.6}
+                  strokeLinecap="butt"
+                />
+                <line
+                  x1={b.x - nx * tickHalf}
+                  y1={b.y - ny * tickHalf}
+                  x2={b.x + nx * tickHalf}
+                  y2={b.y + ny * tickHalf}
+                  stroke={tickStroke}
+                  strokeWidth={isSpacingSelected ? 2.1 : 1.6}
+                  strokeLinecap="butt"
+                />
+              </g>
+              {txt &&
+                typeof sp.label_x === 'number' &&
+                typeof sp.label_y === 'number' &&
+                (() => {
+                  const hitW = Math.max(24, txt.length * 8 + 10)
+                  const hitH = 18
+
+                  return (
+                    <>
+                      <rect
+                        data-canvas-hit="item"
+                        x={sp.label_x - hitW / 2}
+                        y={sp.label_y - hitH / 2}
+                        width={hitW}
+                        height={hitH}
+                        fill="transparent"
+                        pointerEvents={mode === 'annotation' ? 'auto' : 'none'}
+                        style={{ cursor: mode === 'annotation' ? 'grab' : 'default' }}
+                        onPointerDownCapture={() => {
+                          markObjectPointer()
+                        }}
+                        onPointerDown={(e) => {
+                          if (mode !== 'annotation') return
+                          beginObjectPointer(e)
+                          selectSpacing(sp.id)
+                          setDragSpacingLabelId(sp.id)
+                        }}
+                      />
+
+                      <text
+                        x={sp.label_x}
+                        y={sp.label_y}
+                        fontSize={11}
+                        fill={labelFill}
+                        fontWeight={700}
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        pointerEvents="none"
+                      >
+                        {txt}
+                      </text>
+                    </>
+                  )
+                })()}
             </g>
           )
         })}
