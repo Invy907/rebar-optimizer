@@ -1707,6 +1707,19 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
   )
 }
 
+/** 詳細編集キャンバスと形状プレビュー（サムネ・モーダル）で鉄筋径の見た目を揃える */
+function rebarDiameterVisualToken(diameter: string | null | undefined): {
+  fill: string
+  stroke: string
+  text: string
+} {
+  const d = (diameter ?? '').toUpperCase()
+  if (d === 'D13') return { fill: '#dbeafe', stroke: '#2563eb', text: '#1d4ed8' }
+  if (d === 'D16') return { fill: '#ffedd5', stroke: '#ea580c', text: '#c2410c' }
+  if (d === 'D10') return { fill: '#e5e7eb', stroke: '#111827', text: '#111827' }
+  return { fill: '#e5e7eb', stroke: '#6b7280', text: '#4b5563' }
+}
+
 type CanvasSelection =
   | { kind: 'point'; id: string }
   | { kind: 'segment'; id: string }
@@ -2190,17 +2203,6 @@ function DetailShapeEditor({
 
     if (!a || !b) return null
     return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
-  }
-
-  function rebarColorToken(diameter: string | null | undefined): {
-    fill: string
-    stroke: string
-    text: string
-  } {
-    const d = (diameter ?? '').toUpperCase()
-    if (d === 'D13') return { fill: '#dbeafe', stroke: '#2563eb', text: '#1d4ed8' }
-    if (d === 'D16') return { fill: '#ffedd5', stroke: '#ea580c', text: '#c2410c' }
-    return { fill: '#e5e7eb', stroke: '#6b7280', text: '#4b5563' }
   }
 
   function beginObjectPointer(e: SvgPointerEvent<SVGElement>) {
@@ -2798,7 +2800,7 @@ function DetailShapeEditor({
         })}
         {rebarLayout.rebars.map((rb) => {
           const rebarPe = mode === 'rebar' || mode === 'annotation' ? 'auto' : 'none'
-          const token = rebarColorToken(rb.diameter)
+          const token = rebarDiameterVisualToken(rb.diameter)
           const isSelected = selection?.kind === 'rebar' && selection.id === rb.id
           const labelText = rb.label || rb.diameter
           const labelW = Math.max(22, Math.round(labelText.length * (rebarLabelFont * 0.68) + 10))
@@ -3405,15 +3407,23 @@ export function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?
       })}
       {previewRebars.map((rb) => {
         const txt = rb.label || rb.diameter
+        const token = rebarDiameterVisualToken(rb.diameter)
         return (
           <g key={`rb-${rb.id}`}>
-            <circle cx={rb.x} cy={rb.y} r={rebarR} fill="#ffffff" stroke="#2563eb" strokeWidth={rebarStrokeW} />
+            <circle
+              cx={rb.x}
+              cy={rb.y}
+              r={rebarR}
+              fill={token.fill}
+              stroke={token.stroke}
+              strokeWidth={rebarStrokeW}
+            />
             {large ? (
               <text
                 x={rb.x + rebarR + 2}
                 y={rb.y - rebarR - 1}
                 fontSize={rebarFont}
-                fill="#1d4ed8"
+                fill={token.text}
                 fontWeight={700}
               >
                 {txt}
