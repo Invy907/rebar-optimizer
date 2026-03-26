@@ -11,12 +11,13 @@ import {
   getSegmentBars,
   getSegmentBarsSummary,
   getSegmentColor,
+  getSegmentEffectiveLengthMm,
+  getSegmentResolvedMarkNumber,
   type SegmentColor,
 } from '@/lib/segment-meta'
 import {
   compareSegmentColorOrder,
   getSegmentStrokeHex,
-  SEGMENT_COLOR_ORDER,
 } from '@/lib/segment-colors'
 
 export function OptimizeClient({
@@ -52,8 +53,8 @@ export function OptimizeClient({
   const supabase = createClient()
   const router = useRouter()
 
-  const circleInputSummaryRows = useMemo(
-    () => buildCircleInputSummaryRows(segments, units),
+  const circleInputSummaryGroups = useMemo(
+    () => buildCircleInputSummaryGroups(segments, units),
     [segments, units],
   )
 
@@ -61,10 +62,11 @@ export function OptimizeClient({
     const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
     const pieces: PieceInput[] = []
     for (const seg of rebarSegments) {
-      const adjusted = seg.length_mm + (pieceLengthAdjustmentMm || 0)
+      const baseLen = getSegmentEffectiveLengthMm(seg, units)
+      const adjusted = baseLen + (pieceLengthAdjustmentMm || 0)
       if (!Number.isFinite(adjusted) || adjusted <= 0) {
         alert(
-          `部材長さ補正の結果、0mm以下になりました。\n長さ: ${seg.length_mm}mm / 補正: ${pieceLengthAdjustmentMm}mm`,
+          `部材長さ補正の結果、0mm以下になりました。\n長さ: ${baseLen}mm / 補正: ${pieceLengthAdjustmentMm}mm`,
         )
         return
       }
@@ -178,29 +180,9 @@ export function OptimizeClient({
         {segments.filter((s) => s.bar_type !== 'SPACING').length === 0 ? (
           <p className="text-sm text-muted">線分データがありません。</p>
         ) : (
-          <div className="space-y-2">
-            <CircleInputSummary rows={circleInputSummaryRows} />
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-muted">
-                  <th className="pb-2 font-medium">ラベル</th>
-                  <th className="pb-2 font-medium">長さ (mm)</th>
-                  <th className="pb-2 font-medium">鉄筋</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {segments
-                  .filter((seg) => seg.bar_type !== 'SPACING')
-                  .map((seg) => (
-                  <tr key={seg.id}>
-                    <td className="py-2 font-mono">{segmentLabelById[seg.id] ?? '-'}</td>
-                    <td className="py-2 font-mono">{seg.length_mm.toLocaleString()}</td>
-                    <td className="py-2 font-mono text-xs">{getSegmentBarsSummary(seg, units)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="text-xs text-muted">
+          <div className="space-y-4">
+            <CircleInputSummary groups={circleInputSummaryGroups} />
+            <p className="text-sm text-muted">
               合計{' '}
               {segments
                 .filter((seg) => seg.bar_type !== 'SPACING')
@@ -366,12 +348,6 @@ interface BarSummaryRow {
   total: number
 }
 
-const CIRCLED_NUMS = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
-function circledNumber(n: number): string {
-  const chars = [...CIRCLED_NUMS]
-  return n >= 1 && n <= chars.length ? chars[n - 1] : `(${n})`
-}
-
 function buildBarSummaryTable(pieces: PieceInput[]): BarSummaryRow[] {
   const map = new Map<number, Map<string, number>>()
   for (const p of pieces) {
@@ -401,67 +377,133 @@ function buildBarSummaryTable(pieces: PieceInput[]): BarSummaryRow[] {
   return rows
 }
 
-interface CircleSummaryRow {
+interface CircleSummaryLine {
   lengthMm: number
   color: SegmentColor
+  /** ユニット由来のマーク。任意入力のみの線分は null（円番号は表示しない） */
+  markNo: number | null
   count: number
 }
 
-function buildCircleInputSummaryRows(
+interface CircleInputSummaryGroup {
+  color: SegmentColor
+  /** 例: D10×1, D13×4（同一色・同一構成の線分をまとめる） */
+  barsSummary: string
+  lines: CircleSummaryLine[]
+}
+
+const CIRCLED_NUMS = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
+
+function circledNumberForSummary(n: number): string {
+  const chars = [...CIRCLED_NUMS]
+  return n >= 1 && n <= chars.length ? chars[n - 1]! : `(${n})`
+}
+
+function buildCircleInputSummaryGroups(
   segments: DrawingSegment[],
   units?: Unit[] | null,
-): CircleSummaryRow[] {
+): CircleInputSummaryGroup[] {
   const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
-  const countsByKey = new Map<string, CircleSummaryRow>()
+  type AccRow = CircleSummaryLine & { barsSummary: string }
+  const countsByKey = new Map<string, AccRow>()
 
   for (const seg of rebarSegments) {
     const color = getSegmentColor(seg, units)
-    const key = `${seg.length_mm}|${color}`
+    const lengthMm = getSegmentEffectiveLengthMm(seg, units)
+    const markNo = getSegmentResolvedMarkNumber(seg, units)
+    const barsSummary = getSegmentBarsSummary(seg, units)
+    const key = `${lengthMm}|${color}|${markNo ?? 'none'}|${barsSummary}`
     const cur =
       countsByKey.get(key) ??
       ({
-        lengthMm: seg.length_mm,
+        lengthMm,
         color,
+        markNo,
+        barsSummary,
         count: 0,
-      } satisfies CircleSummaryRow)
+      } satisfies AccRow)
     cur.count++
     countsByKey.set(key, cur)
   }
 
-  const rows = Array.from(countsByKey.values())
-  rows.sort((a, b) => {
+  const flat = Array.from(countsByKey.values())
+  flat.sort((a, b) => {
+    const byColor = compareSegmentColorOrder(a.color, b.color)
+    if (byColor !== 0) return byColor
+    const byBars = a.barsSummary.localeCompare(b.barsSummary, 'ja')
+    if (byBars !== 0) return byBars
     if (b.lengthMm !== a.lengthMm) return b.lengthMm - a.lengthMm
-    return compareSegmentColorOrder(a.color, b.color)
+    const aM = a.markNo ?? Number.MAX_SAFE_INTEGER
+    const bM = b.markNo ?? Number.MAX_SAFE_INTEGER
+    return aM - bM
   })
-  return rows
+
+  const groupKeyOrder: string[] = []
+  const groupMap = new Map<string, CircleInputSummaryGroup>()
+  for (const r of flat) {
+    const gk = `${r.color}::${r.barsSummary}`
+    if (!groupMap.has(gk)) {
+      groupKeyOrder.push(gk)
+      groupMap.set(gk, {
+        color: r.color,
+        barsSummary: r.barsSummary,
+        lines: [],
+      })
+    }
+    const g = groupMap.get(gk)!
+    g.lines.push({
+      lengthMm: r.lengthMm,
+      color: r.color,
+      markNo: r.markNo,
+      count: r.count,
+    })
+  }
+
+  return groupKeyOrder.map((k) => groupMap.get(k)!)
 }
 
 function CircleInputSummary({
-  rows,
+  groups,
 }: {
-  rows: CircleSummaryRow[]
+  groups: CircleInputSummaryGroup[]
 }) {
+  if (groups.length === 0) return null
   return (
-    <div className="space-y-0.5 text-[11px] font-mono leading-relaxed">
-      {SEGMENT_COLOR_ORDER.flatMap((color) => {
-        const colorRows = rows
-          .filter((r) => r.color === color && r.count > 0)
-          .sort((a, b) => b.lengthMm - a.lengthMm)
-        if (colorRows.length === 0) return []
-        const noByLen = new Map<number, number>(
-          colorRows.map((r, idx) => [r.lengthMm, idx + 1]),
-        )
-        const hex = getSegmentStrokeHex(color, false)
-        return colorRows.map((r) => {
-          const no = noByLen.get(r.lengthMm) ?? 1
+    <div className="space-y-3 rounded-md border border-border bg-muted/30 px-3 py-3">
+      <p className="text-xs font-medium text-muted">種類別サマリ（色・配筋・長さごとの本数）</p>
+      <div className="space-y-3">
+        {groups.map((g) => {
+          const hex = getSegmentStrokeHex(g.color, false)
+          const barsLabel =
+            g.barsSummary && g.barsSummary !== '-' ? g.barsSummary : '（鉄筋未設定）'
           return (
-            <div key={`${r.lengthMm}|${r.color}`} style={{ color: hex }}>
-              {circledNumber(no)}
-              {r.lengthMm.toLocaleString('en-US')} × {r.count}
+            <div key={`${g.color}::${g.barsSummary}`} className="space-y-1">
+              <p
+                className="font-mono text-sm font-semibold leading-snug"
+                style={{ color: hex }}
+              >
+                {barsLabel}
+              </p>
+              <ul className="space-y-1 pl-0">
+                {g.lines.map((r) => {
+                  const markPrefix =
+                    r.markNo != null ? circledNumberForSummary(r.markNo) : ''
+                  return (
+                    <li
+                      key={`${r.lengthMm}|${r.color}|${r.markNo ?? 'none'}`}
+                      className="font-mono text-[16px] font-semibold leading-snug tabular-nums"
+                      style={{ color: hex }}
+                    >
+                      {markPrefix}
+                      {r.lengthMm.toLocaleString('ja-JP')} × {r.count}
+                    </li>
+                  )
+                })}
+              </ul>
             </div>
           )
-        })
-      })}
+        })}
+      </div>
     </div>
   )
 }

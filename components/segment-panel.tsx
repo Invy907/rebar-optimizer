@@ -17,6 +17,7 @@ import {
   type SegmentColor,
 } from '@/lib/segment-meta'
 import {
+  compareSegmentColorOrder,
   getSegmentColorLabelJa,
   getSegmentStrokeHex,
   normalizeSegmentColor,
@@ -34,7 +35,7 @@ const CLEAR_UNIT_LINK = {
 }
 
 function circledNumber(n: number | null): string {
-  if (n == null) return '—'
+  if (n == null) return ''
   const chars = [...CIRCLED_NUMS]
   return n >= 1 && n <= chars.length ? chars[n - 1] : `(${n})`
 }
@@ -136,10 +137,13 @@ export function SegmentPanel({
       }
     }
     return [...m.values()].sort((a, b) => {
+      const byColor = compareSegmentColorOrder(a.color, b.color)
+      if (byColor !== 0) return byColor
+      if (b.len !== a.len) return b.len - a.len
       const aNo = a.no ?? Number.MAX_SAFE_INTEGER
       const bNo = b.no ?? Number.MAX_SAFE_INTEGER
       if (aNo !== bNo) return aNo - bNo
-      return b.len - a.len
+      return 0
     })
   })()
 
@@ -492,6 +496,20 @@ export function SegmentPanel({
               <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
                 {units
                   .filter((u) => u.is_active !== false && isPersistedUnitId(u.id))
+                  .slice()
+                  .sort((a, b) => {
+                    const ca = normalizeSegmentColor(a.color)
+                    const cb = normalizeSegmentColor(b.color)
+                    const byColor = compareSegmentColorOrder(ca, cb)
+                    if (byColor !== 0) return byColor
+                    const ma = a.mark_number ?? 0
+                    const mb = b.mark_number ?? 0
+                    if (ma !== mb) return ma - mb
+                    return (a.code ?? a.name ?? '').localeCompare(
+                      b.code ?? b.name ?? '',
+                      'ja',
+                    )
+                  })
                   .map((u) => {
                     const uc = normalizeSegmentColor(u.color)
                     const stroke = getSegmentStrokeHex(uc, false)

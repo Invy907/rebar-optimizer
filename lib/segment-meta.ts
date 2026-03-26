@@ -121,6 +121,21 @@ export function resolveLinkedUnit(
 }
 
 /**
+ * 切断・一覧表示用の長さ (mm)。割当ユニットの length_mm があれば優先、なければ線分の length_mm。
+ */
+export function getSegmentEffectiveLengthMm(
+  seg: DrawingSegment,
+  units?: Unit[] | null,
+): number {
+  const u = resolveLinkedUnit(seg, units)
+  const unitLen = u?.length_mm
+  if (typeof unitLen === 'number' && Number.isFinite(unitLen)) {
+    return unitLen
+  }
+  return seg.length_mm
+}
+
+/**
  * 表示用の線の色。unit_id がありユニットが解決できればユニットの色、否则 memo / 既定。
  */
 export function getSegmentColor(
@@ -206,7 +221,8 @@ export function buildCircleSummaryByColor(
     const m = countByColorLenMark.get(c)
     if (!m) continue
     const mark = getSegmentResolvedMarkNumber(seg, units)
-    const k = `${seg.length_mm}::${mark ?? ''}`
+    const lenMm = getSegmentEffectiveLengthMm(seg, units)
+    const k = `${lenMm}::${mark ?? ''}`
     m.set(k, (m.get(k) ?? 0) + 1)
   }
 

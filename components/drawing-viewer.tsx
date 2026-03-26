@@ -23,7 +23,7 @@ import {
   pushRecentUnitId,
   readRecentUnitIds,
 } from '@/lib/drawing-unit-prefs'
-import { UnitShapeThumbnail } from '@/components/unit-client'
+import { UnitShapeThumbnail, UnitVariantLengthList } from '@/components/unit-client'
 import {
   getSegmentStrokeHex,
   isSegmentColor,
@@ -48,16 +48,25 @@ interface Point {
   y: number
 }
 
-function getPolylineAnchorFromSegments(list: DrawingSegment[]): Point | null {
-  if (list.length === 0) return null
-  const nonSpacing = list.filter((s) => !(s.bar_type === 'SPACING' && s.quantity === 0))
-  const targetList = nonSpacing.length > 0 ? nonSpacing : list
+type QuickRebarInsertSeed = {
+  bars: SegmentBarItem[]
+  color: SegmentColor
+  unitId: string | null
+  unitCode: string | null
+  unitName: string | null
+  markNumber: number | null
+  label: string
+  /** 番号モーダル確定後は Variant 自動解決をスキップ */
+  skipVariantResolution: boolean
+}
 
-  const latest = [...targetList].sort((a, b) =>
-    (a.created_at ?? '').localeCompare(b.created_at ?? ''),
-  )[targetList.length - 1]
-  if (!latest) return null
-  return { x: latest.x2, y: latest.y2 }
+type QuickMarkPickModalState = {
+  p1: Point
+  p2: Point
+  lengthMm: number
+  base: string
+  numbered: Unit[]
+  availableMarks: number[]
 }
 
 const BAR_TYPES = ['D10', 'D13', 'D16', 'D19', 'D22', 'D25', 'D29', 'D32']
@@ -70,6 +79,17 @@ function getUnitCodeBase(u: Pick<Unit, 'code' | 'name' | 'id'>): string {
   const raw = (u.code ?? u.name ?? u.id).trim()
   const m = raw.match(/^([a-zA-Z]+)-\d+$/)
   return (m?.[1] ?? raw).toLowerCase()
+}
+
+/** 番号選択モーダル等の表示用 */
+function formatUnitLengthMmJa(u: Pick<Unit, 'length_mm' | 'spacing_mm'>): string {
+  if (typeof u.length_mm === 'number' && Number.isFinite(u.length_mm)) {
+    return `${u.length_mm.toLocaleString('ja-JP')}mm`
+  }
+  if (typeof u.spacing_mm === 'number' && Number.isFinite(u.spacing_mm)) {
+    return `${u.spacing_mm.toLocaleString('ja-JP')}mm`
+  }
+  return '長さ未登録'
 }
 
 /** 図面上のピクセル距離を mm として扱う（1px≒1mm 想定。必要なら後で係数を追加） */
@@ -114,9 +134,6 @@ export function DrawingViewer({
   const [currentPoint, setCurrentPoint] = useState<Point | null>(null)
 
   const [previewUnit, setPreviewUnit] = useState<Unit | null>(null)
-
-  // 連続描画時の始点（直前線分の終点から自動で繋ぐ）
-  const [polylineLastPoint, setPolylineLastPoint] = useState<Point | null>(null)
 
   const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>(() =>
     initialSelectedSegmentId ? [initialSelectedSegmentId] : [],
@@ -179,6 +196,20 @@ export function DrawingViewer({
     label: string
   } | null>(null)
 
+  /** 線を描く: red-1/2… の番号選択（prompt の代わり）。長さ任意入力もここに集約 */
+  const [quickMarkPickModal, setQuickMarkPickModal] = useState<QuickMarkPickModalState | null>(null)
+  const quickMarkPickModalRef = useRef<QuickMarkPickModalState | null>(null)
+  quickMarkPickModalRef.current = quickMarkPickModal
+  const [quickMarkArbitraryMm, setQuickMarkArbitraryMm] = useState('')
+  const quickMarkArbitraryInputRef = useRef<HTMLInputElement>(null)
+  const submitQuickMarkPickUnitRef = useRef<
+    ((chosenUnit: Unit, ctx: QuickMarkPickModalState) => Promise<void>) | null
+  >(null)
+
+  useEffect(() => {
+    if (!quickMarkPickModal) setQuickMarkArbitraryMm('')
+  }, [quickMarkPickModal])
+
   const lastUsedRebarDraftKey = `project:${projectId}:lastUsedRebarDraft:v1`
 
   type StoredRebarDraft = {
@@ -233,12 +264,6 @@ export function DrawingViewer({
     }
   }
   const [tool, setTool] = useState<'select' | 'draw' | 'spacing'>('select')
-
-  // 連続描画(끝점 이어붙이기) 모드의 시작점/끝점 연결 상태를 관리합니다.
-  // select로 나가면 체인을 끊습니다.
-  useEffect(() => {
-    if (tool === 'select') setPolylineLastPoint(null)
-  }, [tool])
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -494,50 +519,78 @@ export function DrawingViewer({
       } else {
         const circleNum = getSegmentMarkNumberForCanvas(seg, effectiveUnits)
         const stroke = getSegmentStrokeHex(segColor, false)
-        const r = 9 / scale
-        const yCenter = midY - 2 / scale
-
-        // Circle marker
-        ctx.beginPath()
-        ctx.arc(midX, yCenter, r, 0, Math.PI * 2)
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
-        ctx.fill()
-        ctx.lineWidth = 2 / scale
-        ctx.strokeStyle = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
-        ctx.stroke()
-
-        // Number inside circle (画面基準で正立表示)
-        ctx.save()
-        ctx.translate(midX, yCenter)
-        ctx.rotate(counterAngleRad)
-        ctx.font = `bold ${11 / scale}px sans-serif`
-        ctx.fillStyle = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(circleNum != null ? String(circleNum) : '-', 0, 0)
-        ctx.restore()
-
-        ctx.textAlign = 'left'
-        ctx.textBaseline = 'alphabetic'
-
-        // 円内の下段は長さ（mmは省略）。色はグループで区別する
-        // 円内の下段（長さ）も画面基準で正立表示
         const linkedUnit = seg.unit_id ? unitById.get(seg.unit_id) ?? null : null
         const unitLen = linkedUnit?.length_mm
         const displayLen =
           typeof unitLen === 'number' && Number.isFinite(unitLen) ? unitLen : seg.length_mm
-        ctx.save()
-        ctx.translate(midX, yCenter + 12 / scale)
-        ctx.rotate(counterAngleRad)
-        ctx.font = `${9 / scale}px sans-serif`
-        ctx.fillStyle = stroke
-        ctx.fillText(`${displayLen}`, 0, 0)
-        ctx.restore()
+
+        if (circleNum == null) {
+          // 任意長さ・ユニット未割当: 円なし。線の法線方向にオフセットした大きめラベル
+          const dx = seg.x2 - seg.x1
+          const dy = seg.y2 - seg.y1
+          const segLen = Math.hypot(dx, dy) || 1
+          const nx = -dy / segLen
+          const ny = dx / segLen
+          const offset = 22 / scale
+          const labelX = midX + nx * offset
+          const labelY = midY + ny * offset
+          const text = displayLen.toLocaleString('ja-JP')
+          const fontPx = text.replace(/,/g, '').length > 5 ? 12 : 15
+          ctx.save()
+          ctx.translate(labelX, labelY)
+          ctx.rotate(counterAngleRad)
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.font = `800 ${fontPx / scale}px sans-serif`
+          ctx.lineJoin = 'round'
+          ctx.miterLimit = 2
+          const fillCol = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
+          ctx.lineWidth = 4 / scale
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)'
+          ctx.strokeText(text, 0, 0)
+          ctx.fillStyle = fillCol
+          ctx.fillText(text, 0, 0)
+          ctx.restore()
+          ctx.textAlign = 'left'
+          ctx.textBaseline = 'alphabetic'
+        } else {
+          const r = 9 / scale
+          const yCenter = midY - 2 / scale
+
+          ctx.beginPath()
+          ctx.arc(midX, yCenter, r, 0, Math.PI * 2)
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
+          ctx.fill()
+          ctx.lineWidth = 2 / scale
+          ctx.strokeStyle = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
+          ctx.stroke()
+
+          ctx.save()
+          ctx.translate(midX, yCenter)
+          ctx.rotate(counterAngleRad)
+          ctx.font = `bold ${11 / scale}px sans-serif`
+          ctx.fillStyle = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(String(circleNum), 0, 0)
+          ctx.restore()
+
+          ctx.textAlign = 'left'
+          ctx.textBaseline = 'alphabetic'
+
+          ctx.save()
+          ctx.translate(midX, yCenter + 12 / scale)
+          ctx.rotate(counterAngleRad)
+          ctx.font = `${9 / scale}px sans-serif`
+          ctx.fillStyle = stroke
+          ctx.fillText(`${displayLen}`, 0, 0)
+          ctx.restore()
+        }
       }
     })
 
-    // 直角で接続する線分の交点に、短い境界ティック（|）を描画
-    drawRightAngleBoundaryTicks(ctx, segments, scale, effectiveUnits)
+    // 鉄筋線分の両端に、線に直交する短いキャップ（「I」形の耳）を描画
+    drawRebarSegmentEndCaps(ctx, segments, scale, effectiveUnits)
 
     if (splitArmedSegmentId && splitHoverPoint) {
       ctx.beginPath()
@@ -591,6 +644,7 @@ export function DrawingViewer({
     lastSplitMarker,
     rotationSteps,
     effectiveUnits,
+    unitById,
   ])
 
   useEffect(() => {
@@ -648,6 +702,11 @@ export function DrawingViewer({
         t?.isContentEditable
 
       if (e.key === 'Escape') {
+        if (quickMarkPickModalRef.current) {
+          setQuickMarkPickModal(null)
+          setQuickMarkArbitraryMm('')
+          return
+        }
         if (newSegmentDraft) {
           setNewSegmentDraft(null)
           return
@@ -661,11 +720,26 @@ export function DrawingViewer({
           return
         }
         if (tool === 'draw' || tool === 'spacing') {
-          setPolylineLastPoint(null)
           setTool('select')
           return
         }
         return
+      }
+
+      /** 番号選択モーダル: 入力欄にフォーカスがないとき 1–9 で該当マークのユニットを即確定 */
+      if (quickMarkPickModalRef.current && !isTyping) {
+        const modal = quickMarkPickModalRef.current
+        if (/^[0-9]$/.test(e.key)) {
+          const d = Number.parseInt(e.key, 10)
+          const matched = modal.numbered.find((x) => x.mark_number === d)
+          if (matched) {
+            e.preventDefault()
+            setQuickMarkPickModal(null)
+            setQuickMarkArbitraryMm('')
+            void submitQuickMarkPickUnitRef.current?.(matched, modal)
+            return
+          }
+        }
       }
 
       if (isTyping) return
@@ -930,9 +1004,8 @@ export function DrawingViewer({
 
     if ((tool === 'draw' || tool === 'spacing') && e.button === 0) {
       const pt = screenToCanvas(e)
-      const start = polylineLastPoint ?? pt
       setDrawing(true)
-      setStartPoint(start)
+      setStartPoint(pt)
       setCurrentPoint(pt)
     }
 
@@ -1149,60 +1222,25 @@ export function DrawingViewer({
     })
   }
 
-  async function quickInsertRebar(p1: Point, p2: Point, lengthMm: number) {
+  async function quickInsertRebarContinue(
+    p1: Point,
+    p2: Point,
+    lengthMm: number,
+    seed: QuickRebarInsertSeed | null,
+  ) {
     const nextLabel = computeNextSegmentLabel()
     const templateId = activeTemplateId ?? templateSummaries[0]?.id ?? null
     const preferredColor = normalizeSegmentColor(activeTemplateColor)
 
-    let bars: SegmentBarItem[] = []
-    let color: SegmentColor = preferredColor
-    let unitId: string | null = null
-    let unitCode: string | null = null
-    let unitName: string | null = null
-    let markNumber: number | null = null
-    let label: string = nextLabel
-    let appliedByPrompt = false
+    let bars: SegmentBarItem[] = seed?.bars ?? []
+    let color: SegmentColor = seed?.color ?? preferredColor
+    let unitId: string | null = seed?.unitId ?? null
+    let unitCode: string | null = seed?.unitCode ?? null
+    let unitName: string | null = seed?.unitName ?? null
+    let markNumber: number | null = seed?.markNumber ?? null
+    let label: string = seed?.label ?? nextLabel
 
-    if (activeUnit) {
-      const base = getUnitCodeBase(activeUnit)
-      const numbered = persistedActiveUnits
-        .filter((u) => getUnitCodeBase(u) === base && typeof u.mark_number === 'number')
-        .sort((a, b) => (a.mark_number ?? 0) - (b.mark_number ?? 0))
-
-      if (numbered.length > 0) {
-        const availableMarks = numbered.map((u) => u.mark_number as number)
-        const defaultMark =
-          activeUnit.mark_number && availableMarks.includes(activeUnit.mark_number)
-            ? activeUnit.mark_number
-            : availableMarks[0]
-        const pickedRaw = window.prompt(
-          `${base} の番号を入力してください (${availableMarks.join(', ')})`,
-          String(defaultMark),
-        )
-        if (pickedRaw == null) return
-        const picked = Number.parseInt(pickedRaw.trim(), 10)
-        const chosenUnit = numbered.find((u) => u.mark_number === picked) ?? null
-        if (!Number.isFinite(picked) || !chosenUnit) {
-          alert('存在しないユニットです。')
-          return
-        }
-        bars = chosenUnit.bars
-          .filter((b) => BAR_TYPES.includes(b.diameter as (typeof BAR_TYPES)[number]))
-          .map((b) => ({ barType: b.diameter, quantity: b.qtyPerUnit }))
-        color = normalizeSegmentColor(chosenUnit.color)
-        unitId = chosenUnit.id
-        unitCode = chosenUnit.code ?? null
-        unitName = chosenUnit.name ?? null
-        markNumber = chosenUnit.mark_number ?? picked
-        label = String(markNumber)
-        setActiveDrawingUnitId(chosenUnit.id)
-        setActiveTemplateId(chosenUnit.template_id ?? `shape:${chosenUnit.shape_type}`)
-        setActiveTemplateColor(normalizeSegmentColor(chosenUnit.color))
-        appliedByPrompt = true
-      }
-    }
-
-    if (!appliedByPrompt && enableTemplateVariantFlow && templateId) {
+    if (!seed?.skipVariantResolution && enableTemplateVariantFlow && templateId) {
       const resolved = resolveVariantByTemplateColorLength(
         persistedActiveUnits,
         templateId,
@@ -1268,7 +1306,7 @@ export function DrawingViewer({
       )
       bars = supportedBars.length ? supportedBars : [{ barType: 'D10', quantity: 1 }]
       color = normalizeSegmentColor(stored?.color ?? preferredColor)
-      if (!appliedByPrompt) {
+      if (!seed?.skipVariantResolution) {
         unitId = null
         unitCode = null
         unitName = null
@@ -1308,7 +1346,6 @@ export function DrawingViewer({
     if (data) {
       setSegments((prev) => [...prev, data])
       setSelectedSegmentIds([data.id])
-      setPolylineLastPoint(p2)
       setLastAction({ type: 'create', segment: data })
       writeLastUsedRebarDraft({ color, bars })
       if (unitId) {
@@ -1316,6 +1353,78 @@ export function DrawingViewer({
         setUnitPrefsTick((x) => x + 1)
       }
     }
+  }
+
+  async function quickInsertRebar(p1: Point, p2: Point, lengthMm: number) {
+    if (activeUnit) {
+      const base = getUnitCodeBase(activeUnit)
+      const numbered = persistedActiveUnits
+        .filter((u) => getUnitCodeBase(u) === base && typeof u.mark_number === 'number')
+        .sort((a, b) => (a.mark_number ?? 0) - (b.mark_number ?? 0))
+      if (numbered.length > 0) {
+        const availableMarks = numbered.map((u) => u.mark_number as number)
+        setQuickMarkPickModal({
+          p1,
+          p2,
+          lengthMm,
+          base,
+          numbered,
+          availableMarks,
+        })
+        return
+      }
+    }
+    await quickInsertRebarContinue(p1, p2, lengthMm, null)
+  }
+
+  async function submitQuickMarkPickUnit(chosenUnit: Unit, ctx: QuickMarkPickModalState) {
+    const bars = chosenUnit.bars
+      .filter((b) => BAR_TYPES.includes(b.diameter as (typeof BAR_TYPES)[number]))
+      .map((b) => ({ barType: b.diameter, quantity: b.qtyPerUnit }))
+    setActiveDrawingUnitId(chosenUnit.id)
+    setActiveTemplateId(chosenUnit.template_id ?? `shape:${chosenUnit.shape_type}`)
+    setActiveTemplateColor(normalizeSegmentColor(chosenUnit.color))
+    await quickInsertRebarContinue(ctx.p1, ctx.p2, ctx.lengthMm, {
+      bars,
+      color: normalizeSegmentColor(chosenUnit.color),
+      unitId: chosenUnit.id,
+      unitCode: chosenUnit.code ?? null,
+      unitName: chosenUnit.name ?? null,
+      markNumber: chosenUnit.mark_number ?? null,
+      label: String(chosenUnit.mark_number ?? ''),
+      skipVariantResolution: true,
+    })
+  }
+  submitQuickMarkPickUnitRef.current = submitQuickMarkPickUnit
+
+  async function submitQuickMarkArbitraryLength(ctx: QuickMarkPickModalState, mmStr: string) {
+    const v = parseInt(mmStr.trim(), 10)
+    if (!Number.isFinite(v) || v <= 0) {
+      alert('有効な長さ (mm) を入力してください。')
+      return
+    }
+    const nextLabel = computeNextSegmentLabel()
+    const stored = readLastUsedRebarDraft()
+    const first = ctx.numbered[0]!
+    const fromUnit = first.bars
+      .filter((b) => BAR_TYPES.includes(b.diameter as (typeof BAR_TYPES)[number]))
+      .map((b) => ({ barType: b.diameter, quantity: b.qtyPerUnit }))
+    const defaultBars = stored?.bars?.length ? stored.bars : fromUnit
+    const supportedBars = defaultBars.filter((b) =>
+      BAR_TYPES.includes(b.barType as (typeof BAR_TYPES)[number]),
+    )
+    const bars = supportedBars.length ? supportedBars : [{ barType: 'D10', quantity: 1 }]
+    const color = normalizeSegmentColor(activeTemplateColor)
+    await quickInsertRebarContinue(ctx.p1, ctx.p2, v, {
+      bars,
+      color,
+      unitId: null,
+      unitCode: null,
+      unitName: null,
+      markNumber: null,
+      label: nextLabel,
+      skipVariantResolution: true,
+    })
   }
 
   async function quickInsertSpacing(p1: Point, p2: Point, lengthMm: number) {
@@ -1347,7 +1456,6 @@ export function DrawingViewer({
     if (data) {
       setSegments((prev) => [...prev, data])
       setSelectedSegmentIds([data.id])
-      setPolylineLastPoint(p2)
       setLastAction({ type: 'create', segment: data })
     }
   }
@@ -1411,7 +1519,6 @@ export function DrawingViewer({
     if (!error && data) {
       setSegments((prev) => [...prev, data])
       setSelectedSegmentIds([data.id])
-      setPolylineLastPoint(p2)
       setLastAction({ type: 'create', segment: data })
       if (!isSpacing) {
         writeLastUsedRebarDraft({
@@ -1513,7 +1620,6 @@ export function DrawingViewer({
         const deleted = prev.find((s) => s.id === id)
         if (deleted) setLastAction({ type: 'delete', segment: deleted })
         const next = prev.filter((s) => s.id !== id)
-        setPolylineLastPoint(getPolylineAnchorFromSegments(next))
         return next
       })
       if (selectedSegmentIds.includes(id)) {
@@ -1634,11 +1740,7 @@ export function DrawingViewer({
         .delete()
         .eq('id', segment.id)
       if (!error) {
-        setSegments((prev) => {
-          const next = prev.filter((s) => s.id !== segment.id)
-          setPolylineLastPoint(getPolylineAnchorFromSegments(next))
-          return next
-        })
+        setSegments((prev) => prev.filter((s) => s.id !== segment.id))
         setSelectedSegmentIds([])
         setLastAction(null)
       }
@@ -1650,11 +1752,7 @@ export function DrawingViewer({
         .select()
         .single<DrawingSegment>()
       if (!error && data) {
-        setSegments((prev) => {
-          const next = [...prev, data]
-          setPolylineLastPoint(getPolylineAnchorFromSegments(next))
-          return next
-        })
+        setSegments((prev) => [...prev, data])
         setSelectedSegmentIds([data.id])
         setLastAction(null)
       }
@@ -1675,11 +1773,7 @@ export function DrawingViewer({
         })
         .eq('id', before.id)
       if (!error) {
-        setSegments((prev) => {
-          const next = prev.map((s) => (s.id === before.id ? before : s))
-          setPolylineLastPoint(getPolylineAnchorFromSegments(next))
-          return next
-        })
+        setSegments((prev) => prev.map((s) => (s.id === before.id ? before : s)))
         setSelectedSegmentIds([before.id])
         setLastAction(null)
       }
@@ -1697,14 +1791,10 @@ export function DrawingViewer({
         .select()
         .single<DrawingSegment>()
       if (!restoreError && restored) {
-        setSegments((prev) => {
-          const next = [
-            ...prev.filter((s) => !createdIds.includes(s.id)),
-            restored,
-          ]
-          setPolylineLastPoint(getPolylineAnchorFromSegments(next))
-          return next
-        })
+        setSegments((prev) => [
+          ...prev.filter((s) => !createdIds.includes(s.id)),
+          restored,
+        ])
         setSelectedSegmentIds([restored.id])
         setLastAction(null)
       }
@@ -1767,12 +1857,29 @@ export function DrawingViewer({
 
     segmentsToDraw.forEach((seg) => {
       const segColor = getSegmentColor(seg, effectiveUnits)
+      const stroke = getSegmentStrokeHex(segColor, false)
       ctx.beginPath()
       ctx.moveTo(seg.x1, seg.y1)
       ctx.lineTo(seg.x2, seg.y2)
-      ctx.strokeStyle = getSegmentStrokeHex(segColor, false)
+      ctx.strokeStyle = stroke
       ctx.lineWidth = 2
       ctx.stroke()
+
+      const dx = seg.x2 - seg.x1
+      const dy = seg.y2 - seg.y1
+      const d = Math.hypot(dx, dy)
+      if (d > 1e-6) {
+        const nx = -dy / d
+        const ny = dx / d
+        const h = 5
+        ctx.beginPath()
+        ctx.moveTo(seg.x1 - nx * h, seg.y1 - ny * h)
+        ctx.lineTo(seg.x1 + nx * h, seg.y1 + ny * h)
+        ctx.moveTo(seg.x2 - nx * h, seg.y2 - ny * h)
+        ctx.lineTo(seg.x2 + nx * h, seg.y2 + ny * h)
+        ctx.strokeStyle = stroke
+        ctx.stroke()
+      }
     })
 
     ctx.restore()
@@ -1979,6 +2086,116 @@ export function DrawingViewer({
         activeTemplateColor={activeTemplateColor}
       />
 
+      {quickMarkPickModal && (
+        <div className="fixed inset-0 z-[45] flex items-center justify-center bg-black/45 p-4">
+          <div
+            className="w-full max-w-md rounded-xl bg-white shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="quick-mark-title"
+          >
+            <div className="border-b border-border px-6 py-4">
+              <h2 id="quick-mark-title" className="text-base font-semibold">
+                {quickMarkPickModal.base} の番号を選択
+              </h2>
+              <p className="mt-1 text-xs text-muted">
+                番号ボタンでユニットを割り当てるか、下の「長さを任意入力」で mm のみ指定（割当なし）できます。
+                キーボードの数字（1–9）でも、入力欄にフォーカスがないときに同じ番号を選べます。
+              </p>
+              <p className="mt-1 font-mono text-[11px] text-muted">
+                ({quickMarkPickModal.availableMarks.join(', ')})
+              </p>
+            </div>
+            <div className="space-y-4 px-6 py-4">
+              <div className="flex flex-wrap gap-2">
+                {quickMarkPickModal.numbered.map((u) => {
+                  const uc = normalizeSegmentColor(u.color)
+                  const stroke = getSegmentStrokeHex(uc, false)
+                  const tint = getSegmentStrokeHex(uc, true)
+                  return (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => {
+                        if (!quickMarkPickModal) return
+                        const ctx = quickMarkPickModal
+                        setQuickMarkPickModal(null)
+                        setQuickMarkArbitraryMm('')
+                        void submitQuickMarkPickUnit(u, ctx)
+                      }}
+                      className="flex min-w-[7.5rem] flex-col items-start rounded-lg border-2 px-3 py-2 text-left text-sm font-semibold transition hover:shadow-sm"
+                      style={{ borderColor: stroke, color: tint }}
+                    >
+                      <span className="font-mono leading-tight">
+                        {u.mark_number} {u.code ?? u.name}
+                      </span>
+                      <span
+                        className="mt-0.5 text-[11px] font-normal leading-tight opacity-90"
+                        style={{ color: stroke }}
+                      >
+                        {formatUnitLengthMmJa(u)}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="space-y-2 rounded-lg border border-indigo-200 bg-indigo-50/80 p-3">
+                <div className="text-xs font-semibold text-indigo-900">長さを任意入力</div>
+                <p className="text-[10px] leading-snug text-indigo-900/85">
+                  図面・線分一覧に表示する長さ (mm)。ユニットは紐付けません。
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      quickMarkArbitraryInputRef.current?.focus()
+                      quickMarkArbitraryInputRef.current?.select()
+                    }}
+                    className="rounded-md border border-indigo-300 bg-white px-2.5 py-1.5 text-xs font-medium text-indigo-900 hover:bg-indigo-100"
+                  >
+                    入力欄を選択
+                  </button>
+                  <input
+                    ref={quickMarkArbitraryInputRef}
+                    type="number"
+                    min={1}
+                    inputMode="numeric"
+                    placeholder="4095"
+                    value={quickMarkArbitraryMm}
+                    onChange={(e) => setQuickMarkArbitraryMm(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return
+                      e.preventDefault()
+                      if (!quickMarkPickModal) return
+                      const ctx = quickMarkPickModal
+                      const raw = quickMarkArbitraryMm
+                      setQuickMarkPickModal(null)
+                      setQuickMarkArbitraryMm('')
+                      void submitQuickMarkArbitraryLength(ctx, raw)
+                    }}
+                    className="w-28 rounded-md border border-indigo-200 bg-white px-2 py-1.5 text-sm font-mono outline-none focus:border-indigo-500"
+                    aria-label="任意の長さ mm"
+                  />
+                  <span className="text-[10px] text-indigo-900/80">Enter で追加</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end border-t border-border px-6 py-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setQuickMarkPickModal(null)
+                  setQuickMarkArbitraryMm('')
+                }}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:bg-gray-50"
+              >
+                キャンセル
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {newSegmentDraft && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
           <div className="w-full max-w-md rounded-xl bg-white shadow-lg flex flex-col max-h-[90vh]">
@@ -2177,7 +2394,7 @@ export function DrawingViewer({
               </div>
             )}
             </div>{/* end overflow scroll area */}
-            <div className="px-6 pb-6 pt-4 border-t border-border flex justify-end gap-2">
+            <div className="flex justify-end gap-2 border-t border-border px-6 pb-6 pt-4">
               <button
                 type="button"
                 onClick={() => setNewSegmentDraft(null)}
@@ -2187,7 +2404,7 @@ export function DrawingViewer({
               </button>
               <button
                 type="button"
-                onClick={confirmNewSegment}
+                onClick={() => void confirmNewSegment()}
                 className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-hover"
               >
                 追加
@@ -2216,6 +2433,7 @@ export function DrawingViewer({
             <div className="p-4">
               <div className="rounded border border-border bg-slate-50 p-2">
                 <UnitShapeThumbnail unit={previewUnit} large />
+                <UnitVariantLengthList allUnits={serverUnits} unit={previewUnit} />
               </div>
             </div>
           </div>
@@ -2301,14 +2519,8 @@ function UnitDetailMiniPreview({ unit }: { unit: Unit }) {
   )
 }
 
-type TickArm = {
-  ux: number
-  uy: number
-  len: number
-  color: SegmentColor
-}
-
-function drawRightAngleBoundaryTicks(
+/** 鉄筋線ごとに両端へ直交する短線を描く（寸法線の端チックのような「I」形） */
+function drawRebarSegmentEndCaps(
   ctx: CanvasRenderingContext2D,
   segments: DrawingSegment[],
   scale: number,
@@ -2317,12 +2529,12 @@ function drawRightAngleBoundaryTicks(
   const rebarSegments = segments.filter(
     (s) => !(s.bar_type === 'SPACING' && s.quantity === 0),
   )
+  const halfTick = 5 / scale
 
-  const byPoint = new Map<string, { point: Point; arms: TickArm[] }>()
-  const pointKey = (p: Point) => `${Math.round(p.x * 100)},${Math.round(p.y * 100)}`
+  ctx.save()
+  ctx.lineWidth = 2 / scale
 
   for (const seg of rebarSegments) {
-    const c = getSegmentColor(seg, units)
     const p1 = { x: seg.x1, y: seg.y1 }
     const p2 = { x: seg.x2, y: seg.y2 }
     const dx = p2.x - p1.x
@@ -2330,40 +2542,15 @@ function drawRightAngleBoundaryTicks(
     const d = Math.hypot(dx, dy)
     if (d < 1e-6) continue
 
-    const a1: TickArm = { ux: dx / d, uy: dy / d, len: d, color: c }
-    const a2: TickArm = { ux: -dx / d, uy: -dy / d, len: d, color: c }
-
-    const k1 = pointKey(p1)
-    const e1 = byPoint.get(k1) ?? { point: p1, arms: [] }
-    e1.arms.push(a1)
-    byPoint.set(k1, e1)
-
-    const k2 = pointKey(p2)
-    const e2 = byPoint.get(k2) ?? { point: p2, arms: [] }
-    e2.arms.push(a2)
-    byPoint.set(k2, e2)
-  }
-
-  const halfTick = 5 / scale
-
-  ctx.save()
-  ctx.lineWidth = 2 / scale
-
-  for (const { point, arms } of byPoint.values()) {
-    // 端点でちょうど2本の線が繋がる接点だけに境界ティックを出す（直線連結を含む）
-    if (arms.length !== 2) continue
-
-    // 長い方の腕を基準に、その法線方向へ短い境界ティックを描く
-    const [a0, a1] = arms
-    const base = a0.len >= a1.len ? a0 : a1
-    const nx = -base.uy
-    const ny = base.ux
-    const stroke = getSegmentStrokeHex(base.color, false)
-
+    const nx = -dy / d
+    const ny = dx / d
+    const stroke = getSegmentStrokeHex(getSegmentColor(seg, units), false)
     ctx.strokeStyle = stroke
     ctx.beginPath()
-    ctx.moveTo(point.x - nx * halfTick, point.y - ny * halfTick)
-    ctx.lineTo(point.x + nx * halfTick, point.y + ny * halfTick)
+    ctx.moveTo(p1.x - nx * halfTick, p1.y - ny * halfTick)
+    ctx.lineTo(p1.x + nx * halfTick, p1.y + ny * halfTick)
+    ctx.moveTo(p2.x - nx * halfTick, p2.y - ny * halfTick)
+    ctx.lineTo(p2.x + nx * halfTick, p2.y + ny * halfTick)
     ctx.stroke()
   }
 

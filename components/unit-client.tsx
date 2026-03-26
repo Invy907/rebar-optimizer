@@ -41,6 +41,12 @@ import {
   type UserUnitPreset,
   type UserUnitPresetPayload,
 } from '@/lib/user-unit-presets'
+import {
+  formatVariantMarkBadge,
+  listUnitVariantsInGroup,
+  unitVariantGroupKey,
+  unitVariantLengthMm,
+} from '@/lib/unit-variant-group'
 
 const BAR_TYPES = ['D10', 'D13', 'D16', 'D19', 'D22', 'D25', 'D29', 'D32']
 
@@ -176,22 +182,6 @@ function getNextDiameter(existing: string[]): string {
 function barsSummary(bars: UnitBar[]): string {
   if (!bars || bars.length === 0) return '-'
   return bars.map((b) => `${b.diameter}×${b.qtyPerUnit}`).join(', ')
-}
-
-function unitVariantGroupKey(u: Unit): string {
-  return JSON.stringify({
-    name: u.name ?? '',
-    location_type: u.location_type ?? '',
-    shape_type: u.shape_type ?? '',
-    color: normalizeSegmentColor(u.color),
-    template_id: u.template_id ?? '',
-    detail_spec: u.detail_spec ?? null,
-    detail_geometry: u.detail_geometry ?? null,
-    rebar_layout: u.rebar_layout ?? null,
-    bars: u.bars ?? [],
-    spacing_mm: u.spacing_mm ?? null,
-    description: u.description ?? null,
-  })
 }
 
 function getEditableDimFields(template: DetailShapeTemplate): Array<{ key: keyof UnitDetailSpec; label: string }> {
@@ -1688,6 +1678,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
             <div className="p-4">
               <div className="rounded border border-border bg-slate-50 p-2">
                 <UnitShapeThumbnail unit={previewUnit} large />
+                <UnitVariantLengthList allUnits={units} unit={previewUnit} />
               </div>
               <div className="mt-3 flex justify-end gap-2">
                 <button
@@ -3242,6 +3233,33 @@ function DetailShapeEditor({
 
         {aggregationSlot}
       </aside>
+    </div>
+  )
+}
+
+/** プレビューモーダル用: 同一形状グループの各バリアントの長さ(mm)を番号付きで列挙 */
+export function UnitVariantLengthList({ allUnits, unit }: { allUnits: Unit[]; unit: Unit }) {
+  const variants = useMemo(() => listUnitVariantsInGroup(allUnits, unit), [allUnits, unit])
+  if (variants.length === 0) return null
+
+  return (
+    <div className="mt-2 border-t border-slate-200 pt-2">
+      <div className="mb-1.5 text-[10px] font-semibold tracking-wide text-muted">長さ(mm) / 番号</div>
+      <ul className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-foreground">
+        {variants.map((v, idx) => {
+          const mark = v.mark_number ?? idx + 1
+          const len = unitVariantLengthMm(v)
+          const badge = formatVariantMarkBadge(mark)
+          return (
+            <li key={v.id} className="tabular-nums">
+              <span className="font-semibold text-slate-600">{badge}</span>
+              <span className="mx-1 text-muted">·</span>
+              <span className="font-semibold">{len != null ? `${len.toLocaleString('ja-JP')}mm` : '—'}</span>
+              {v.code ? <span className="ml-1.5 font-mono text-[10px] text-muted">({v.code})</span> : null}
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 }
