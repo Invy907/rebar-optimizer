@@ -54,6 +54,16 @@ function createEmptyFreeGeometry(): UnitDetailGeometry {
   }
 }
 
+/** 間隔・注記テキストから数値(mm)を解釈（形状編集キャンバスとプレビューで共通） */
+function parseSpacingMm(label: string | null | undefined): number | null {
+  const s = String(label ?? '').trim()
+  if (!s) return null
+  const m = s.match(/@?(\d+)/)
+  if (!m) return null
+  const v = parseInt(m[1], 10)
+  return Number.isFinite(v) ? v : null
+}
+
 // ─── ドラフト型 ─────────────────────────────────────────
 type DraftUnit = {
   name: string
@@ -1765,6 +1775,7 @@ function DetailShapeEditor({
     shiftLock: boolean
   } | null>(null)
   const [dragSpacingLabelId, setDragSpacingLabelId] = useState<string | null>(null)
+  const [dragAnnotationId, setDragAnnotationId] = useState<string | null>(null)
   const suppressCanvasGestureRef = useRef(false)
 
   function clearCanvasSelections() {
@@ -1989,7 +2000,11 @@ function DetailShapeEditor({
       y1: start.y,
       x2: end.x,
       y2: end.y,
-      label: '',
+      // 初期ラベル位置を線分の中点にseedしておく（後で数値を入れたときにドラッグ対象になるため）
+      label_x: (start.x + end.x) / 2,
+      label_y: (start.y + end.y) / 2,
+      // 프리뷰/캔버스 표시용: label이 빈 문자열이면 거리 라벨 텍스트가 렌더되지 않는다.
+      label: `${spacingMmDraft}`,
     }
 
     onRebarLayoutChange(
@@ -2018,6 +2033,25 @@ function DetailShapeEditor({
       normalizeRebarLayout({
         ...rebarLayout,
         spacings: nextSpacings,
+      }),
+    )
+  }
+
+  function moveAnnotation(annotationId: string, p: { x: number; y: number }) {
+    const nextAnnotations = rebarLayout.annotations.map((an) =>
+      an.id === annotationId
+        ? {
+            ...an,
+            x: p.x,
+            y: p.y,
+          }
+        : an,
+    )
+
+    onRebarLayoutChange(
+      normalizeRebarLayout({
+        ...rebarLayout,
+        annotations: nextAnnotations,
       }),
     )
   }
@@ -2146,11 +2180,25 @@ function DetailShapeEditor({
     return { seg, idx, p1, p2, lengthMm }
   }, [selectedSegmentKey, displayGeometry.segments, startMode, freeByKey, pointByKey])
 
-  function parseSpacingMm(label: string): number | null {
-    const m = label.match(/@?(\d+)/)
-    if (!m) return null
-    const v = parseInt(m[1], 10)
-    return Number.isFinite(v) ? v : null
+  function getDefaultSpacingLabelPos(
+    sp: UnitRebarLayout['spacings'][number],
+  ): { x: number; y: number } | null {
+    const a =
+      sp.from && byRebarId[sp.from]
+        ? { x: byRebarId[sp.from]!.x, y: byRebarId[sp.from]!.y }
+        : typeof sp.x1 === 'number' && typeof sp.y1 === 'number'
+          ? { x: sp.x1, y: sp.y1 }
+          : null
+
+    const b =
+      sp.to && byRebarId[sp.to]
+        ? { x: byRebarId[sp.to]!.x, y: byRebarId[sp.to]!.y }
+        : typeof sp.x2 === 'number' && typeof sp.y2 === 'number'
+          ? { x: sp.x2, y: sp.y2 }
+          : null
+
+    if (!a || !b) return null
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
   }
 
   function rebarColorToken(diameter: string | null | undefined): {
@@ -2175,7 +2223,7 @@ function DetailShapeEditor({
   }
 
   const freePointHitR = 10
-  const segmentHitWidth = 12
+  const segmentHitWidth = 6
   const spacingHitWidth = 6
 
   return (
@@ -2241,36 +2289,6 @@ function DetailShapeEditor({
             <p className="rounded border border-dashed border-border/45 bg-slate-50/70 px-2 py-1 text-[10px] font-medium leading-snug text-foreground/80">
               ドラッグ: 間隔線を作成 / クリック: 注記を追加 / 数値ラベル: ドラッグで移動
             </p>
-            <div className="flex flex-wrap items-center gap-2 rounded border border-border/60 bg-slate-50/80 px-2 py-1.5">
-              <label className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
-                <span className="text-[10px] font-semibold text-muted">新規の間隔値(mm)</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={spacingMmDraft}
-                  onChange={(e) => {
-                    const nextMm = parseInt(e.target.value, 10) || 0
-                    setSpacingMmDraft(nextMm)
-                    if (selectedSpacingId) {
-                      const nextSpacings = rebarLayout.spacings.map((sp) =>
-                        sp.id === selectedSpacingId ? { ...sp, label: `${nextMm}` } : sp,
-                      )
-                      onRebarLayoutChange(normalizeRebarLayout({ ...rebarLayout, spacings: nextSpacings }))
-                      return
-                    }
-                    if (selectedAnnotationId) {
-                      const nextAnnotations = rebarLayout.annotations.map((an) =>
-                        an.id === selectedAnnotationId ? { ...an, text: `${nextMm}` } : an,
-                      )
-                      onRebarLayoutChange(
-                        normalizeRebarLayout({ ...rebarLayout, annotations: nextAnnotations }),
-                      )
-                    }
-                  }}
-                  className="w-20 rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
-                />
-              </label>
-            </div>
           </>
         )}
         {mode === 'shape' && startMode === 'free' && (
@@ -2421,6 +2439,11 @@ function DetailShapeEditor({
             return
           }
 
+          if (mode === 'annotation' && dragAnnotationId) {
+            moveAnnotation(dragAnnotationId, p)
+            return
+          }
+
           if (mode === 'shape' && startMode === 'free') {
             if (drawGesture) {
               setDrawGesture((prev) => (prev ? { ...prev, current: p, shiftLock: e.shiftKey } : prev))
@@ -2441,11 +2464,13 @@ function DetailShapeEditor({
             setDrawGesture(null)
             setSpacingDrawGesture(null)
             setDragSpacingLabelId(null)
+            setDragAnnotationId(null)
             return
           }
 
           setDraggingKey(null)
           setDragSpacingLabelId(null)
+          setDragAnnotationId(null)
 
           if (mode === 'shape' && startMode === 'free' && drawGesture) {
             addPolylineByDrag(
@@ -2474,6 +2499,7 @@ function DetailShapeEditor({
           suppressCanvasGestureRef.current = false
           setDraggingKey(null)
           setDragSpacingLabelId(null)
+          setDragAnnotationId(null)
           if (mode === 'annotation') setSpacingDrawGesture(null)
         }}
       >
@@ -2511,7 +2537,7 @@ function DetailShapeEditor({
                 y2={p2.y}
                 stroke="rgba(0,0,0,0.001)"
                 strokeWidth={segmentHitWidth}
-                strokeLinecap="round"
+                strokeLinecap="butt"
                 style={{ pointerEvents: segPe, cursor: segPe === 'auto' ? 'pointer' : 'default' }}
                 onPointerDownCapture={() => {
                   markObjectPointer()
@@ -2696,9 +2722,10 @@ function DetailShapeEditor({
           const tickHalf = 6
           const txt = String(parseSpacingMm(sp.label) ?? sp.label)
           const isSpacingSelected = selection?.kind === 'spacing' && selection.id === sp.id
+          const isSpacingLabelDragging = dragSpacingLabelId === sp.id
           const mainStroke = isSpacingSelected ? '#7c3aed' : '#334155'
           const tickStroke = '#64748b'
-          const labelFill = isSpacingSelected ? '#7c3aed' : '#334155'
+          const labelFill = isSpacingSelected || isSpacingLabelDragging ? '#7c3aed' : '#334155'
           return (
             <g key={sp.id} opacity={mode === 'annotation' ? 1 : 0.85}>
               <g pointerEvents="none">
@@ -2754,7 +2781,8 @@ function DetailShapeEditor({
                         onPointerDown={(e) => {
                           if (mode !== 'annotation') return
                           beginObjectPointer(e)
-                          selectSpacing(sp.id)
+                          // 숫자(라벨)만 클릭/드래그: 라인(선) 선택은 하지 않음
+                          setSelection(null)
                           setDragSpacingLabelId(sp.id)
                         }}
                       />
@@ -2851,28 +2879,56 @@ function DetailShapeEditor({
         })}
         {rebarLayout.annotations.map((an) => {
           const pe = mode === 'annotation' ? 'auto' : 'none'
+          const isNumeric = parseSpacingMm(an.text) != null
+          const hitW = Math.max(24, String(an.text).length * 8 + 10)
+          const hitH = 18
+
           return (
-            <text
-              key={an.id}
-              data-canvas-hit="item"
-              x={an.x}
-              y={an.y}
-              fontSize={11}
-              fill={selection?.kind === 'annotation' && selection.id === an.id ? '#7c3aed' : '#0f172a'}
-              fontWeight={700}
-              opacity={mode === 'annotation' ? 1 : 0.5}
-              style={{ pointerEvents: pe, cursor: mode === 'annotation' ? 'pointer' : 'default' }}
-              onPointerDownCapture={() => {
-                markObjectPointer()
-              }}
-              onPointerDown={(e) => {
-                if (mode !== 'annotation') return
-                beginObjectPointer(e)
-                selectAnnotation(an.id)
-              }}
-            >
-              {an.text}
-            </text>
+            <g key={an.id}>
+              {isNumeric ? (
+                <rect
+                  data-canvas-hit="item"
+                  x={an.x - hitW / 2}
+                  y={an.y - hitH / 2}
+                  width={hitW}
+                  height={hitH}
+                  fill="transparent"
+                  pointerEvents={mode === 'annotation' ? 'auto' : 'none'}
+                  style={{ cursor: mode === 'annotation' ? 'grab' : 'default' }}
+                  onPointerDownCapture={() => {
+                    markObjectPointer()
+                  }}
+                  onPointerDown={(e) => {
+                    if (mode !== 'annotation') return
+                    beginObjectPointer(e)
+                    selectAnnotation(an.id)
+                    setDragAnnotationId(an.id)
+                  }}
+                />
+              ) : null}
+
+              <text
+                data-canvas-hit="item"
+                x={an.x}
+                y={an.y}
+                fontSize={11}
+                fill={selection?.kind === 'annotation' && selection.id === an.id ? '#7c3aed' : '#0f172a'}
+                fontWeight={700}
+                opacity={mode === 'annotation' ? 1 : 0.5}
+                pointerEvents={isNumeric ? 'none' : pe}
+                style={{ cursor: mode === 'annotation' ? 'pointer' : 'default' }}
+                onPointerDownCapture={() => {
+                  markObjectPointer()
+                }}
+                onPointerDown={(e) => {
+                  if (mode !== 'annotation') return
+                  beginObjectPointer(e)
+                  selectAnnotation(an.id)
+                }}
+              >
+                {an.text}
+              </text>
+            </g>
           )
         })}
       </svg>
@@ -2933,37 +2989,6 @@ function DetailShapeEditor({
             {mode === 'annotation' && selectedSpacing && (
               <div className="space-y-2 border-b border-border pb-3">
                 <div className="font-medium text-foreground">間隔（鉄筋間）</div>
-                <div className="text-muted">
-                  <span className="text-[10px] uppercase">ラベル</span>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <input
-                      type="number"
-                      min={0}
-                      value={parseSpacingMm(selectedSpacing.label) ?? spacingMmDraft}
-                      onChange={(e) => {
-                        const nextMm = parseInt(e.target.value, 10) || 0
-                        setSpacingMmDraft(nextMm)
-                        const id = selectedSpacingId
-                        if (!id) return
-                        const nextSpacings = rebarLayout.spacings.map((sp) =>
-                          sp.id === id ? { ...sp, label: `${nextMm}` } : sp,
-                        )
-                        onRebarLayoutChange(normalizeRebarLayout({ ...rebarLayout, spacings: nextSpacings }))
-                      }}
-                      className="w-24 rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
-                    />
-                    <span className="text-muted">mm</span>
-                  </div>
-                </div>
-                <div className="text-[10px] text-muted">
-                  端点: {selectedSpacing.from
-                    ? (byRebarId[selectedSpacing.from]?.label || byRebarId[selectedSpacing.from]?.diameter || selectedSpacing.from)
-                    : `${Math.round(selectedSpacing.x1 ?? 0)},${Math.round(selectedSpacing.y1 ?? 0)}`}{' '}
-                  →{' '}
-                  {selectedSpacing.to
-                    ? (byRebarId[selectedSpacing.to]?.label || byRebarId[selectedSpacing.to]?.diameter || selectedSpacing.to)
-                    : `${Math.round(selectedSpacing.x2 ?? 0)},${Math.round(selectedSpacing.y2 ?? 0)}`}
-                </div>
                 <button
                   type="button"
                   onClick={() => {
@@ -2981,21 +3006,7 @@ function DetailShapeEditor({
             {mode === 'annotation' && selectedAnnotation && !selectedSpacing && (
               <div className="space-y-2 border-b border-border pb-3">
                 <div className="font-medium text-foreground">フリー注記</div>
-                <label className="block text-muted">
-                  テキスト
-                  <input
-                    value={selectedAnnotation.text}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      const nextAnnotations = rebarLayout.annotations.map((an) =>
-                        an.id === selectedAnnotation.id ? { ...an, text: v } : an,
-                      )
-                      onRebarLayoutChange(normalizeRebarLayout({ ...rebarLayout, annotations: nextAnnotations }))
-                    }}
-                    className="mt-1 w-full rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
-                  />
-                </label>
-                {parseSpacingMm(selectedAnnotation.text) != null && (
+                {parseSpacingMm(selectedAnnotation.text) != null ? (
                   <label className="block text-muted">
                     数値（mm）
                     <input
@@ -3011,6 +3022,21 @@ function DetailShapeEditor({
                         onRebarLayoutChange(normalizeRebarLayout({ ...rebarLayout, annotations: nextAnnotations }))
                       }}
                       className="mt-1 w-24 rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
+                    />
+                  </label>
+                ) : (
+                  <label className="block text-muted">
+                    テキスト
+                    <input
+                      value={selectedAnnotation.text}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        const nextAnnotations = rebarLayout.annotations.map((an) =>
+                          an.id === selectedAnnotation.id ? { ...an, text: v } : an,
+                        )
+                        onRebarLayoutChange(normalizeRebarLayout({ ...rebarLayout, annotations: nextAnnotations }))
+                      }}
+                      className="mt-1 w-full rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
                     />
                   </label>
                 )}
@@ -3220,7 +3246,7 @@ function DetailShapeEditor({
   )
 }
 
-function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?: boolean }) {
+export function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?: boolean }) {
   const template = shapeTypeToDetailTemplate(unit.shape_type)
   const spec = normalizeDetailSpecForTemplate(
     template,
@@ -3252,21 +3278,56 @@ function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?: boole
   const previewRebars = previewRebarLayout.rebars.filter(
     (rb) => Number.isFinite(rb.x) && Number.isFinite(rb.y),
   )
+  const byRebarId = Object.fromEntries(previewRebars.map((rb) => [rb.id, rb]))
   const previewSpacings = previewRebarLayout.spacings
-    .filter(
-      (sp) =>
-        Number.isFinite(sp.x1) &&
-        Number.isFinite(sp.y1) &&
-        Number.isFinite(sp.x2) &&
-        Number.isFinite(sp.y2),
-    )
-    .map((sp) => ({
-      ...sp,
-      x1: Number(sp.x1),
-      y1: Number(sp.y1),
-      x2: Number(sp.x2),
-      y2: Number(sp.y2),
-    }))
+    .map((sp) => {
+      const a =
+        sp.from && byRebarId[sp.from]
+          ? { x: byRebarId[sp.from]!.x, y: byRebarId[sp.from]!.y }
+          : typeof sp.x1 === 'number' && typeof sp.y1 === 'number'
+            ? { x: sp.x1, y: sp.y1 }
+            : null
+      const b =
+        sp.to && byRebarId[sp.to]
+          ? { x: byRebarId[sp.to]!.x, y: byRebarId[sp.to]!.y }
+          : typeof sp.x2 === 'number' && typeof sp.y2 === 'number'
+            ? { x: sp.x2, y: sp.y2 }
+            : null
+
+      if (!a || !b) return null
+
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const segLen = Math.hypot(dx, dy) || 1
+      const nx = -dy / segLen
+      const ny = dx / segLen
+      const midX = (a.x + b.x) / 2
+      const midY = (a.y + b.y) / 2
+      const labelOff = large ? 12 : 8
+
+      // 形状編集と同じ表示ルール（生座標距離は誤解を招くためフォールバックしない）
+      const spacingText = String(parseSpacingMm(sp.label) ?? (sp.label ?? '')).trim()
+
+      const hasSavedLabelPos =
+        typeof sp.label_x === 'number' &&
+        Number.isFinite(sp.label_x) &&
+        typeof sp.label_y === 'number' &&
+        Number.isFinite(sp.label_y)
+      const tx = hasSavedLabelPos ? sp.label_x! : midX + nx * labelOff
+      const ty = hasSavedLabelPos ? sp.label_y! : midY + ny * labelOff
+
+      return {
+        id: sp.id,
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
+        labelText: spacingText,
+        tx,
+        ty,
+      }
+    })
+    .filter((x): x is NonNullable<typeof x> => !!x)
   const rebarR = large ? 8 : 3.2
   const rebarStrokeW = large ? 2 : 1
   const rebarFont = large ? 12 : 6.5
@@ -3297,18 +3358,6 @@ function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?: boole
         )
       })}
       {previewSpacings.map((sp) => {
-        const midX = (sp.x1 + sp.x2) / 2
-        const midY = (sp.y1 + sp.y2) / 2
-        const raw = String(sp.label ?? '')
-        const spacingText = raw.match(/@?(\d+)/)?.[1] ?? raw
-        const tx =
-          typeof sp.label_x === 'number'
-            ? sp.label_x
-            : midX
-        const ty =
-          typeof sp.label_y === 'number'
-            ? sp.label_y
-            : midY
         return (
           <g key={`sp-${sp.id}`}>
             <line
@@ -3320,17 +3369,17 @@ function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?: boole
               strokeWidth={large ? 2 : 1.2}
               strokeDasharray={large ? '5 3' : '3 2'}
             />
-            {spacingText ? (
+            {sp.labelText ? (
               <text
-                x={tx}
-                y={ty}
+                x={sp.tx}
+                y={sp.ty}
                 textAnchor="middle"
                 dominantBaseline="middle"
                 fontSize={spacingFont}
                 fill="#334155"
                 fontWeight={700}
               >
-                {spacingText}
+                {sp.labelText}
               </text>
             ) : null}
           </g>

@@ -21,10 +21,9 @@ import {
 } from '@/lib/segment-meta'
 import {
   pushRecentUnitId,
-  readFavoriteUnitIds,
   readRecentUnitIds,
-  toggleFavoriteUnitId,
 } from '@/lib/drawing-unit-prefs'
+import { UnitShapeThumbnail } from '@/components/unit-client'
 import {
   getSegmentStrokeHex,
   isSegmentColor,
@@ -114,6 +113,8 @@ export function DrawingViewer({
   const [startPoint, setStartPoint] = useState<Point | null>(null)
   const [currentPoint, setCurrentPoint] = useState<Point | null>(null)
 
+  const [previewUnit, setPreviewUnit] = useState<Unit | null>(null)
+
   // 連続描画時の始点（直前線分の終点から自動で繋ぐ）
   const [polylineLastPoint, setPolylineLastPoint] = useState<Point | null>(null)
 
@@ -132,10 +133,6 @@ export function DrawingViewer({
     return readRecentUnitIds(projectId)
   }, [projectId, unitPrefsTick])
 
-  const favoriteUnitIds = useMemo(() => {
-    void unitPrefsTick
-    return readFavoriteUnitIds(projectId)
-  }, [projectId, unitPrefsTick])
   const [lastAction, setLastAction] = useState<LastAction>(null)
   const [splitArmedSegmentId, setSplitArmedSegmentId] = useState<string | null>(
     null,
@@ -1883,59 +1880,19 @@ export function DrawingViewer({
                   {activeUnit.name}
                 </span>
                 {(activeUnit.detail_spec || activeUnit.detail_geometry) && (
-                  <span className="hidden sm:inline rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
-                    詳細形状
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewUnit(activeUnit)}
+                    className="hidden sm:inline rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700 hover:bg-indigo-100"
+                    title="詳細形状のプレビュー"
+                  >
+                    プレビュー
+                  </button>
                 )}
               </>
             ) : null}
-            <button
-              type="button"
-              disabled={!activeDrawingUnitId}
-              title="お気に入りに追加/解除"
-              className="rounded border border-border px-1.5 py-0.5 text-xs disabled:opacity-40"
-              onClick={() => {
-                if (!activeDrawingUnitId) return
-                toggleFavoriteUnitId(projectId, activeDrawingUnitId)
-                setUnitPrefsTick((x) => x + 1)
-              }}
-            >
-              {activeDrawingUnitId && favoriteUnitIds.includes(activeDrawingUnitId) ? '★' : '☆'}
-            </button>
           </div>
           <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 text-[10px]">
-            {favoriteUnitIds.length > 0 ? (
-              <>
-                <span className="text-muted shrink-0">お気に入り</span>
-                {favoriteUnitIds.map((fid) => {
-                  const u = persistedActiveUnits.find((x) => x.id === fid)
-                  if (!u) return null
-                  return (
-                    <button
-                      key={fid}
-                      type="button"
-                      title={u.name}
-                      className={`rounded border px-1.5 py-0.5 font-medium ${
-                        activeDrawingUnitId === fid
-                          ? 'border-primary bg-primary/10'
-                          : 'border-border bg-white hover:bg-gray-50'
-                      }`}
-                      style={{
-                        borderColor: getSegmentStrokeHex(normalizeSegmentColor(u.color), false),
-                        color: getSegmentStrokeHex(normalizeSegmentColor(u.color), true),
-                      }}
-                      onClick={() => {
-                        setActiveDrawingUnitId(fid)
-                        pushRecentUnitId(projectId, fid)
-                        setUnitPrefsTick((x) => x + 1)
-                      }}
-                    >
-                      {u.code ?? u.name}
-                    </button>
-                  )
-                })}
-              </>
-            ) : null}
             {/* 最近: UI상 제거（표시 단순화） */}
           </div>
           <button
@@ -2235,6 +2192,31 @@ export function DrawingViewer({
               >
                 追加
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewUnit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-xl rounded-xl bg-white shadow-xl">
+            <div className="px-6 pt-5 pb-3 border-b border-border flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold">{previewUnit.name}</h3>
+                <p className="text-xs text-muted">{previewUnit.code ?? '-'}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewUnit(null)}
+                className="text-xs text-muted underline"
+              >
+                閉じる
+              </button>
+            </div>
+            <div className="p-4">
+              <div className="rounded border border-border bg-slate-50 p-2">
+                <UnitShapeThumbnail unit={previewUnit} large />
+              </div>
             </div>
           </div>
         </div>
