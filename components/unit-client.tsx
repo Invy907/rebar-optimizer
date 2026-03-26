@@ -3404,6 +3404,24 @@ export function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?
           </g>
         )
       })}
+      {/* 間隔線(spacings)とは別に保存される注記＝距離ラベル等（形状編集の annotations と同じ） */}
+      {(large ? previewRebarLayout.annotations : []).map((an) => {
+        if (!Number.isFinite(an.x) || !Number.isFinite(an.y)) return null
+        const t = String(an.text ?? '').trim()
+        if (!t) return null
+        return (
+          <text
+            key={`an-${an.id}`}
+            x={an.x}
+            y={an.y}
+            fontSize={11}
+            fill="#0f172a"
+            fontWeight={700}
+          >
+            {t}
+          </text>
+        )
+      })}
       {large &&
         !useStoredGeo &&
         sketch.handles.map((h) => (
