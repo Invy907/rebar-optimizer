@@ -1699,6 +1699,20 @@ export function DrawingViewer({
       return
     }
 
+    /** 番号未指定時は、同じ系統・同じ長さ(mm)の既存行があれば新規 INSERT せずそれを使う（4095 が red-7 / red-8 のように増えるのを防ぐ） */
+    if (userMark == null) {
+      const existingSameLength = persistedActiveUnits.find(
+        (u) => sameFamily(u) && hasVariantLength(u) && u.length_mm === mm,
+      )
+      if (existingSameLength) {
+        setQuickMarkPickModal(null)
+        setQuickMarkNewMm('')
+        setQuickMarkNewMark('')
+        await submitQuickMarkPickUnit(existingSameLength, ctx)
+        return
+      }
+    }
+
     const payload = {
       user_id: user.id,
       name: source.name,
@@ -1713,18 +1727,39 @@ export function DrawingViewer({
       length_mm: mm,
       mark_number: userMark,
       code,
+      /** /units と同じバリアント群に入るよう、元ユニットの詳細を引き継ぐ（無いと unitVariantGroupKey が分かれ同名が二重表示になる） */
+      detail_spec: source.detail_spec ?? null,
+      detail_geometry: source.detail_geometry ?? null,
+      rebar_layout: source.rebar_layout ?? null,
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('units')
       .insert(payload)
       .select()
       .single<Unit>()
 
+    if (error && /(detail_(spec|geometry)|rebar_layout)/i.test(error.message)) {
+      const {
+        detail_spec: _ds,
+        detail_geometry: _dg,
+        rebar_layout: _rl,
+        ...fallbackPayload
+      } = payload
+      const retry = await supabase
+        .from('units')
+        .insert(fallbackPayload)
+        .select()
+        .single<Unit>()
+      data = retry.data
+      error = retry.error
+    }
+
     if (error) {
       alert('バリアント保存に失敗しました: ' + error.message)
       return
     }
+    if (!data) return
 
     setLocalExtraUnits((prev) => [...prev, data])
     setQuickMarkPickModal(null)

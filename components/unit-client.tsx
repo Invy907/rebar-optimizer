@@ -17,7 +17,6 @@ import {
   SEGMENT_COLOR_ORDER,
 } from '@/lib/segment-colors'
 import {
-  LOCATION_TYPES,
   SHAPE_TYPE_DEFS,
   UNIT_TEMPLATES,
   generateUnitCode,
@@ -164,7 +163,6 @@ function draftFromUnit(unit: Unit): DraftUnit {
 
 // ─── フィルタ型 ─────────────────────────────────────────
 type FilterState = {
-  locationType: string
   showInactive: boolean
   searchText: string
 }
@@ -354,7 +352,6 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
   const [duplicateSourceId, setDuplicateSourceId] = useState<string>('')
   const [systemTplPick, setSystemTplPick] = useState<string>('')
   const [filter, setFilter] = useState<FilterState>({
-    locationType: 'all',
     showInactive: false,
     searchText: '',
   })
@@ -375,7 +372,6 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
   const filteredUnits = useMemo(() => {
     return units.filter((u) => {
       if (!filter.showInactive && !u.is_active) return false
-      if (filter.locationType !== 'all' && u.location_type !== filter.locationType) return false
       if (filter.searchText.trim()) {
         const q = filter.searchText.toLowerCase()
         if (
@@ -1130,16 +1126,6 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
           onChange={(e) => setFilter((p) => ({ ...p, searchText: e.target.value }))}
           className="w-44 rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary"
         />
-        <select
-          value={filter.locationType}
-          onChange={(e) => setFilter((p) => ({ ...p, locationType: e.target.value }))}
-          className="rounded border border-border px-2 py-1.5 text-sm outline-none focus:border-primary bg-white"
-        >
-          <option value="all">すべての位置</option>
-          {LOCATION_TYPES.map((l) => (
-            <option key={l} value={l}>{l}</option>
-          ))}
-        </select>
         <label className="flex items-center gap-1.5 text-sm text-muted cursor-pointer select-none">
           <input
             type="checkbox"
@@ -1167,7 +1153,6 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted">名前</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden md:table-cell">形状プレビュー</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden sm:table-cell">コード</th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden md:table-cell">位置</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted whitespace-nowrap">
                   色
                 </th>
@@ -1281,26 +1266,6 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                   className="w-full rounded-md border border-border px-2.5 py-1.5 text-sm outline-none focus:border-primary"
                   autoFocus
                 />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-medium text-muted">位置分類</label>
-                <div className="flex flex-wrap gap-1">
-                  {LOCATION_TYPES.map((lt) => (
-                    <button
-                      key={lt}
-                      type="button"
-                      onClick={() => setDraft((p) => ({ ...p, location_type: lt }))}
-                      className={`rounded border px-2 py-0.5 text-[11px] font-medium transition-colors ${
-                        draft.location_type === lt
-                          ? 'border-primary bg-primary text-white'
-                          : 'border-border text-muted hover:border-primary/40'
-                      }`}
-                    >
-                      {lt}
-                    </button>
-                  ))}
-                </div>
               </div>
 
               <div>
@@ -3617,9 +3582,6 @@ function UnitRow({
         <div className="flex items-center gap-2">
           <div>
             <p className="font-medium text-sm">{unit.name}</p>
-            {unit.location_type && (
-              <p className="text-[11px] text-muted">{unit.location_type}</p>
-            )}
           </div>
           {!unit.is_active && (
             <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] text-muted">無効</span>
@@ -3635,10 +3597,6 @@ function UnitRow({
       {/* コード */}
       <td className={`px-4 py-3 hidden sm:table-cell ${dimInactiveCell}`}>
         <span className="font-mono text-xs text-muted">{unit.code ?? '-'}</span>
-      </td>
-      {/* 位置 */}
-      <td className={`px-4 py-3 hidden md:table-cell ${dimInactiveCell}`}>
-        <span className="text-xs">{unit.location_type ?? '-'}</span>
       </td>
       {/* 色/番号 */}
       <td className={`px-4 py-3 whitespace-nowrap ${dimInactiveCell}`}>
