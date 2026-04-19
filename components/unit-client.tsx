@@ -2007,8 +2007,8 @@ function DetailShapeEditor({
       // 初期ラベル位置を線分の中点にseedしておく（後で数値を入れたときにドラッグ対象になるため）
       label_x: (start.x + end.x) / 2,
       label_y: (start.y + end.y) / 2,
-      // 프리뷰/캔버스 표시용: label이 빈 문자열이면 거리 라벨 텍스트가 렌더되지 않는다.
-      label: `${spacingMmDraft}`,
+      // 初期作成時は数値ラベルを自動生成しない（必要な場合のみ後で入力）
+      label: '',
     }
 
     onRebarLayoutChange(

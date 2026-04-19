@@ -24,6 +24,8 @@ import {
   readRecentUnitIds,
 } from '@/lib/drawing-unit-prefs'
 import { UnitShapeThumbnail, UnitVariantLengthList } from '@/components/unit-client'
+import { AutoPlacementPanel } from '@/components/auto-placement-panel'
+import type { SegmentAssignment } from '@/lib/types/foundation-plan'
 import {
   getSegmentStrokeHex,
   isSegmentColor,
@@ -70,6 +72,14 @@ type QuickMarkPickModalState = {
 }
 
 const BAR_TYPES = ['D10', 'D13', 'D16', 'D19', 'D22', 'D25', 'D29', 'D32']
+
+type OcrToken = {
+  text: string
+  normalizedText: string
+  kind: 'bar' | 'length' | 'mark' | 'other'
+  confidence: number | null
+  bbox: { x: number; y: number; w: number; h: number }
+}
 
 function isPersistedUnitId(id: string): boolean {
   return !id.startsWith('mock-') && !id.startsWith('local-')
@@ -134,6 +144,11 @@ export function DrawingViewer({
   const [currentPoint, setCurrentPoint] = useState<Point | null>(null)
 
   const [previewUnit, setPreviewUnit] = useState<Unit | null>(null)
+  const [showAutoPlacement, setShowAutoPlacement] = useState(false)
+  const [ocrLoading, setOcrLoading] = useState(false)
+  const [ocrTokens, setOcrTokens] = useState<OcrToken[]>([])
+  const [ocrError, setOcrError] = useState<string | null>(null)
+  const [showOcrPanel, setShowOcrPanel] = useState(false)
 
   const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>(() =>
     initialSelectedSegmentId ? [initialSelectedSegmentId] : [],
@@ -1899,6 +1914,27 @@ export function DrawingViewer({
     }
   }
 
+  async function runOcrAnalyze() {
+    setOcrLoading(true)
+    setOcrError(null)
+    try {
+      const res = await fetch(`/api/drawings/${drawingId}/analyze-ocr`, {
+        method: 'POST',
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        throw new Error(String(json?.error ?? 'OCR request failed'))
+      }
+      const tokens = Array.isArray(json?.tokens) ? (json.tokens as OcrToken[]) : []
+      setOcrTokens(tokens)
+      setShowOcrPanel(true)
+    } catch (e) {
+      setOcrError(e instanceof Error ? e.message : 'OCR failed')
+    } finally {
+      setOcrLoading(false)
+    }
+  }
+
   return (
     <div className="flex flex-1 gap-2 min-h-0">
       {/* Canvas area */}
@@ -1934,6 +1970,19 @@ export function DrawingViewer({
             }`}
           >
             間隔線
+          </button>
+          <button
+            onClick={() => setShowAutoPlacement(true)}
+            className="rounded-md px-3 py-1.5 text-sm transition-colors bg-violet-100 text-violet-800 hover:bg-violet-200 font-medium"
+          >
+            自動配置
+          </button>
+          <button
+            onClick={() => void runOcrAnalyze()}
+            disabled={ocrLoading}
+            className="rounded-md px-3 py-1.5 text-sm transition-colors bg-sky-100 text-sky-800 hover:bg-sky-200 font-medium disabled:opacity-50"
+          >
+            {ocrLoading ? 'OCR解析中...' : 'OCR解析'}
           </button>
           <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-md border border-border bg-white/80 px-2 py-1">
             <span className="text-[11px] font-medium text-muted whitespace-nowrap">
@@ -2024,6 +2073,11 @@ export function DrawingViewer({
               {effectiveUnits.length === 0
                 ? '図面で選べる保存済みユニットがありません。ユニット管理で「新規作成」→「保存」するか、supabase/seed-default-units.sql を実行して初期データを投入してください。'
                 : 'ユニットは読み込めましたが、すべて無効（無効化）か、図面で使えないIDのため一覧に表示されていません。'}
+            </p>
+          ) : null}
+          {ocrError ? (
+            <p className="text-[11px] leading-snug text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-1.5 max-w-3xl">
+              OCRエラー: {ocrError}
             </p>
           ) : null}
         </div>
@@ -2409,6 +2463,87 @@ export function DrawingViewer({
               >
                 追加
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAutoPlacement && (
+        <AutoPlacementPanel
+          segments={segments}
+          units={effectiveUnits}
+          onApply={async (assignments) => {
+            for (const a of assignments) {
+              const seg = segments.find((s) => s.id === a.segmentId)
+              if (!seg) continue
+              const { meta } = decodeSegmentMeta(seg.memo)
+              const updated: Partial<DrawingSegment> = {
+                unit_id: a.unitId,
+                unit_code: a.unitCode,
+                unit_name: a.unitName,
+                mark_number: a.markNumber,
+                memo: encodeSegmentMeta({
+                  v: 1,
+                  color: a.color,
+                  bars: meta?.bars ?? [],
+                  note: meta?.note ?? null,
+                }),
+              }
+              await updateSegment(a.segmentId, updated)
+            }
+            setShowAutoPlacement(false)
+          }}
+          onClose={() => setShowAutoPlacement(false)}
+        />
+      )}
+
+      {showOcrPanel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl rounded-xl bg-white shadow-xl">
+            <div className="px-6 pt-5 pb-3 border-b border-border flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold">OCR解析結果</h3>
+                <p className="text-xs text-muted">{ocrTokens.length} トークンを検出</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowOcrPanel(false)}
+                className="text-xs text-muted underline"
+              >
+                閉じる
+              </button>
+            </div>
+            <div className="p-4 max-h-[70vh] overflow-y-auto space-y-2">
+              {ocrTokens.length === 0 ? (
+                <p className="text-sm text-muted">テキストが検出されませんでした。</p>
+              ) : (
+                <div className="rounded border border-border overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/30 text-left">
+                        <th className="px-2 py-1.5 font-medium">text</th>
+                        <th className="px-2 py-1.5 font-medium">kind</th>
+                        <th className="px-2 py-1.5 font-medium">conf</th>
+                        <th className="px-2 py-1.5 font-medium">bbox(x,y,w,h)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {ocrTokens.slice(0, 300).map((t, idx) => (
+                        <tr key={`${idx}-${t.normalizedText}`}>
+                          <td className="px-2 py-1 font-mono">{t.text}</td>
+                          <td className="px-2 py-1 font-mono">{t.kind}</td>
+                          <td className="px-2 py-1 font-mono">
+                            {typeof t.confidence === 'number' ? t.confidence.toFixed(2) : '-'}
+                          </td>
+                          <td className="px-2 py-1 font-mono">
+                            {`${Math.round(t.bbox.x)},${Math.round(t.bbox.y)},${Math.round(t.bbox.w)},${Math.round(t.bbox.h)}`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         </div>
