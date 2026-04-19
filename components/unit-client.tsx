@@ -1765,7 +1765,8 @@ function DetailShapeEditor({
   const [history, setHistory] = useState<UnitDetailGeometry[]>([])
   const [selection, setSelection] = useState<CanvasSelection | null>(null)
   const [spacingMmDraft, setSpacingMmDraft] = useState<number>(() => spec.pitch)
-  const [zoomScale, setZoomScale] = useState(1)
+  /** 形状編集キャンバス初期ズーム（UI表示は clampedZoom×100%） */
+  const [zoomScale, setZoomScale] = useState(0.5)
   const [zoomCenter, setZoomCenter] = useState<{ x: number; y: number } | null>(null)
   const [drawGesture, setDrawGesture] = useState<{
     start: { x: number; y: number }
@@ -2754,8 +2755,9 @@ function DetailShapeEditor({
                 typeof sp.label_x === 'number' &&
                 typeof sp.label_y === 'number' &&
                 (() => {
-                  const hitW = Math.max(24, txt.length * 8 + 10)
-                  const hitH = 18
+                  const spacingLabelFont = 23
+                  const hitW = Math.max(46, txt.length * (spacingLabelFont * 0.62) + 18)
+                  const hitH = 44
 
                   return (
                     <>
@@ -2783,7 +2785,7 @@ function DetailShapeEditor({
                       <text
                         x={sp.label_x}
                         y={sp.label_y}
-                        fontSize={11}
+                        fontSize={spacingLabelFont}
                         fill={labelFill}
                         fontWeight={700}
                         textAnchor="middle"
@@ -2873,8 +2875,9 @@ function DetailShapeEditor({
         {rebarLayout.annotations.map((an) => {
           const pe = mode === 'annotation' ? 'auto' : 'none'
           const isNumeric = parseSpacingMm(an.text) != null
-          const hitW = Math.max(24, String(an.text).length * 8 + 10)
-          const hitH = 18
+          const annotationFont = 23
+          const hitW = Math.max(46, String(an.text).length * (annotationFont * 0.62) + 18)
+          const hitH = 44
 
           return (
             <g key={an.id}>
@@ -2904,7 +2907,7 @@ function DetailShapeEditor({
                 data-canvas-hit="item"
                 x={an.x}
                 y={an.y}
-                fontSize={11}
+                fontSize={annotationFont}
                 fill={selection?.kind === 'annotation' && selection.id === an.id ? '#7c3aed' : '#0f172a'}
                 fontWeight={700}
                 opacity={mode === 'annotation' ? 1 : 0.5}
