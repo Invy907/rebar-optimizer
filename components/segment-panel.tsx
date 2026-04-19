@@ -12,6 +12,7 @@ import {
   getSegmentBars,
   getSegmentBarsSummary,
   getSegmentColor,
+  getSegmentEffectiveLengthMm,
   legacyFieldsFromBars,
   type SegmentBarItem,
   type SegmentColor,
@@ -116,18 +117,14 @@ export function SegmentPanel({
       ? units.find((u) => u.id === selected.unit_id) ?? null
       : null
 
-  const unitById = useMemo(() => new Map(units.map((u) => [u.id, u])), [units])
-
-  // 円番号(ユニット由来)で集計し、表示長さは「割当ユニットの長さ」を優先する
+  // 円番号(ユニット由来)で集計し、表示長さは線分に保存された実長を優先（マスタ変更で既存線が変わらない）
   type CircleRow = { len: number; no: number | null; count: number; color: SegmentColor }
   const circleRows = (() => {
     const m = new Map<string, CircleRow>()
     for (const seg of rebarSegments) {
       const no = getSegmentResolvedMarkNumber(seg, units)
       const color = getSegmentColor(seg, units)
-      const linkedUnit = seg.unit_id ? unitById.get(seg.unit_id) ?? null : null
-      const unitLen = linkedUnit?.length_mm
-      const len = typeof unitLen === 'number' && Number.isFinite(unitLen) ? unitLen : seg.length_mm
+      const len = getSegmentEffectiveLengthMm(seg, units)
       const key = `${color}::${no ?? 'none'}`
       const existing = m.get(key)
       if (!existing) {

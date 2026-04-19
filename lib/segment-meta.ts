@@ -121,18 +121,24 @@ export function resolveLinkedUnit(
 }
 
 /**
- * 切断・一覧表示用の長さ (mm)。割当ユニットの length_mm があれば優先、なければ線分の length_mm。
+ * 切断・一覧表示用の長さ (mm)。線分に保存された length_mm（図面上で確定した実長）を優先する。
+ * マスタ側のユニット length_mm を後から変えても、既存線分の表示・集計は変わらない。
+ * 線分側が不正なときのみ割当ユニットの length_mm を参照する。
  */
 export function getSegmentEffectiveLengthMm(
   seg: DrawingSegment,
   units?: Unit[] | null,
 ): number {
+  const segLen = seg.length_mm
+  if (typeof segLen === 'number' && Number.isFinite(segLen) && segLen > 0) {
+    return segLen
+  }
   const u = resolveLinkedUnit(seg, units)
   const unitLen = u?.length_mm
-  if (typeof unitLen === 'number' && Number.isFinite(unitLen)) {
+  if (typeof unitLen === 'number' && Number.isFinite(unitLen) && unitLen > 0) {
     return unitLen
   }
-  return seg.length_mm
+  return typeof segLen === 'number' && Number.isFinite(segLen) ? Math.max(1, segLen) : 1
 }
 
 /**
@@ -150,7 +156,8 @@ export function getSegmentColor(
   return normalizeSegmentColor(meta?.color)
 }
 
-function parseMarkFromCode(code: string | null | undefined): number | null {
+/** ユニット code 等の末尾 `-12` から番号を読む（内部コード採番用） */
+export function parseMarkFromUnitCode(code: string | null | undefined): number | null {
   if (!code) return null
   const m = code.trim().match(/-(\d+)$/)
   if (!m) return null
@@ -160,19 +167,22 @@ function parseMarkFromCode(code: string | null | undefined): number | null {
 
 /**
  * 線分の表示マーク番号を解決。
- * 優先順: linked unit.mark_number -> seg.mark_number -> seg.unit_code末尾数字 -> linked unit.code末尾数字
+ * 優先順: seg.mark_number -> linked unit.mark_number ->（リンク済みで unit に番号が無い場合は null＝円なし・長さ表示）
+ * -> 未リンク時のみ seg.unit_code 末尾から推測
  */
 export function getSegmentResolvedMarkNumber(
   seg: DrawingSegment,
   units: Unit[] | null | undefined,
 ): number | null {
   const u = resolveLinkedUnit(seg, units)
-  if (u && u.mark_number != null) return u.mark_number
   if (seg.mark_number != null) return seg.mark_number
-  const markFromSegCode = parseMarkFromCode(seg.unit_code)
+  if (u && u.mark_number != null) return u.mark_number
+  if (u) {
+    // 割当ユニットに明示 mark_number が無い: code の数字は表示に使わない（円なし）
+    return null
+  }
+  const markFromSegCode = parseMarkFromUnitCode(seg.unit_code)
   if (markFromSegCode != null) return markFromSegCode
-  const markFromUnitCode = parseMarkFromCode(u?.code)
-  if (markFromUnitCode != null) return markFromUnitCode
   return null
 }
 

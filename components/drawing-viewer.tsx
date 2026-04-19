@@ -14,8 +14,10 @@ import {
   encodeSegmentMeta,
   getSegmentBars,
   getSegmentColor,
+  getSegmentEffectiveLengthMm,
   getSegmentMarkNumberForCanvas,
   legacyFieldsFromBars,
+  parseMarkFromUnitCode,
   type SegmentBarItem,
   type SegmentColor,
 } from '@/lib/segment-meta'
@@ -24,9 +26,8 @@ import {
   readRecentUnitIds,
 } from '@/lib/drawing-unit-prefs'
 import { UnitShapeThumbnail, UnitVariantLengthList } from '@/components/unit-client'
-import { AutoPlacementPanel } from '@/components/auto-placement-panel'
-import type { SegmentAssignment } from '@/lib/types/foundation-plan'
 import {
+  getSegmentColorLabelJa,
   getSegmentStrokeHex,
   isSegmentColor,
   normalizeSegmentColor,
@@ -44,6 +45,7 @@ import {
   snapLengthMm,
   type TemplateSummary,
 } from '@/lib/unit-variant-resolver'
+import { generateUnitCode } from '@/lib/unit-types'
 
 interface Point {
   x: number
@@ -69,17 +71,10 @@ type QuickMarkPickModalState = {
   base: string
   numbered: Unit[]
   availableMarks: number[]
+  sourceUnit: Unit
 }
 
 const BAR_TYPES = ['D10', 'D13', 'D16', 'D19', 'D22', 'D25', 'D29', 'D32']
-
-type OcrToken = {
-  text: string
-  normalizedText: string
-  kind: 'bar' | 'length' | 'mark' | 'other'
-  confidence: number | null
-  bbox: { x: number; y: number; w: number; h: number }
-}
 
 function isPersistedUnitId(id: string): boolean {
   return !id.startsWith('mock-') && !id.startsWith('local-')
@@ -100,6 +95,35 @@ function formatUnitLengthMmJa(u: Pick<Unit, 'length_mm' | 'spacing_mm'>): string
     return `${u.spacing_mm.toLocaleString('ja-JP')}mm`
   }
   return '長さ未登録'
+}
+
+/** 同一系統ユニットの「使用中の番号」（mark_number 優先、無ければ code 末尾の採番用数字） */
+function collectSuffixMarksForBase(
+  units: Unit[],
+  source: Pick<Unit, 'code' | 'color' | 'name' | 'id'>,
+): number[] {
+  const base = getUnitCodeBase(source)
+  const color = normalizeSegmentColor(source.color)
+  const out: number[] = []
+  for (const u of units) {
+    if (getUnitCodeBase(u) !== base) continue
+    if (normalizeSegmentColor(u.color) !== color) continue
+    if (typeof u.mark_number === 'number' && Number.isFinite(u.mark_number)) {
+      out.push(u.mark_number)
+      continue
+    }
+    const p = parseMarkFromUnitCode(u.code)
+    if (p != null) out.push(p)
+  }
+  return out
+}
+
+function nextCodeSuffixForBase(
+  units: Unit[],
+  source: Pick<Unit, 'code' | 'color' | 'name' | 'id'>,
+): number {
+  const used = collectSuffixMarksForBase(units, source)
+  return used.length > 0 ? Math.max(...used) + 1 : 1
 }
 
 /** 図面上のピクセル距離を mm として扱う（1px≒1mm 想定。必要なら後で係数を追加） */
@@ -144,11 +168,6 @@ export function DrawingViewer({
   const [currentPoint, setCurrentPoint] = useState<Point | null>(null)
 
   const [previewUnit, setPreviewUnit] = useState<Unit | null>(null)
-  const [showAutoPlacement, setShowAutoPlacement] = useState(false)
-  const [ocrLoading, setOcrLoading] = useState(false)
-  const [ocrTokens, setOcrTokens] = useState<OcrToken[]>([])
-  const [ocrError, setOcrError] = useState<string | null>(null)
-  const [showOcrPanel, setShowOcrPanel] = useState(false)
 
   const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>(() =>
     initialSelectedSegmentId ? [initialSelectedSegmentId] : [],
@@ -217,12 +236,22 @@ export function DrawingViewer({
   quickMarkPickModalRef.current = quickMarkPickModal
   const [quickMarkArbitraryMm, setQuickMarkArbitraryMm] = useState('')
   const quickMarkArbitraryInputRef = useRef<HTMLInputElement>(null)
+  /** 新しいバリアント追加インプット */
+  const [quickMarkNewMm, setQuickMarkNewMm] = useState('')
+  const [quickMarkNewMark, setQuickMarkNewMark] = useState('')
+  const quickMarkNewMmInputRef = useRef<HTMLInputElement>(null)
+  /** 描画中に追加したバリアントをページリロードなしで反映するためのローカルキャッシュ */
+  const [localExtraUnits, setLocalExtraUnits] = useState<Unit[]>([])
   const submitQuickMarkPickUnitRef = useRef<
     ((chosenUnit: Unit, ctx: QuickMarkPickModalState) => Promise<void>) | null
   >(null)
 
   useEffect(() => {
-    if (!quickMarkPickModal) setQuickMarkArbitraryMm('')
+    if (!quickMarkPickModal) {
+      setQuickMarkArbitraryMm('')
+      setQuickMarkNewMm('')
+      setQuickMarkNewMark('')
+    }
   }, [quickMarkPickModal])
 
   const lastUsedRebarDraftKey = `project:${projectId}:lastUsedRebarDraft:v1`
@@ -322,7 +351,12 @@ export function DrawingViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 上記
   }, [serverUnits.length])
 
-  const effectiveUnits = serverUnits.length > 0 ? serverUnits : (clientUnits ?? [])
+  const effectiveUnits = useMemo(() => {
+    const base = serverUnits.length > 0 ? serverUnits : (clientUnits ?? [])
+    if (localExtraUnits.length === 0) return base
+    const baseIds = new Set(base.map((u) => u.id))
+    return [...base, ...localExtraUnits.filter((u) => !baseIds.has(u.id))]
+  }, [serverUnits, clientUnits, localExtraUnits])
   const focusedSegment = useMemo(
     () => (focusedSegmentId ? segments.find((s) => s.id === focusedSegmentId) ?? null : null),
     [focusedSegmentId, segments],
@@ -534,10 +568,7 @@ export function DrawingViewer({
       } else {
         const circleNum = getSegmentMarkNumberForCanvas(seg, effectiveUnits)
         const stroke = getSegmentStrokeHex(segColor, false)
-        const linkedUnit = seg.unit_id ? unitById.get(seg.unit_id) ?? null : null
-        const unitLen = linkedUnit?.length_mm
-        const displayLen =
-          typeof unitLen === 'number' && Number.isFinite(unitLen) ? unitLen : seg.length_mm
+        const displayLen = getSegmentEffectiveLengthMm(seg, effectiveUnits)
 
         if (circleNum == null) {
           // 任意長さ・ユニット未割当: 円なし。線の法線方向にオフセットした大きめラベル
@@ -720,6 +751,8 @@ export function DrawingViewer({
         if (quickMarkPickModalRef.current) {
           setQuickMarkPickModal(null)
           setQuickMarkArbitraryMm('')
+          setQuickMarkNewMm('')
+          setQuickMarkNewMark('')
           return
         }
         if (newSegmentDraft) {
@@ -751,6 +784,8 @@ export function DrawingViewer({
             e.preventDefault()
             setQuickMarkPickModal(null)
             setQuickMarkArbitraryMm('')
+            setQuickMarkNewMm('')
+            setQuickMarkNewMark('')
             void submitQuickMarkPickUnitRef.current?.(matched, modal)
             return
           }
@@ -1373,21 +1408,39 @@ export function DrawingViewer({
   async function quickInsertRebar(p1: Point, p2: Point, lengthMm: number) {
     if (activeUnit) {
       const base = getUnitCodeBase(activeUnit)
-      const numbered = persistedActiveUnits
-        .filter((u) => getUnitCodeBase(u) === base && typeof u.mark_number === 'number')
-        .sort((a, b) => (a.mark_number ?? 0) - (b.mark_number ?? 0))
-      if (numbered.length > 0) {
-        const availableMarks = numbered.map((u) => u.mark_number as number)
-        setQuickMarkPickModal({
-          p1,
-          p2,
-          lengthMm,
-          base,
-          numbered,
-          availableMarks,
+      const ac = normalizeSegmentColor(activeUnit.color)
+      const sameBase = persistedActiveUnits
+        .filter((u) => getUnitCodeBase(u) === base && normalizeSegmentColor(u.color) === ac)
+        .sort((a, b) => {
+          const ma =
+            typeof a.mark_number === 'number'
+              ? a.mark_number
+              : parseMarkFromUnitCode(a.code) ?? 0
+          const mb =
+            typeof b.mark_number === 'number'
+              ? b.mark_number
+              : parseMarkFromUnitCode(b.code) ?? 0
+          return ma - mb
         })
-        return
-      }
+      const numbered = sameBase.filter(
+        (u) =>
+          typeof u.length_mm === 'number' && Number.isFinite(u.length_mm) && u.length_mm > 0,
+      )
+      const nextMark = nextCodeSuffixForBase(persistedActiveUnits, activeUnit)
+      const availableMarks = numbered
+        .map((u) => u.mark_number)
+        .filter((n): n is number => typeof n === 'number')
+      setQuickMarkNewMark('')
+      setQuickMarkPickModal({
+        p1,
+        p2,
+        lengthMm,
+        base,
+        numbered,
+        availableMarks,
+        sourceUnit: activeUnit,
+      })
+      return
     }
     await quickInsertRebarContinue(p1, p2, lengthMm, null)
   }
@@ -1399,14 +1452,24 @@ export function DrawingViewer({
     setActiveDrawingUnitId(chosenUnit.id)
     setActiveTemplateId(chosenUnit.template_id ?? `shape:${chosenUnit.shape_type}`)
     setActiveTemplateColor(normalizeSegmentColor(chosenUnit.color))
-    await quickInsertRebarContinue(ctx.p1, ctx.p2, ctx.lengthMm, {
+    /** 図面上のピクセル距離(ctx)ではなく、割当 variant の length_mm を線分に保存する（7300 指定で 3000 と出る不整合を防ぐ） */
+    const segmentLengthMm =
+      typeof chosenUnit.length_mm === 'number' &&
+      Number.isFinite(chosenUnit.length_mm) &&
+      chosenUnit.length_mm > 0
+        ? chosenUnit.length_mm
+        : ctx.lengthMm
+    await quickInsertRebarContinue(ctx.p1, ctx.p2, segmentLengthMm, {
       bars,
       color: normalizeSegmentColor(chosenUnit.color),
       unitId: chosenUnit.id,
       unitCode: chosenUnit.code ?? null,
       unitName: chosenUnit.name ?? null,
       markNumber: chosenUnit.mark_number ?? null,
-      label: String(chosenUnit.mark_number ?? ''),
+      label:
+        chosenUnit.mark_number != null
+          ? String(chosenUnit.mark_number)
+          : String(segmentLengthMm),
       skipVariantResolution: true,
     })
   }
@@ -1440,6 +1503,234 @@ export function DrawingViewer({
       label: nextLabel,
       skipVariantResolution: true,
     })
+  }
+
+  async function createAndUseNewVariant(
+    ctx: QuickMarkPickModalState,
+    mmStr: string,
+    markStr: string,
+  ) {
+    const mm = parseInt(mmStr.trim(), 10)
+    if (!Number.isFinite(mm) || mm <= 0) {
+      alert('有効な長さ (mm) を入力してください。')
+      return
+    }
+    const markRaw = markStr.trim()
+    let userMark: number | null = null
+    if (markRaw) {
+      const parsed = parseInt(markRaw, 10)
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        alert('有効な番号を入力してください。')
+        return
+      }
+      userMark = parsed
+    }
+
+    const source = ctx.sourceUnit
+    const color = normalizeSegmentColor(source.color as SegmentColor)
+
+    const sameFamily = (u: Unit) =>
+      getUnitCodeBase(u) === getUnitCodeBase(source) &&
+      normalizeSegmentColor(u.color) === color
+
+    const hasVariantLength = (u: Unit) =>
+      typeof u.length_mm === 'number' && Number.isFinite(u.length_mm) && u.length_mm > 0
+
+    if (userMark != null) {
+      const filledSameMark = persistedActiveUnits.find(
+        (u) =>
+          sameFamily(u) &&
+          typeof u.mark_number === 'number' &&
+          u.mark_number === userMark &&
+          hasVariantLength(u),
+      )
+      if (filledSameMark) {
+        if (filledSameMark.length_mm === mm) {
+          setQuickMarkPickModal(null)
+          setQuickMarkNewMm('')
+          setQuickMarkNewMark('')
+          await submitQuickMarkPickUnit(filledSameMark, ctx)
+          return
+        }
+        const {
+          data: { user: userForUpdate },
+        } = await supabase.auth.getUser()
+        if (!userForUpdate) {
+          alert('ログインが必要です。')
+          return
+        }
+        let { data: upd, error: updErr } = await supabase
+          .from('units')
+          .update({ length_mm: mm, bars: source.bars })
+          .eq('id', filledSameMark.id)
+          .select()
+          .single<Unit>()
+        if (updErr && /(detail_(spec|geometry)|rebar_layout)/i.test(updErr.message)) {
+          const retry = await supabase
+            .from('units')
+            .update({ length_mm: mm })
+            .eq('id', filledSameMark.id)
+            .select()
+            .single<Unit>()
+          upd = retry.data
+          updErr = retry.error
+        }
+        if (updErr) {
+          alert('長さの更新に失敗しました: ' + updErr.message)
+          return
+        }
+        if (upd) {
+          await router.refresh()
+          setQuickMarkPickModal(null)
+          setQuickMarkNewMm('')
+          setQuickMarkNewMark('')
+          await submitQuickMarkPickUnit(upd, ctx)
+        }
+        return
+      }
+    }
+
+    const codeSuffix = userMark ?? nextCodeSuffixForBase(persistedActiveUnits, source)
+    const code = generateUnitCode(color, codeSuffix)
+
+    const placeholderByMark =
+      userMark != null
+        ? persistedActiveUnits.find(
+            (u) =>
+              sameFamily(u) &&
+              typeof u.mark_number === 'number' &&
+              u.mark_number === userMark &&
+              !hasVariantLength(u),
+          )
+        : null
+    const placeholderByCode = persistedActiveUnits.find(
+      (u) => (u.code ?? '').toLowerCase() === code.toLowerCase() && !hasVariantLength(u),
+    )
+    const rowToFill = placeholderByMark ?? placeholderByCode ?? null
+
+    const filledByCode = persistedActiveUnits.find(
+      (u) => (u.code ?? '').toLowerCase() === code.toLowerCase() && hasVariantLength(u),
+    )
+    if (filledByCode && !rowToFill) {
+      if (filledByCode.length_mm === mm) {
+        setQuickMarkPickModal(null)
+        setQuickMarkNewMm('')
+        setQuickMarkNewMark('')
+        await submitQuickMarkPickUnit(filledByCode, ctx)
+        return
+      }
+      const {
+        data: { user: userForCodeUpd },
+      } = await supabase.auth.getUser()
+      if (!userForCodeUpd) {
+        alert('ログインが必要です。')
+        return
+      }
+      let { data: updCode, error: errCode } = await supabase
+        .from('units')
+        .update({ length_mm: mm, bars: source.bars })
+        .eq('id', filledByCode.id)
+        .select()
+        .single<Unit>()
+      if (errCode && /(detail_(spec|geometry)|rebar_layout)/i.test(errCode.message)) {
+        const retry = await supabase
+          .from('units')
+          .update({ length_mm: mm })
+          .eq('id', filledByCode.id)
+          .select()
+          .single<Unit>()
+        updCode = retry.data
+        errCode = retry.error
+      }
+      if (errCode) {
+        alert('長さの更新に失敗しました: ' + errCode.message)
+        return
+      }
+      if (updCode) {
+        await router.refresh()
+        setQuickMarkPickModal(null)
+        setQuickMarkNewMm('')
+        setQuickMarkNewMark('')
+        await submitQuickMarkPickUnit(updCode, ctx)
+      }
+      return
+    }
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) {
+      alert('ログインが必要です。')
+      return
+    }
+
+    if (rowToFill) {
+      const updatePayload = {
+        length_mm: mm,
+        bars: source.bars,
+      }
+      let { data, error } = await supabase
+        .from('units')
+        .update(updatePayload)
+        .eq('id', rowToFill.id)
+        .select()
+        .single<Unit>()
+      if (error && /(detail_(spec|geometry)|rebar_layout)/i.test(error.message)) {
+        const retry = await supabase
+          .from('units')
+          .update({ length_mm: mm })
+          .eq('id', rowToFill.id)
+          .select()
+          .single<Unit>()
+        data = retry.data
+        error = retry.error
+      }
+      if (error) {
+        alert('長さの登録に失敗しました: ' + error.message)
+        return
+      }
+      if (data) {
+        await router.refresh()
+        setQuickMarkPickModal(null)
+        setQuickMarkNewMm('')
+        setQuickMarkNewMark('')
+        await submitQuickMarkPickUnit(data, ctx)
+      }
+      return
+    }
+
+    const payload = {
+      user_id: user.id,
+      name: source.name,
+      location_type: source.location_type,
+      shape_type: source.shape_type,
+      color: source.color,
+      bars: source.bars,
+      spacing_mm: source.spacing_mm,
+      description: source.description,
+      is_active: true,
+      template_id: source.template_id,
+      length_mm: mm,
+      mark_number: userMark,
+      code,
+    }
+
+    const { data, error } = await supabase
+      .from('units')
+      .insert(payload)
+      .select()
+      .single<Unit>()
+
+    if (error) {
+      alert('バリアント保存に失敗しました: ' + error.message)
+      return
+    }
+
+    setLocalExtraUnits((prev) => [...prev, data])
+    setQuickMarkPickModal(null)
+    setQuickMarkNewMm('')
+    setQuickMarkNewMark('')
+    await submitQuickMarkPickUnit(data, ctx)
   }
 
   async function quickInsertSpacing(p1: Point, p2: Point, lengthMm: number) {
@@ -1914,27 +2205,6 @@ export function DrawingViewer({
     }
   }
 
-  async function runOcrAnalyze() {
-    setOcrLoading(true)
-    setOcrError(null)
-    try {
-      const res = await fetch(`/api/drawings/${drawingId}/analyze-ocr`, {
-        method: 'POST',
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        throw new Error(String(json?.error ?? 'OCR request failed'))
-      }
-      const tokens = Array.isArray(json?.tokens) ? (json.tokens as OcrToken[]) : []
-      setOcrTokens(tokens)
-      setShowOcrPanel(true)
-    } catch (e) {
-      setOcrError(e instanceof Error ? e.message : 'OCR failed')
-    } finally {
-      setOcrLoading(false)
-    }
-  }
-
   return (
     <div className="flex flex-1 gap-2 min-h-0">
       {/* Canvas area */}
@@ -1971,19 +2241,6 @@ export function DrawingViewer({
           >
             間隔線
           </button>
-          <button
-            onClick={() => setShowAutoPlacement(true)}
-            className="rounded-md px-3 py-1.5 text-sm transition-colors bg-violet-100 text-violet-800 hover:bg-violet-200 font-medium"
-          >
-            自動配置
-          </button>
-          <button
-            onClick={() => void runOcrAnalyze()}
-            disabled={ocrLoading}
-            className="rounded-md px-3 py-1.5 text-sm transition-colors bg-sky-100 text-sky-800 hover:bg-sky-200 font-medium disabled:opacity-50"
-          >
-            {ocrLoading ? 'OCR解析中...' : 'OCR解析'}
-          </button>
           <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-md border border-border bg-white/80 px-2 py-1">
             <span className="text-[11px] font-medium text-muted whitespace-nowrap">
               アクティブユニット
@@ -2008,21 +2265,13 @@ export function DrawingViewer({
             >
               <option value="">ユニットを選択してください</option>
               {activeUnitChoices.map((u) => {
-                const base = getUnitCodeBase(u)
-                const marks = Array.from(
-                  new Set(
-                    persistedActiveUnits
-                      .filter((x) => getUnitCodeBase(x) === base)
-                      .map((x) => x.mark_number)
-                      .filter((n): n is number => typeof n === 'number' && Number.isFinite(n)),
-                  ),
-                ).sort((a, b) => a - b)
-
-                const label = marks.length ? `${base}(${marks.join(',')})` : base
+                const name = (u.name ?? '').trim() || (u.code ?? '').trim() || getUnitCodeBase(u)
+                const colorJa = getSegmentColorLabelJa(normalizeSegmentColor(u.color))
+                const label = `${name}(${colorJa})`
 
                 return (
                   <option key={u.id} value={u.id}>
-                    {label.slice(0, 48)}
+                    {label.slice(0, 80)}
                   </option>
                 )
               })}
@@ -2073,11 +2322,6 @@ export function DrawingViewer({
               {effectiveUnits.length === 0
                 ? '図面で選べる保存済みユニットがありません。ユニット管理で「新規作成」→「保存」するか、supabase/seed-default-units.sql を実行して初期データを投入してください。'
                 : 'ユニットは読み込めましたが、すべて無効（無効化）か、図面で使えないIDのため一覧に表示されていません。'}
-            </p>
-          ) : null}
-          {ocrError ? (
-            <p className="text-[11px] leading-snug text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-1.5 max-w-3xl">
-              OCRエラー: {ocrError}
             </p>
           ) : null}
         </div>
@@ -2150,88 +2394,119 @@ export function DrawingViewer({
           >
             <div className="border-b border-border px-6 py-4">
               <h2 id="quick-mark-title" className="text-base font-semibold">
-                {quickMarkPickModal.base} の番号を選択
+                {quickMarkPickModal.base} — 長さ・番号を選択
               </h2>
               <p className="mt-1 text-xs text-muted">
-                番号ボタンでユニットを割り当てるか、下の「長さを任意入力」で mm のみ指定（割当なし）できます。
-                キーボードの数字（1–9）でも、入力欄にフォーカスがないときに同じ番号を選べます。
-              </p>
-              <p className="mt-1 font-mono text-[11px] text-muted">
-                ({quickMarkPickModal.availableMarks.join(', ')})
+                登録済みの長さを選ぶか、下のフォームで新しい長さを追加してください。
+                {quickMarkPickModal.numbered.length > 0 && ' キーボードの数字（1–9）でも選択できます。'}
               </p>
             </div>
             <div className="space-y-4 px-6 py-4">
-              <div className="flex flex-wrap gap-2">
-                {quickMarkPickModal.numbered.map((u) => {
-                  const uc = normalizeSegmentColor(u.color)
-                  const stroke = getSegmentStrokeHex(uc, false)
-                  const tint = getSegmentStrokeHex(uc, true)
-                  return (
-                    <button
-                      key={u.id}
-                      type="button"
-                      onClick={() => {
-                        if (!quickMarkPickModal) return
-                        const ctx = quickMarkPickModal
-                        setQuickMarkPickModal(null)
-                        setQuickMarkArbitraryMm('')
-                        void submitQuickMarkPickUnit(u, ctx)
-                      }}
-                      className="flex min-w-[7.5rem] flex-col items-start rounded-lg border-2 px-3 py-2 text-left text-sm font-semibold transition hover:shadow-sm"
-                      style={{ borderColor: stroke, color: tint }}
-                    >
-                      <span className="font-mono leading-tight">
-                        {u.mark_number} {u.code ?? u.name}
-                      </span>
-                      <span
-                        className="mt-0.5 text-[11px] font-normal leading-tight opacity-90"
-                        style={{ color: stroke }}
-                      >
-                        {formatUnitLengthMmJa(u)}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-              <div className="space-y-2 rounded-lg border border-indigo-200 bg-indigo-50/80 p-3">
-                <div className="text-xs font-semibold text-indigo-900">長さを任意入力</div>
-                <p className="text-[10px] leading-snug text-indigo-900/85">
-                  図面・線分一覧に表示する長さ (mm)。ユニットは紐付けません。
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      quickMarkArbitraryInputRef.current?.focus()
-                      quickMarkArbitraryInputRef.current?.select()
-                    }}
-                    className="rounded-md border border-indigo-300 bg-white px-2.5 py-1.5 text-xs font-medium text-indigo-900 hover:bg-indigo-100"
-                  >
-                    入力欄を選択
-                  </button>
-                  <input
-                    ref={quickMarkArbitraryInputRef}
-                    type="number"
-                    min={1}
-                    inputMode="numeric"
-                    placeholder="4095"
-                    value={quickMarkArbitraryMm}
-                    onChange={(e) => setQuickMarkArbitraryMm(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key !== 'Enter') return
-                      e.preventDefault()
-                      if (!quickMarkPickModal) return
-                      const ctx = quickMarkPickModal
-                      const raw = quickMarkArbitraryMm
-                      setQuickMarkPickModal(null)
-                      setQuickMarkArbitraryMm('')
-                      void submitQuickMarkArbitraryLength(ctx, raw)
-                    }}
-                    className="w-28 rounded-md border border-indigo-200 bg-white px-2 py-1.5 text-sm font-mono outline-none focus:border-indigo-500"
-                    aria-label="任意の長さ mm"
-                  />
-                  <span className="text-[10px] text-indigo-900/80">Enter で追加</span>
+              {quickMarkPickModal.numbered.length > 0 ? (
+                <div>
+                  <div className="mb-2 text-[11px] font-medium text-muted">登録済みの長さ</div>
+                  <div className="flex flex-wrap gap-2">
+                    {quickMarkPickModal.numbered.map((u) => {
+                      const uc = normalizeSegmentColor(u.color)
+                      const stroke = getSegmentStrokeHex(uc, false)
+                      const tint = getSegmentStrokeHex(uc, true)
+                      return (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => {
+                            if (!quickMarkPickModal) return
+                            const ctx = quickMarkPickModal
+                            setQuickMarkPickModal(null)
+                            setQuickMarkArbitraryMm('')
+                            setQuickMarkNewMm('')
+                            setQuickMarkNewMark('')
+                            void submitQuickMarkPickUnit(u, ctx)
+                          }}
+                          className="flex min-w-[7.5rem] flex-col items-start rounded-lg border-2 px-3 py-2 text-left text-sm font-semibold transition hover:shadow-sm"
+                          style={{ borderColor: stroke, color: tint }}
+                        >
+                          <span className="font-mono leading-tight">
+                            {typeof u.mark_number === 'number' ? `${u.mark_number}番 ` : ''}
+                            {u.code ?? u.name}
+                          </span>
+                          <span
+                            className="mt-0.5 text-[11px] font-normal leading-tight opacity-90"
+                            style={{ color: stroke }}
+                          >
+                            {formatUnitLengthMmJa(u)}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
+              ) : (
+                <p className="text-xs text-muted">
+                  まだ長さが登録されていません。下のフォームで最初の長さを追加してください。
+                </p>
+              )}
+
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 p-3 space-y-3">
+                <div className="text-xs font-semibold text-emerald-900">新しい長さを追加</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-emerald-800 mb-1">長さ (mm)</label>
+                    <input
+                      ref={quickMarkNewMmInputRef}
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      placeholder="例: 3000"
+                      value={quickMarkNewMm}
+                      onChange={(e) => setQuickMarkNewMm(e.target.value)}
+                      autoFocus={quickMarkPickModal.numbered.length === 0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          if (!quickMarkPickModal) return
+                          const ctx = quickMarkPickModal
+                          void createAndUseNewVariant(ctx, quickMarkNewMm, quickMarkNewMark)
+                        }
+                      }}
+                      className="w-full rounded-md border border-emerald-300 bg-white px-2 py-1.5 text-sm font-mono outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-emerald-800 mb-1">
+                      番号（任意・空欄は円なしで長さ表示）
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      placeholder="空欄で自動"
+                      value={quickMarkNewMark}
+                      onChange={(e) => setQuickMarkNewMark(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          if (!quickMarkPickModal) return
+                          const ctx = quickMarkPickModal
+                          void createAndUseNewVariant(ctx, quickMarkNewMm, quickMarkNewMark)
+                        }
+                      }}
+                      className="w-full rounded-md border border-emerald-300 bg-white px-2 py-1.5 text-sm font-mono outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!quickMarkPickModal) return
+                    const ctx = quickMarkPickModal
+                    void createAndUseNewVariant(ctx, quickMarkNewMm, quickMarkNewMark)
+                  }}
+                  disabled={!quickMarkNewMm}
+                  className="w-full rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  この長さを保存して使用
+                </button>
               </div>
             </div>
             <div className="flex justify-end border-t border-border px-6 py-3">
@@ -2240,6 +2515,8 @@ export function DrawingViewer({
                 onClick={() => {
                   setQuickMarkPickModal(null)
                   setQuickMarkArbitraryMm('')
+                  setQuickMarkNewMm('')
+                  setQuickMarkNewMark('')
                 }}
                 className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:bg-gray-50"
               >
@@ -2463,87 +2740,6 @@ export function DrawingViewer({
               >
                 追加
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showAutoPlacement && (
-        <AutoPlacementPanel
-          segments={segments}
-          units={effectiveUnits}
-          onApply={async (assignments) => {
-            for (const a of assignments) {
-              const seg = segments.find((s) => s.id === a.segmentId)
-              if (!seg) continue
-              const { meta } = decodeSegmentMeta(seg.memo)
-              const updated: Partial<DrawingSegment> = {
-                unit_id: a.unitId,
-                unit_code: a.unitCode,
-                unit_name: a.unitName,
-                mark_number: a.markNumber,
-                memo: encodeSegmentMeta({
-                  v: 1,
-                  color: a.color,
-                  bars: meta?.bars ?? [],
-                  note: meta?.note ?? null,
-                }),
-              }
-              await updateSegment(a.segmentId, updated)
-            }
-            setShowAutoPlacement(false)
-          }}
-          onClose={() => setShowAutoPlacement(false)}
-        />
-      )}
-
-      {showOcrPanel && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-2xl rounded-xl bg-white shadow-xl">
-            <div className="px-6 pt-5 pb-3 border-b border-border flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-semibold">OCR解析結果</h3>
-                <p className="text-xs text-muted">{ocrTokens.length} トークンを検出</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowOcrPanel(false)}
-                className="text-xs text-muted underline"
-              >
-                閉じる
-              </button>
-            </div>
-            <div className="p-4 max-h-[70vh] overflow-y-auto space-y-2">
-              {ocrTokens.length === 0 ? (
-                <p className="text-sm text-muted">テキストが検出されませんでした。</p>
-              ) : (
-                <div className="rounded border border-border overflow-hidden">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b border-border bg-muted/30 text-left">
-                        <th className="px-2 py-1.5 font-medium">text</th>
-                        <th className="px-2 py-1.5 font-medium">kind</th>
-                        <th className="px-2 py-1.5 font-medium">conf</th>
-                        <th className="px-2 py-1.5 font-medium">bbox(x,y,w,h)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {ocrTokens.slice(0, 300).map((t, idx) => (
-                        <tr key={`${idx}-${t.normalizedText}`}>
-                          <td className="px-2 py-1 font-mono">{t.text}</td>
-                          <td className="px-2 py-1 font-mono">{t.kind}</td>
-                          <td className="px-2 py-1 font-mono">
-                            {typeof t.confidence === 'number' ? t.confidence.toFixed(2) : '-'}
-                          </td>
-                          <td className="px-2 py-1 font-mono">
-                            {`${Math.round(t.bbox.x)},${Math.round(t.bbox.y)},${Math.round(t.bbox.w)},${Math.round(t.bbox.h)}`}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
             </div>
           </div>
         </div>

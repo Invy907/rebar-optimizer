@@ -14,6 +14,7 @@ import {
   getSegmentStrokeHex,
   normalizeSegmentColor,
   SEGMENT_COLOR_DEFINITIONS,
+  SEGMENT_COLOR_ORDER,
 } from '@/lib/segment-colors'
 import {
   LOCATION_TYPES,
@@ -404,10 +405,35 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     }))
   }, [filteredUnits])
 
+  /** 編集中のバリアント群（同一キーなら色の共有可） */
+  const editingVariantGroupKey = useMemo(
+    () => (editingUnit ? unitVariantGroupKey(editingUnit) : null),
+    [editingUnit],
+  )
+
+  /** 他のユニット群が既に使っている色か（同一 variant 群は除外） */
+  function isSegmentColorTakenByOtherUnit(color: SegmentColor, selfGroupKey: string | null): boolean {
+    const c = normalizeSegmentColor(color)
+    for (const u of units) {
+      if (u.is_active === false) continue
+      if (normalizeSegmentColor(u.color) !== c) continue
+      if (selfGroupKey != null && unitVariantGroupKey(u) === selfGroupKey) continue
+      return true
+    }
+    return false
+  }
+
+  function firstFreeSegmentColor(selfGroupKey: string | null): SegmentColor {
+    for (const id of SEGMENT_COLOR_ORDER) {
+      if (!isSegmentColorTakenByOtherUnit(id, selfGroupKey)) return id
+    }
+    return SEGMENT_COLOR_ORDER[0] ?? 'red'
+  }
+
   // ─── モーダル開閉 ──────────────────────────────────────
   function openCreate() {
     setEditingUnit(null)
-    setDraft({ ...DEFAULT_DRAFT })
+    setDraft({ ...DEFAULT_DRAFT, color: firstFreeSegmentColor(null) })
     setVariantLengths([''])
     setVariantMarkOverrides([''])
     setVariantRowIds([])
@@ -420,7 +446,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
 
   function startFromEmptyCanvas() {
     setEditingUnit(null)
-    setDraft({ ...DEFAULT_DRAFT })
+    setDraft({ ...DEFAULT_DRAFT, color: firstFreeSegmentColor(null) })
     setVariantLengths([''])
     setVariantMarkOverrides([''])
     setVariantRowIds([])
@@ -435,12 +461,16 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     const spec = normalizeDetailSpecForTemplate(t, p.detail_spec)
     const layout = remapRebarLayoutIds(normalizeRebarLayout(p.rebar_layout))
     setEditingUnit(null)
+    const presetColor = normalizeSegmentColor(p.color)
+    const freeColor = isSegmentColorTakenByOtherUnit(presetColor, null)
+      ? firstFreeSegmentColor(null)
+      : presetColor
     setDraft({
       name: preset.name,
       code: '',
       location_type: p.location_type,
       shape_type: p.shape_type,
-      color: normalizeSegmentColor(p.color),
+      color: freeColor,
       mark_number: p.mark_number,
       length_mm: '',
       bars: aggregateBarsFromRebarLayout(layout),
@@ -509,6 +539,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
       name: `${u.name}（複製）`,
       code: '',
       template_id: null,
+      color: firstFreeSegmentColor(null),
     })
     setVariantLengths([d.length_mm || ''])
     setVariantMarkOverrides([''])
@@ -597,12 +628,17 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     const markNum = 1
     const templateType = shapeTypeToDetailTemplate(tpl.shapeType)
     const baseSpec = getDefaultDetailSpec(templateType)
+    const selfKey = editingUnit ? unitVariantGroupKey(editingUnit) : null
+    const tplColor = normalizeSegmentColor(tpl.defaultColor)
+    const resolvedColor = isSegmentColorTakenByOtherUnit(tplColor, selfKey)
+      ? firstFreeSegmentColor(selfKey)
+      : tplColor
     setDraft({
       name: tpl.name,
-      code: generateUnitCode(tpl.defaultColor, markNum),
+      code: generateUnitCode(resolvedColor, markNum),
       location_type: tpl.locationType,
       shape_type: tpl.shapeType,
-      color: tpl.defaultColor,
+      color: resolvedColor,
       mark_number: String(markNum),
       length_mm: '',
       bars: tpl.defaultBars.map((b) => ({ ...b })),
@@ -734,6 +770,11 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
       alert('ユニット名を入力してください。')
       return
     }
+    const selfKey = editingUnit ? unitVariantGroupKey(editingUnit) : null
+    if (isSegmentColorTakenByOtherUnit(normalizeSegmentColor(draft.color), selfKey)) {
+      alert('この色は既に別のユニットで使用されています。別の色を選んでください。')
+      return
+    }
     const sourceLengths = variantLengths.length > 0 ? variantLengths : [draft.length_mm]
     const rowsForSave = sourceLengths
       .map((rawLen, i) => {
@@ -746,10 +787,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
         }
       })
       .filter((x): x is { mm: number; markRaw: string; rowId: string } => x != null)
-    if (rowsForSave.length === 0) {
-      alert('長さ(mm)を1つ以上入力してください。')
-      return
-    }
+    const saveWithNullLength = rowsForSave.length === 0
     setSaving(true)
     const detailTemplate = shapeTypeToDetailTemplate(draft.shape_type)
     const detailSpec = normalizeDetailSpecForTemplate(
@@ -796,7 +834,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                 ...basePayload,
                 code: generateUnitCode(normalizeSegmentColor(draft.color), editMark),
                 mark_number: editMark,
-                length_mm: rowsForSave[0]!.mm,
+                length_mm: saveWithNullLength ? null : rowsForSave[0]!.mm,
                 updated_at: new Date().toISOString(),
               } as Unit)
             : u,
@@ -804,6 +842,37 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
       )
     } else if (editingUnit) {
       const updatedRows: Unit[] = []
+      if (saveWithNullLength) {
+        // 長さなしで保存 — 既存の先頭 ID を更新（なければ update のみ）
+        const existingId = variantRowIds[0] || null
+        const v = computeVariantForLength('')
+        const mark = effectiveMark(v.mark, variantMarkOverrides[0])
+        const payload = {
+          ...basePayload,
+          code: generateUnitCode(normalizeSegmentColor(draft.color), mark),
+          mark_number: mark,
+          length_mm: null,
+        }
+        if (existingId) {
+          const { data, error } = await supabase
+            .from('units')
+            .update(payload)
+            .eq('id', existingId)
+            .select()
+            .single()
+          if (error) { alert('保存に失敗しました: ' + error.message); setSaving(false); return }
+          if (data) updatedRows.push(data as Unit)
+          // 残りの stale IDs を削除
+          const staleIds = variantRowIds.filter((id) => !!id && id !== existingId)
+          for (const staleId of staleIds) await supabase.from('units').delete().eq('id', staleId)
+        } else {
+          const { data: { user } } = await supabase.auth.getUser()
+          if (!user) { alert('ログインが必要です。'); setSaving(false); return }
+          const { data, error } = await supabase.from('units').insert({ ...payload, user_id: user.id }).select().single()
+          if (error) { alert('保存に失敗しました: ' + error.message); setSaving(false); return }
+          if (data) updatedRows.push(data as Unit)
+        }
+      } else {
       for (let i = 0; i < rowsForSave.length; i += 1) {
         const mm = rowsForSave[i]!.mm
         const existingId = rowsForSave[i]!.rowId || null
@@ -876,6 +945,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
       for (const staleId of staleIds) {
         await supabase.from('units').delete().eq('id', staleId)
       }
+      }
       setUnits((prev) => {
         const removed = prev.filter((u) => !variantRowIds.includes(u.id))
         return [...removed, ...updatedRows]
@@ -890,6 +960,38 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
         return
       }
       const createdRows: Unit[] = []
+      if (saveWithNullLength) {
+        // 長さなしで 1 行だけ作成
+        const v = computeVariantForLength('')
+        const mark = effectiveMark(v.mark, variantMarkOverrides[0])
+        const payload = {
+          ...basePayload,
+          code: generateUnitCode(normalizeSegmentColor(draft.color), mark),
+          mark_number: mark,
+          length_mm: null,
+        }
+        let { data, error } = await supabase
+          .from('units')
+          .insert({ ...payload, user_id: user.id })
+          .select()
+          .single()
+        if (error && /(detail_(spec|geometry)|rebar_layout)/i.test(error.message)) {
+          const { detail_spec: _ds, detail_geometry: _dg, rebar_layout: _rl, ...fallbackPayload } = payload
+          const retry = await supabase
+            .from('units')
+            .insert({ ...fallbackPayload, user_id: user.id })
+            .select()
+            .single()
+          data = retry.data
+          error = retry.error
+        }
+        if (error) {
+          alert('保存に失敗しました: ' + error.message)
+          setSaving(false)
+          return
+        }
+        if (data) createdRows.push(data as Unit)
+      } else {
       for (let i = 0; i < rowsForSave.length; i += 1) {
         const mm = rowsForSave[i]!.mm
         const v = computeVariantForLength(String(mm))
@@ -921,6 +1023,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
           return
         }
         if (data) createdRows.push(data as Unit)
+      }
       }
       setUnits((prev) => [...prev, ...createdRows])
     }
@@ -1180,102 +1283,6 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                 />
               </div>
 
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-[11px] font-medium text-muted">
-                    長さ(mm) / 番号 / コード
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nextMark =
-                        (variantLengths.length > 0
-                          ? Math.max(
-                              ...variantLengths.map((rowLen, i) =>
-                                effectiveMark(
-                                  computeVariantForLength(rowLen).mark,
-                                  variantMarkOverrides[i],
-                                ),
-                              ),
-                            )
-                          : 0) + 1
-                      setVariantLengths((prev) => [...prev, ''])
-                      setVariantMarkOverrides((prev) => [...prev, String(nextMark)])
-                      setVariantRowIds((prev) => [...prev, ''])
-                    }}
-                    className="rounded border border-border px-2 py-0.5 text-[11px] text-primary hover:bg-muted/20"
-                  >
-                    + 長さを追加
-                  </button>
-                </div>
-                <div className="space-y-1.5">
-                  {variantLengths.map((len, idx) => {
-                    const v = computeVariantForLength(len)
-                    const mark = effectiveMark(v.mark, variantMarkOverrides[idx])
-                    const code = generateUnitCode(normalizeSegmentColor(draft.color), mark)
-                    return (
-                      <div key={idx} className="grid grid-cols-[1fr_auto_auto_auto] gap-2">
-                        <input
-                          type="number"
-                          min={1}
-                          value={len}
-                          onChange={(e) => {
-                            const next = e.target.value
-                            setVariantLengths((prev) => {
-                              const copied = [...prev]
-                              copied[idx] = next
-                              return copied
-                            })
-                            if (idx === 0) setDraft((p) => ({ ...p, length_mm: next }))
-                          }}
-                          className="w-full rounded-md border border-border px-2 py-1.5 text-sm outline-none focus:border-primary"
-                          placeholder="例: 4095"
-                        />
-                        <input
-                          type="number"
-                          min={1}
-                          value={variantMarkOverrides[idx] ?? ''}
-                          onChange={(e) =>
-                            setVariantMarkOverrides((prev) => {
-                              const copied = [...prev]
-                              copied[idx] = e.target.value
-                              return copied
-                            })
-                          }
-                          placeholder={String(v.mark)}
-                          className="rounded-md border border-border bg-muted/20 px-2 py-1.5 text-sm font-mono min-w-[56px] text-center outline-none focus:border-primary"
-                        />
-                        <div className="rounded-md border border-border bg-muted/20 px-2 py-1.5 text-sm font-mono min-w-[92px]">
-                          {code}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setVariantLengths((prev) => {
-                              if (prev.length <= 1) return prev
-                              const copied = prev.filter((_, i) => i !== idx)
-                              setDraft((p) => ({ ...p, length_mm: copied[0] ?? '' }))
-                              return copied
-                            })
-                            setVariantMarkOverrides((prev) =>
-                              prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx),
-                            )
-                            setVariantRowIds((prev) =>
-                              prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx),
-                            )
-                          }}
-                          className="rounded border border-border px-2 py-1.5 text-xs text-muted hover:text-danger"
-                          disabled={variantLengths.length <= 1}
-                          title="この長さ行を削除"
-                        >
-                          削除
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-muted">位置分類</label>
                 <div className="flex flex-wrap gap-1">
@@ -1298,17 +1305,26 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
 
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-muted">表示色</label>
+                <p className="mb-1 text-[9px] leading-snug text-muted/80">
+                  他のユニットで使用中の色は選べません（同一ユニットの長さ違いバリアントは除く）。
+                </p>
                 <div className="grid grid-cols-5 gap-1 sm:grid-cols-6">
                   {SEGMENT_COLOR_DEFINITIONS.map((d) => {
                     const active = draft.color === d.id
+                    const taken = isSegmentColorTakenByOtherUnit(d.id, editingVariantGroupKey)
                     return (
                       <button
                         key={d.id}
                         type="button"
-                        onClick={() => setDraft((p) => ({ ...p, color: d.id }))}
+                        disabled={taken}
+                        title={taken ? 'この色は既に別ユニットで使用中です' : undefined}
+                        onClick={() => {
+                          if (taken) return
+                          setDraft((p) => ({ ...p, color: d.id }))
+                        }}
                         className={`rounded-md border px-0.5 py-1.5 text-center text-[10px] font-medium leading-tight ${
                           active ? 'ring-2 ring-primary ring-offset-1' : ''
-                        }`}
+                        } ${taken ? 'cursor-not-allowed opacity-40' : ''}`}
                         style={{
                           borderColor: getSegmentStrokeHex(d.id, false),
                           backgroundColor: active ? d.tint : '#fff',
@@ -1765,8 +1781,8 @@ function DetailShapeEditor({
   const [history, setHistory] = useState<UnitDetailGeometry[]>([])
   const [selection, setSelection] = useState<CanvasSelection | null>(null)
   const [spacingMmDraft, setSpacingMmDraft] = useState<number>(() => spec.pitch)
-  /** 形状編集キャンバス初期ズーム（UI表示は clampedZoom×100%） */
-  const [zoomScale, setZoomScale] = useState(0.5)
+  /** 形状編集キャンバス初期ズーム（UI表示は clampedZoom×100%、既定 100%） */
+  const [zoomScale, setZoomScale] = useState(1)
   const [zoomCenter, setZoomCenter] = useState<{ x: number; y: number } | null>(null)
   const [drawGesture, setDrawGesture] = useState<{
     start: { x: number; y: number }
@@ -1782,6 +1798,10 @@ function DetailShapeEditor({
   const [dragSpacingLabelId, setDragSpacingLabelId] = useState<string | null>(null)
   const [dragAnnotationId, setDragAnnotationId] = useState<string | null>(null)
   const suppressCanvasGestureRef = useRef(false)
+  /** 휠 버튼(중간 클릭) 드래그로 viewBox 팬 */
+  const canvasMiddlePanRef = useRef(false)
+  const canvasMiddlePanLastRef = useRef({ x: 0, y: 0 })
+  const [canvasMiddlePanning, setCanvasMiddlePanning] = useState(false)
 
   function clearCanvasSelections() {
     setSelection(null)
@@ -1916,8 +1936,19 @@ function DetailShapeEditor({
 
   const viewBounds = useMemo(() => {
     if (startMode !== 'free') return sketch.geometry.bounds
-    if (displayGeometry.points.length > 0) return calcBounds(displayGeometry.points)
-    return displayGeometry.bounds ?? sketch.geometry.bounds
+    // 描画キャンバスの視野は、テンプレート基準 bounds を下限(floor)としつつ、
+    // ユーザーが描いた点を包含するように外側にだけ広げる。
+    // これにより点を1本描いた瞬間に viewBox が急にタイトになって
+    // 「引いた線が画面中央で巨大に拡大される」現象を防ぐ。
+    const baseB = displayGeometry.bounds ?? sketch.geometry.bounds
+    if (displayGeometry.points.length === 0) return baseB
+    const b = calcBounds(displayGeometry.points)
+    return {
+      minX: Math.min(b.minX, baseB.minX),
+      minY: Math.min(b.minY, baseB.minY),
+      maxX: Math.max(b.maxX, baseB.maxX),
+      maxY: Math.max(b.maxY, baseB.maxY),
+    }
   }, [startMode, displayGeometry.points, displayGeometry.bounds, sketch.geometry.bounds])
   const { minX, minY, maxX, maxY } = viewBounds
   const baseVbW = Math.max(160, maxX - minX + vbPad * 2)
@@ -1929,10 +1960,12 @@ function DetailShapeEditor({
   const viewH = baseVbH / clampedZoom
   // Keep rebar markers readable across very large/small coordinate ranges.
   const viewRef = Math.min(viewW, viewH)
-  const rebarBodyR = Math.max(7, Math.min(16, viewRef * 0.018))
+  const rebarBodyR0 = Math.max(7, Math.min(16, viewRef * 0.018))
+  const rebarBodyR = rebarBodyR0 * 1.5
   const rebarSelectR = rebarBodyR + 4
   const rebarHitR = rebarBodyR + 4
-  const rebarLabelFont = Math.max(10, Math.min(16, rebarBodyR * 1.15))
+  const rebarLabelFont0 = Math.max(10, Math.min(16, rebarBodyR0 * 1.15))
+  const rebarLabelFont = rebarLabelFont0 * 2
   const rebarLabelPadX = Math.max(8, Math.round(rebarBodyR + 1))
   const rebarLabelYOffset = Math.max(8, Math.round(rebarBodyR + 1))
   const rebarLabelBoxH = Math.max(12, Math.round(rebarLabelFont + 4))
@@ -2390,12 +2423,27 @@ function DetailShapeEditor({
         viewBox={`${vbX} ${vbY} ${viewW} ${viewH}`}
         className={`w-full rounded-md border border-border bg-slate-50 ${
           expanded ? 'min-h-[min(52vh,36rem)] h-[min(52vh,36rem)]' : 'h-52'
-        }`}
+        } ${canvasMiddlePanning ? 'cursor-grabbing' : ''}`}
         onPointerDownCapture={(e) => {
+          if (e.button === 1) {
+            e.preventDefault()
+            e.stopPropagation()
+            suppressCanvasGestureRef.current = false
+            canvasMiddlePanRef.current = true
+            canvasMiddlePanLastRef.current = { x: e.clientX, y: e.clientY }
+            setCanvasMiddlePanning(true)
+            try {
+              ;(e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId)
+            } catch {
+              /* ignore */
+            }
+            return
+          }
           const target = e.target as Element | null
           suppressCanvasGestureRef.current = !!target?.closest('[data-canvas-hit="item"]')
         }}
         onPointerDown={(e) => {
+          if (e.button !== 0) return
           if (suppressCanvasGestureRef.current) return
 
           const target = e.target as Element | null
@@ -2419,6 +2467,24 @@ function DetailShapeEditor({
           setSpacingDrawGesture({ start: p, current: p, shiftLock: e.shiftKey })
         }}
         onPointerMove={(e) => {
+          if (canvasMiddlePanRef.current) {
+            const svg = e.currentTarget as SVGSVGElement
+            const rect = svg.getBoundingClientRect()
+            if (rect.width > 0 && rect.height > 0) {
+              const lx = canvasMiddlePanLastRef.current.x
+              const ly = canvasMiddlePanLastRef.current.y
+              const dcx = (-(e.clientX - lx) / rect.width) * viewW
+              const dcy = (-(e.clientY - ly) / rect.height) * viewH
+              canvasMiddlePanLastRef.current = { x: e.clientX, y: e.clientY }
+              setZoomCenter((prev) => {
+                const cx = prev?.x ?? baseVbX + baseVbW / 2
+                const cy = prev?.y ?? baseVbY + baseVbH / 2
+                return { x: cx + dcx, y: cy + dcy }
+              })
+            }
+            return
+          }
+
           const p = screenToSvgFrom(e.clientX, e.clientY, e.currentTarget)
 
           if (draggingKey) {
@@ -2451,7 +2517,19 @@ function DetailShapeEditor({
             )
           }
         }}
-        onPointerUp={() => {
+        onPointerUp={(e) => {
+          if (canvasMiddlePanRef.current && e.button === 1) {
+            canvasMiddlePanRef.current = false
+            setCanvasMiddlePanning(false)
+            try {
+              ;(e.currentTarget as SVGSVGElement).releasePointerCapture(e.pointerId)
+            } catch {
+              /* ignore */
+            }
+            suppressCanvasGestureRef.current = false
+            return
+          }
+
           if (suppressCanvasGestureRef.current) {
             suppressCanvasGestureRef.current = false
             setDraggingKey(null)
@@ -2489,7 +2567,22 @@ function DetailShapeEditor({
 
           suppressCanvasGestureRef.current = false
         }}
+        onPointerCancel={(e) => {
+          if (canvasMiddlePanRef.current) {
+            canvasMiddlePanRef.current = false
+            setCanvasMiddlePanning(false)
+            try {
+              ;(e.currentTarget as SVGSVGElement).releasePointerCapture(e.pointerId)
+            } catch {
+              /* ignore */
+            }
+          }
+        }}
+        onAuxClick={(e) => {
+          if (e.button === 1) e.preventDefault()
+        }}
         onPointerLeave={() => {
+          if (canvasMiddlePanRef.current) return
           suppressCanvasGestureRef.current = false
           setDraggingKey(null)
           setDragSpacingLabelId(null)
@@ -2755,7 +2848,7 @@ function DetailShapeEditor({
                 typeof sp.label_x === 'number' &&
                 typeof sp.label_y === 'number' &&
                 (() => {
-                  const spacingLabelFont = 23
+                  const spacingLabelFont = 35
                   const hitW = Math.max(46, txt.length * (spacingLabelFont * 0.62) + 18)
                   const hitH = 44
 
