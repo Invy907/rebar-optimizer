@@ -3841,13 +3841,24 @@ export function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?
         const ny = dx / len
         return (
           <g key={`${seg.from}-${seg.to}-${i}`}>
-            {seg.doubleLine === true || lineStyle.isDouble ? (
+            {seg.doubleLine === true ? (
               (() => {
                 const baseW = large ? lineStyle.strokeWidth : Math.max(1.5, lineStyle.strokeWidth - 0.5)
-                const w = Math.max(1.1, baseW * 0.58)
-                const off = Math.max(2.0, baseW * 0.9)
+                const w = large ? Math.max(1.2, baseW * 0.58) : Math.max(1.6, baseW * 0.72)
+                const off = large ? Math.max(2.0, baseW * 0.9) : Math.max(3.2, baseW * 1.9)
                 return (
                   <>
+                    {!large && (
+                      <line
+                        x1={p1.x}
+                        y1={p1.y}
+                        x2={p2.x}
+                        y2={p2.y}
+                        stroke="#ffffff"
+                        strokeWidth={Math.max(1.2, off * 0.72)}
+                        strokeLinecap="round"
+                      />
+                    )}
                     <line
                       x1={p1.x + nx * off}
                       y1={p1.y + ny * off}
@@ -4050,6 +4061,7 @@ function PresetShapeThumbnail({ payload }: { payload: UserUnitPresetPayload }) {
   // viewBox 全体が縮小されるため、形状座標系でやや太めに描くとサムネで視認しやすい
   const strokeMain = Math.max(5, span * 0.035)
   const strokeHalo = strokeMain * 1.55
+  const presetHasDoubleLine = previewGeometry.segments.some((s) => s.doubleLine === true)
 
   return (
     <svg
@@ -4062,26 +4074,62 @@ function PresetShapeThumbnail({ payload }: { payload: UserUnitPresetPayload }) {
         const p1 = byKey[seg.from]
         const p2 = byKey[seg.to]
         if (!p1 || !p2) return null
+        const dx = p2.x - p1.x
+        const dy = p2.y - p1.y
+        const len = Math.hypot(dx, dy) || 1
+        const nx = -dy / len
+        const ny = dx / len
         return (
           <g key={`${seg.from}-${seg.to}-${i}`}>
-            <line
-              x1={p1.x}
-              y1={p1.y}
-              x2={p2.x}
-              y2={p2.y}
-              stroke="#e2e8f0"
-              strokeWidth={strokeHalo}
-              strokeLinecap="round"
-            />
-            <line
-              x1={p1.x}
-              y1={p1.y}
-              x2={p2.x}
-              y2={p2.y}
-              stroke="#020617"
-              strokeWidth={strokeMain}
-              strokeLinecap="round"
-            />
+            {(seg.doubleLine === true || presetHasDoubleLine) ? (
+              (() => {
+                const w = Math.max(2.2, strokeMain * 0.46)
+                const off = Math.max(1.8, strokeMain * 0.9)
+                return (
+                  <>
+                    <line
+                      x1={p1.x + nx * off}
+                      y1={p1.y + ny * off}
+                      x2={p2.x + nx * off}
+                      y2={p2.y + ny * off}
+                      stroke="#020617"
+                      strokeWidth={w}
+                      strokeLinecap="round"
+                    />
+                    <line
+                      x1={p1.x - nx * off}
+                      y1={p1.y - ny * off}
+                      x2={p2.x - nx * off}
+                      y2={p2.y - ny * off}
+                      stroke="#020617"
+                      strokeWidth={w}
+                      strokeLinecap="round"
+                    />
+                  </>
+                )
+              })()
+            ) : (
+              <>
+                <line
+                  x1={p1.x}
+                  y1={p1.y}
+                  x2={p2.x}
+                  y2={p2.y}
+                  stroke="#e2e8f0"
+                  strokeWidth={strokeHalo}
+                  strokeLinecap="round"
+                />
+                <line
+                  x1={p1.x}
+                  y1={p1.y}
+                  x2={p2.x}
+                  y2={p2.y}
+                  stroke="#020617"
+                  strokeWidth={strokeMain}
+                  strokeLinecap="round"
+                />
+              </>
+            )}
           </g>
         )
       })}
