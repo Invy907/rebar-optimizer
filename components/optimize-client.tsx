@@ -19,6 +19,10 @@ import {
   compareSegmentColorOrder,
   getSegmentStrokeHex,
 } from '@/lib/segment-colors'
+import {
+  buildUnitCalculationRows,
+  type UnitCountRoundingMode,
+} from '@/lib/unit-calculations'
 
 export function OptimizeClient({
   projectId,
@@ -44,6 +48,11 @@ export function OptimizeClient({
   const [pieceLengthAdjustmentMm, setPieceLengthAdjustmentMm] = useState(-30)
   const [result, setResult] = useState<OptimizationOutput | null>(null)
   const [barSummaryTable, setBarSummaryTable] = useState<BarSummaryRow[] | null>(null)
+  // 取引先ルール確認前: 例（18.2->18, 13.65->14）と同じ挙動になるよう round 固定
+  const [unitCountRoundingMode] = useState<UnitCountRoundingMode>('round')
+  const [customerCompany, setCustomerCompany] = useState('')
+  const [customerAddress, setCustomerAddress] = useState('')
+  const [customerName, setCustomerName] = useState('')
   const [focusSegmentId, setFocusSegmentId] = useState<string | null>(
     initialFocusSegmentId ?? null,
   )
@@ -56,6 +65,10 @@ export function OptimizeClient({
   const circleInputSummaryGroups = useMemo(
     () => buildCircleInputSummaryGroups(segments, units),
     [segments, units],
+  )
+  const unitCalculationRows = useMemo(
+    () => buildUnitCalculationRows(segments, units, unitCountRoundingMode),
+    [segments, unitCountRoundingMode, units],
   )
 
   function handleCalculate() {
@@ -255,6 +268,7 @@ export function OptimizeClient({
               </span>
             </div>
           </div>
+          {/* ピッチ計算の端数処理は一旦 round 固定 */}
           <button
             onClick={handleCalculate}
             disabled={segments.length === 0 || calculating}
@@ -286,6 +300,35 @@ export function OptimizeClient({
       {/* 結果 */}
       {result && !calculating && (
         <section className="space-y-4">
+          <div className="rounded-lg border border-border bg-white p-5">
+            <h2 className="text-base font-semibold mb-3">顧客情報</h2>
+            <div className="grid gap-3 md:grid-cols-3">
+              <label className="text-sm text-muted">
+                会社名
+                <input
+                  value={customerCompany}
+                  onChange={(e) => setCustomerCompany(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+              </label>
+              <label className="text-sm text-muted">
+                住所
+                <input
+                  value={customerAddress}
+                  onChange={(e) => setCustomerAddress(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+              </label>
+              <label className="text-sm text-muted">
+                顧客名
+                <input
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+              </label>
+            </div>
+          </div>
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">計算結果</h2>
             <button
@@ -310,6 +353,13 @@ export function OptimizeClient({
             segmentLabelById={segmentLabelById}
             segmentDrawingIdById={segmentDrawingIdById}
             focusSegmentId={focusSegmentId ?? undefined}
+            unitCalculationRows={unitCalculationRows}
+            roundingMode={unitCountRoundingMode}
+            customerInfo={{
+              company: customerCompany,
+              address: customerAddress,
+              name: customerName,
+            }}
           />
         </section>
       )}

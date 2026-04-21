@@ -14,6 +14,7 @@ export type UserUnitPresetPayload = {
   mark_number: string
   bars: UnitBar[]
   spacing_mm: string
+  pitch_mm: string
   description: string
   detail_spec: UnitDetailSpec
   detail_geometry: UnitDetailGeometry | null
@@ -192,6 +193,28 @@ export async function deleteUserPresetFromDb(supabase: SupabaseClient, id: strin
     return false
   }
   return true
+}
+
+export async function updateUserPresetInDb(
+  supabase: SupabaseClient,
+  input: { id: string; name: string; payload: UserUnitPresetPayload },
+): Promise<UserUnitPreset | null> {
+  const { data, error } = await supabase
+    .from('user_unit_presets')
+    .update({ name: input.name, payload: input.payload })
+    .eq('id', input.id)
+    .select('id, name, payload, created_at')
+    .single()
+  if (error || !data) {
+    console.error('updateUserPresetInDb', describeSupabaseError(error))
+    return null
+  }
+  return rowToPreset({
+    id: data.id,
+    name: data.name,
+    payload: data.payload,
+    created_at: data.created_at,
+  })
 }
 
 /** プリセット適用時に rebar の id 衝突を避ける */

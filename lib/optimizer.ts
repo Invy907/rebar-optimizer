@@ -1,8 +1,8 @@
 /**
- * First Fit Decreasing (FFD) / Best Fit Decreasing (BFD) 철근 절단 최적화
+ * First Fit Decreasing (FFD) / Best Fit Decreasing (BFD) 鉄筋切断最適化
  *
- * 철근 종류별로 분리 처리하며, 같은 종류만 하나의 6m 봉에 배치한다.
- * 절단 손실(컷당 mm) 옵션 지원.
+ * 鉄筋種類ごとに分離して処理し、同じ種類のみを1本の6m棒に配置する。
+ * 切断損失（カットごとの mm）オプションをサポート。
  */
 
 export type AlgorithmType = 'first-fit' | 'best-fit'
@@ -14,9 +14,9 @@ export interface PieceInput {
 }
 
 export interface OptimizationOptions {
-  /** 'first-fit': 처음 들어가는 봉에 넣음. 'best-fit': 남는 길이가 가장 적은 봉에 넣음 */
+  /** 'first-fit': 最初に入る棒に配置。'best-fit': 残長が最小になる棒に配置 */
   algorithm?: AlgorithmType
-  /** 컷당 절단 손실 (mm). 조각 사이 톱날/절단으로 인한 손실 */
+  /** カットごとの切断損失 (mm)。ピース間の刃厚/切断による損失 */
   cuttingLossMm?: number
 }
 
@@ -44,7 +44,7 @@ export interface OptimizationOutput {
   >
 }
 
-/** 한 봉에서 사용 길이(조각 합 + 절단 손실) 계산 */
+/** 1本での使用長さ（ピース合計 + 切断損失）を計算 */
 function usedWithCutLoss(
   pieces: { lengthMm: number }[],
   cuttingLossMm: number,

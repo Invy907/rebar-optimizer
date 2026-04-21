@@ -1,11 +1,5 @@
--- 旧 MOCK_UNITS と同等のデフォルトユニットを DB に投入するシード
---
--- 前提:
---   1. 少なくとも 1 人がアプリにサインアップ済み（auth.users に行があること）
---   2. Supabase SQL Editor で実行（または psql）
---
--- 既に同じ code の行がある場合はスキップしたい場合は、実行前に units を空にするか
--- 下記の INSERT を code で ON CONFLICT するようテーブル定義を調整してください。
+-- Seed sample units into public.units.
+-- Run this only after the units table and optional pitch/detail columns exist.
 
 INSERT INTO public.units (
   user_id,
@@ -17,6 +11,7 @@ INSERT INTO public.units (
   mark_number,
   bars,
   spacing_mm,
+  pitch_mm,
   description,
   is_active,
   template_id
@@ -24,7 +19,7 @@ INSERT INTO public.units (
 VALUES
 (
   (SELECT id FROM auth.users ORDER BY created_at ASC LIMIT 1),
-  '外周部ストレート',
+  'Outer straight',
   'red-1',
   '外周部',
   'straight',
@@ -32,13 +27,14 @@ VALUES
   1,
   '[{"diameter":"D13","qtyPerUnit":4},{"diameter":"D10","qtyPerUnit":1}]'::jsonb,
   200,
+  200,
   NULL,
   TRUE,
   'outer_straight'
 ),
 (
   (SELECT id FROM auth.users ORDER BY created_at ASC LIMIT 1),
-  '内部ストレート',
+  'Inner straight',
   'blue-1',
   '内部',
   'straight',
@@ -46,13 +42,14 @@ VALUES
   1,
   '[{"diameter":"D13","qtyPerUnit":2},{"diameter":"D10","qtyPerUnit":1}]'::jsonb,
   200,
+  200,
   NULL,
   TRUE,
   'inner_straight'
 ),
 (
   (SELECT id FROM auth.users ORDER BY created_at ASC LIMIT 1),
-  '外周部出隅コーナー',
+  'Outer corner out',
   'red-2',
   '外周部',
   'corner_out',
@@ -61,12 +58,13 @@ VALUES
   '[{"diameter":"D13","qtyPerUnit":3},{"diameter":"D10","qtyPerUnit":1}]'::jsonb,
   NULL,
   NULL,
+  NULL,
   TRUE,
   'outer_corner_out'
 ),
 (
   (SELECT id FROM auth.users ORDER BY created_at ASC LIMIT 1),
-  '内部T字',
+  'Inner T',
   'blue-4',
   '内部',
   'corner_T',
@@ -75,12 +73,13 @@ VALUES
   '[{"diameter":"D13","qtyPerUnit":2},{"diameter":"D10","qtyPerUnit":1}]'::jsonb,
   NULL,
   NULL,
+  NULL,
   TRUE,
   'inner_T'
 ),
 (
   (SELECT id FROM auth.users ORDER BY created_at ASC LIMIT 1),
-  'ベース部分ユニット筋',
+  'Base straight',
   'emerald-1',
   'ベース',
   'straight',
@@ -88,13 +87,14 @@ VALUES
   1,
   '[{"diameter":"D13","qtyPerUnit":3},{"diameter":"D10","qtyPerUnit":2}]'::jsonb,
   150,
+  150,
   NULL,
   TRUE,
   'base_standard'
 ),
 (
   (SELECT id FROM auth.users ORDER BY created_at ASC LIMIT 1),
-  '開口補強',
+  'Opening reinforce',
   'violet-1',
   'その他',
   'opening',
@@ -102,7 +102,8 @@ VALUES
   1,
   '[{"diameter":"D13","qtyPerUnit":2}]'::jsonb,
   NULL,
-  '非活性（参考用）',
+  NULL,
+  'Opening reinforcement sample',
   FALSE,
   'opening_reinforce'
 );

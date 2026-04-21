@@ -18,7 +18,7 @@ export async function createClient() {
               cookieStore.set(name, value, options),
             )
           } catch {
-            // Server Component에서는 set 불가 — 무시
+            // Server Component では set 不可 — 無視
           }
         },
       },

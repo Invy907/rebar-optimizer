@@ -128,6 +128,7 @@ export interface Unit {
   mark_number: number | null
   bars: UnitBar[]
   spacing_mm: number | null
+  pitch_mm?: number | null
   description: string | null
   is_active: boolean
   template_id: string | null
@@ -141,6 +142,16 @@ export interface Unit {
   length_mm?: number | null
   /** Optional notes for template-level data */
   notes?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface LengthPresetGroupRow {
+  id: string
+  user_id: string
+  name: string
+  description: string | null
+  lengths: number[]
   created_at: string
   updated_at: string
 }

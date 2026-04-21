@@ -54,6 +54,7 @@ export interface UnitDefinition {
   markNumber: number        // 1, 2, 3...  図面の円番号
   bars: UnitBar[]
   spacingMm?: number | null
+  pitchMm?: number | null
   notes?: string | null
   isActive: boolean
   templateId?: string | null
@@ -72,6 +73,7 @@ export interface UnitTemplate {
   defaultColor: SegmentColor
   defaultBars: UnitBar[]
   defaultSpacingMm?: number
+  defaultPitchMm?: number
   description: string
 }
 

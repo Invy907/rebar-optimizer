@@ -2333,7 +2333,7 @@ export function DrawingViewer({
             ) : null}
           </div>
           <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 text-[10px]">
-            {/* 最近: UI상 제거（표시 단순화） */}
+            {/* 最近: UI上削除（表示の単純化） */}
           </div>
           <button
             type="button"

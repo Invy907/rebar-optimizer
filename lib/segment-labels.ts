@@ -1,6 +1,6 @@
 /**
- * 세그먼트 목록에서 created_at 기준 정렬 후 라벨 맵 생성.
- * 라벨이 비어 있으면 S01, S02, ... 자동 부여.
+ * セグメント一覧を created_at 基準で並べ替えた後、ラベルマップを生成。
+ * ラベルが空の場合は S01, S02, ... を自動採番。
  */
 
 export interface SegmentForLabel {
@@ -16,7 +16,7 @@ function sortSegmentsByCreatedAt<T extends SegmentForLabel>(segments: T[]): T[] 
 }
 
 /**
- * segment id → 표시 라벨 (문자열만 필요할 때)
+ * segment id → 表示ラベル（文字列のみ必要な場合）
  */
 export function getSegmentLabelMap(
   segments: SegmentForLabel[],
@@ -37,7 +37,7 @@ export function getSegmentLabelMap(
 }
 
 /**
- * segment id → { label, isAuto } (자동 부여 여부가 필요할 때, 예: 스타일 분기)
+ * segment id → { label, isAuto }（自動付与の有無が必要な場合、例: スタイル分岐）
  */
 export function getSegmentLabelMapWithMeta(
   segments: SegmentForLabel[],

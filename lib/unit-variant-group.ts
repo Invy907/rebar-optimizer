@@ -14,6 +14,7 @@ export function unitVariantGroupKey(u: Unit): string {
     rebar_layout: u.rebar_layout ?? null,
     bars: u.bars ?? [],
     spacing_mm: u.spacing_mm ?? null,
+    pitch_mm: u.pitch_mm ?? null,
     description: u.description ?? null,
   })
 }
