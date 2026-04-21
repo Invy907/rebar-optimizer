@@ -501,13 +501,8 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     const p = preset.payload
     const t = shapeTypeToDetailTemplate(p.shape_type)
     const spec = normalizeDetailSpecForTemplate(t, p.detail_spec)
-    const fallbackName = `形状ユニット ${new Date().toLocaleTimeString('ja-JP', {
-      hour: '2-digit',
-      minute: '2-digit',
-    })}`
     setDraft((prev) => ({
       ...prev,
-      name: prev.name.trim() || fallbackName,
       shape_type: p.shape_type,
       description: p.description ?? prev.description,
       detail_spec: spec,
@@ -838,11 +833,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
           ? inferShapeTypeFromGeometry(detailGeometry)
           : draft.shape_type
 
-      const resolvedPitchMm =
-        parseSpacingMm(draft.pitch_mm) ??
-        (detailSpec?.pitch != null && Number.isFinite(detailSpec.pitch) && detailSpec.pitch > 0
-          ? Math.round(detailSpec.pitch)
-          : null)
+      const resolvedPitchMm = parseSpacingMm(draft.pitch_mm)
 
       const color = normalizeSegmentColor(draft.color)
       const mark = effectiveMark(autoVariant.mark, draft.mark_number)
@@ -1012,6 +1003,14 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     () => draft.rebar_layout.annotations.map((a) => a.text),
     [draft.rebar_layout.annotations],
   )
+  const detailPitchMm = useMemo(() => {
+    const fromDraft = parseSpacingMm(draft.pitch_mm)
+    if (fromDraft != null) return fromDraft
+    const fromSpec = draft.detail_spec?.pitch
+    return typeof fromSpec === 'number' && Number.isFinite(fromSpec) && fromSpec > 0
+      ? Math.round(fromSpec)
+      : null
+  }, [draft.pitch_mm, draft.detail_spec?.pitch])
 
   // ─── レンダリング ────────────────────────────────────
   return (
@@ -1021,7 +1020,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
         <div>
           <h1 className="text-xl font-bold">ユニット管理</h1>
           <p className="text-sm text-muted mt-0.5">
-            配筋ユニット（形状・色・鉄筋構成の組み合わせ）を登録・管理します。
+            断面（形状・色・鉄筋構成の組み合わせ）を登録・管理します。
           </p>
         </div>
         <button
@@ -1072,7 +1071,8 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                   色
                 </th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden lg:table-cell">鉄筋構成</th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden lg:table-cell">間隔</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden lg:table-cell">総寸法</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted hidden lg:table-cell">ピッチ</th>
                 <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted">操作</th>
               </tr>
             </thead>
@@ -1348,7 +1348,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                 <div ref={detailShapeSectionRef} className="space-y-1 pb-1">
                   <div className="space-y-0.5">
                     <p className="text-[11px] font-medium leading-snug text-foreground/90">
-                      まず下のキャンバスで形状を作成し、その後に鉄筋、間隔・注記を追加します。
+                      まず下のキャンバスで形状を作成し、その後に鉄筋、寸法・間隔を追加します。
                     </p>
                   </div>
 
@@ -1392,7 +1392,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                           {detailBarsForSummary.length > 0 ? barsSummary(detailBarsForSummary) : '—'}
                         </div>
                         <div className="mt-4 border-t border-border pt-3">
-                          <div className="text-xs font-semibold text-foreground">注記・間隔（要約）</div>
+                          <div className="text-xs font-semibold text-foreground">寸法・間隔（要約）</div>
                           <p className="mt-1 text-[10px] leading-snug text-muted">
                             キャンバス内にある間隔値を表示します。
                           </p>
@@ -1401,9 +1401,15 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                           )}
                           {detailAnnotationTexts.length > 0 && (
                             <div className="mt-2 text-[11px] text-muted">
-                              注記: {detailAnnotationTexts.join(', ')}
+                              寸法: {detailAnnotationTexts.join(', ')}
                             </div>
                           )}
+                        </div>
+                        <div className="mt-4 border-t border-border pt-3">
+                          <div className="text-xs font-semibold text-foreground">ピッチ</div>
+                          <div className="mt-1 text-sm text-muted">
+                            {detailPitchMm != null ? `@${detailPitchMm}` : '-'}
+                          </div>
                         </div>
                       </div>
                     }
@@ -1794,6 +1800,22 @@ function DetailShapeEditor({
   const [dragAnnotationId, setDragAnnotationId] = useState<string | null>(null)
   const [dragRebarId, setDragRebarId] = useState<string | null>(null)
   const rebarDragRef = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null)
+  const [doubleLineEnabled, setDoubleLineEnabled] = useState(false)
+  const [dragSegmentKey, setDragSegmentKey] = useState<string | null>(null)
+  const [freezeViewBounds, setFreezeViewBounds] = useState(false)
+  const frozenViewBoundsRef = useRef<{ minX: number; minY: number; maxX: number; maxY: number } | null>(null)
+  const segmentDragRef = useRef<{
+    start: { x: number; y: number }
+    baseGeometry: UnitDetailGeometry
+    segIdx: number
+    fromKey: string
+    toKey: string
+  } | null>(null)
+  const pointDragRef = useRef<{
+    key: string
+    start: { x: number; y: number }
+    basePoint: { x: number; y: number }
+  } | null>(null)
   const spacingDragRef = useRef<{ id: string; lastX: number; lastY: number } | null>(null)
   const suppressCanvasGestureRef = useRef(false)
   /** ホイールボタン（中クリック）ドラッグで viewBox をパン */
@@ -1808,6 +1830,21 @@ function DetailShapeEditor({
     setDrawAnchorKey(null)
     setDrawGesture(null)
     setSpacingDrawGesture(null)
+    setDragSpacingId(null)
+    setDragSpacingLabelId(null)
+    setDragAnnotationId(null)
+    setDragRebarId(null)
+    rebarDragRef.current = null
+    spacingDragRef.current = null
+    setDragSegmentKey(null)
+    segmentDragRef.current = null
+    pointDragRef.current = null
+    setFreezeViewBounds(false)
+    frozenViewBoundsRef.current = null
+  }
+
+  function resetNonShapeDrags() {
+    // Ensure stale drag states (rebar/spacing/annotation) never steal pointermove while editing shape.
     setDragSpacingId(null)
     setDragSpacingLabelId(null)
     setDragAnnotationId(null)
@@ -1958,7 +1995,9 @@ function DetailShapeEditor({
       maxY: Math.max(b.maxY, baseB.maxY),
     }
   }, [startMode, displayGeometry.points, displayGeometry.bounds, sketch.geometry.bounds])
-  const { minX, minY, maxX, maxY } = viewBounds
+  const effectiveViewBounds =
+    freezeViewBounds && frozenViewBoundsRef.current ? frozenViewBoundsRef.current : viewBounds
+  const { minX, minY, maxX, maxY } = effectiveViewBounds
   const baseVbW = Math.max(160, maxX - minX + vbPad * 2)
   const baseVbH = Math.max(120, maxY - minY + vbPad * 2)
   const baseVbX = minX - vbPad
@@ -2020,7 +2059,7 @@ function DetailShapeEditor({
   }
 
   function addAnnotationAt(x: number, y: number) {
-    const raw = window.prompt('注記値（mm）を入力してください', String(spacingMmDraft))?.trim()
+    const raw = window.prompt('寸法値（mm）を入力してください', String(spacingMmDraft))?.trim()
     if (raw == null || raw === '') return
     const mm = Number.parseInt(raw, 10)
     if (!Number.isFinite(mm) || mm <= 0) {
@@ -2173,8 +2212,8 @@ function DetailShapeEditor({
 
       const nextSegments =
         displayGeometry.points.length === 0
-          ? [{ from: key0, to: key1 }]
-          : [...displayGeometry.segments, { from: key0, to: key1 }]
+          ? [{ from: key0, to: key1, doubleLine: doubleLineEnabled }]
+          : [...displayGeometry.segments, { from: key0, to: key1, doubleLine: doubleLineEnabled }]
 
       const createdSegmentKey = `${key0}-${key1}-${nextSegments.length - 1}`
 
@@ -2214,7 +2253,7 @@ function DetailShapeEditor({
 
     const key = `p${Math.random().toString(36).slice(2, 8)}`
     const nextPoints = [...points, { key, x: nx, y: ny }]
-    const nextSegments = [...displayGeometry.segments, { from: anchor.key, to: key }]
+    const nextSegments = [...displayGeometry.segments, { from: anchor.key, to: key, doubleLine: doubleLineEnabled }]
     const createdSegmentKey = `${anchor.key}-${key}-${nextSegments.length - 1}`
 
     onGeometryChange({
@@ -2345,14 +2384,14 @@ function DetailShapeEditor({
             <button
               type="button"
               onClick={() => onModeChange('annotation')}
-              title="注記・間隔"
+              title="寸法・間隔"
               className={`px-2.5 py-1 text-[10px] font-medium transition-[color,box-shadow,background] ${
                 mode === 'annotation'
                   ? 'bg-white text-foreground shadow-sm'
                   : 'bg-transparent text-muted/75 hover:bg-white/50 hover:text-foreground'
               }`}
             >
-              注記・間隔
+              寸法・間隔
             </button>
             <button
               type="button"
@@ -2371,7 +2410,7 @@ function DetailShapeEditor({
         {mode === 'annotation' && (
           <>
             <p className="rounded border border-dashed border-border/45 bg-slate-50/70 px-2 py-1 text-[10px] font-medium leading-snug text-foreground/80">
-              ドラッグ: 間隔線を作成 / クリック: 注記を追加 / 数値ラベル: ドラッグで移動
+              ドラッグ: 間隔線を作成 / クリック: 寸法を追加 / 数値ラベル: ドラッグで移動
             </p>
           </>
         )}
@@ -2382,11 +2421,25 @@ function DetailShapeEditor({
         )}
         {mode === 'shape' && startMode === 'free' && (
             <div className="space-y-1.5 rounded border border-border/60 bg-slate-50/50 px-2 py-1.5">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted/90">
-                <span className="font-medium text-foreground/80">基本操作</span>
-                <span>線作成: ドラッグして描画</span>
-                <span>線選択: 線をクリック</span>
-                <span className="text-muted/70">保存: 右下の保存ボタン</span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted/90">
+                  <span className="font-medium text-foreground/80">基本操作</span>
+                  <span>線作成: ドラッグして描画</span>
+                  <span>線選択: 線をクリック</span>
+                  <span className="text-muted/70">保存: 右下の保存ボタン</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDoubleLineEnabled((v) => !v)}
+                  className={`rounded border px-2 py-0.5 text-[10px] font-semibold ${
+                    doubleLineEnabled
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-white text-muted hover:bg-slate-100'
+                  }`}
+                  title="ONの状態で作成した線は二重線として保存されます"
+                >
+                  二重線 {doubleLineEnabled ? 'ON' : 'OFF'}
+                </button>
               </div>
               <details>
                 <summary className="cursor-pointer select-none text-[10px] text-muted underline underline-offset-2">
@@ -2576,6 +2629,37 @@ function DetailShapeEditor({
             return
           }
 
+          if (mode === 'shape' && startMode === 'free' && dragSegmentKey && segmentDragRef.current) {
+            const drag = segmentDragRef.current
+            const dx = p.x - drag.start.x
+            const dy = p.y - drag.start.y
+            const nextPoints = drag.baseGeometry.points.map((pt) => {
+              if (pt.key !== drag.fromKey && pt.key !== drag.toKey) return pt
+              return { ...pt, x: pt.x + dx, y: pt.y + dy }
+            })
+            onGeometryChange({
+              ...drag.baseGeometry,
+              points: nextPoints,
+              bounds: calcBounds(nextPoints),
+            })
+            return
+          }
+
+          if (mode === 'shape' && startMode === 'free' && dragPointKey && pointDragRef.current?.key === dragPointKey) {
+            const drag = pointDragRef.current
+            const dx = p.x - drag.start.x
+            const dy = p.y - drag.start.y
+            const nextPoints = displayGeometry.points.map((pt) =>
+              pt.key === dragPointKey ? { ...pt, x: drag.basePoint.x + dx, y: drag.basePoint.y + dy } : pt,
+            )
+            onGeometryChange({
+              ...displayGeometry,
+              points: nextPoints,
+              bounds: calcBounds(nextPoints),
+            })
+            return
+          }
+
           if (mode === 'shape' && startMode === 'free') {
             if (drawGesture) {
               setDrawGesture((prev) => (prev ? { ...prev, current: p, shiftLock: e.shiftKey } : prev))
@@ -2605,6 +2689,7 @@ function DetailShapeEditor({
           if (suppressCanvasGestureRef.current) {
             suppressCanvasGestureRef.current = false
             setDraggingKey(null)
+            setDragPointKey(null)
             setDrawGesture(null)
             setSpacingDrawGesture(null)
             setDragSpacingId(null)
@@ -2613,16 +2698,27 @@ function DetailShapeEditor({
             setDragRebarId(null)
             rebarDragRef.current = null
             spacingDragRef.current = null
+            setDragSegmentKey(null)
+            segmentDragRef.current = null
+            pointDragRef.current = null
+            setFreezeViewBounds(false)
+            frozenViewBoundsRef.current = null
             return
           }
 
           setDraggingKey(null)
+          setDragPointKey(null)
           setDragSpacingId(null)
           setDragSpacingLabelId(null)
           setDragAnnotationId(null)
           setDragRebarId(null)
           rebarDragRef.current = null
           spacingDragRef.current = null
+          setDragSegmentKey(null)
+          segmentDragRef.current = null
+          pointDragRef.current = null
+          setFreezeViewBounds(false)
+          frozenViewBoundsRef.current = null
 
           if (mode === 'shape' && startMode === 'free' && drawGesture) {
             addPolylineByDrag(
@@ -2657,6 +2753,8 @@ function DetailShapeEditor({
               /* ignore */
             }
           }
+          setFreezeViewBounds(false)
+          frozenViewBoundsRef.current = null
         }}
         onAuxClick={(e) => {
           if (e.button === 1) e.preventDefault()
@@ -2665,12 +2763,18 @@ function DetailShapeEditor({
           if (canvasMiddlePanRef.current) return
           suppressCanvasGestureRef.current = false
           setDraggingKey(null)
+          setDragPointKey(null)
           setDragSpacingId(null)
           setDragSpacingLabelId(null)
           setDragAnnotationId(null)
           setDragRebarId(null)
           rebarDragRef.current = null
           spacingDragRef.current = null
+          setDragSegmentKey(null)
+          segmentDragRef.current = null
+          pointDragRef.current = null
+          setFreezeViewBounds(false)
+          frozenViewBoundsRef.current = null
           if (mode === 'annotation') setSpacingDrawGesture(null)
         }}
       >
@@ -2688,18 +2792,52 @@ function DetailShapeEditor({
           if (!p1 || !p2) return null
           const segPe = mode === 'shape' && startMode === 'free' ? 'auto' : 'none'
           const isSegSelected = selection?.kind === 'segment' && selection.id === `${seg.from}-${seg.to}-${idx}`
+          const stroke = isSegSelected ? '#7c3aed' : '#0f172a'
+          const baseStrokeW = isSegSelected ? 3.4 : 2.0
+          const dx = p2.x - p1.x
+          const dy = p2.y - p1.y
+          const len = Math.hypot(dx, dy) || 1
+          const nx = -dy / len
+          const ny = dx / len
+          const offset = Math.max(2.2, baseStrokeW * 0.95)
+          const doubleStrokeW = Math.max(1.2, baseStrokeW * 0.62)
           return (
             <g key={`seg-${idx}`}>
-              <line
-                x1={p1.x}
-                y1={p1.y}
-                x2={p2.x}
-                y2={p2.y}
-                stroke={isSegSelected ? '#7c3aed' : '#0f172a'}
-                strokeWidth={isSegSelected ? 3.4 : 2.0}
-                strokeLinecap="round"
-                pointerEvents="none"
-              />
+              {seg.doubleLine === true ? (
+                <>
+                  <line
+                    x1={p1.x + nx * offset}
+                    y1={p1.y + ny * offset}
+                    x2={p2.x + nx * offset}
+                    y2={p2.y + ny * offset}
+                    stroke={stroke}
+                    strokeWidth={doubleStrokeW}
+                    strokeLinecap="round"
+                    pointerEvents="none"
+                  />
+                  <line
+                    x1={p1.x - nx * offset}
+                    y1={p1.y - ny * offset}
+                    x2={p2.x - nx * offset}
+                    y2={p2.y - ny * offset}
+                    stroke={stroke}
+                    strokeWidth={doubleStrokeW}
+                    strokeLinecap="round"
+                    pointerEvents="none"
+                  />
+                </>
+              ) : (
+                <line
+                  x1={p1.x}
+                  y1={p1.y}
+                  x2={p2.x}
+                  y2={p2.y}
+                  stroke={stroke}
+                  strokeWidth={baseStrokeW}
+                  strokeLinecap="round"
+                  pointerEvents="none"
+                />
+              )}
               <line
                 data-canvas-hit="item"
                 x1={p1.x}
@@ -2709,14 +2847,93 @@ function DetailShapeEditor({
                 stroke="rgba(0,0,0,0.001)"
                 strokeWidth={segmentHitWidth}
                 strokeLinecap="butt"
-                style={{ pointerEvents: segPe, cursor: segPe === 'auto' ? 'pointer' : 'default' }}
+                style={{
+                  pointerEvents: segPe,
+                  cursor:
+                    segPe === 'auto'
+                      ? dragSegmentKey && isSegSelected
+                        ? 'grabbing'
+                        : 'grab'
+                      : 'default',
+                }}
                 onPointerDownCapture={() => {
                   markObjectPointer()
                 }}
                 onPointerDown={(e) => {
                   if (mode !== 'shape' || startMode !== 'free') return
                   beginObjectPointer(e)
-                  selectSegment(`${seg.from}-${seg.to}-${idx}`)
+                  const pickedKey = `${seg.from}-${seg.to}-${idx}`
+                  selectSegment(pickedKey)
+                  pushHistorySnapshot()
+                  // Moving free-draw points updates bounds; freeze viewBox during drag for a stable feel (like rebar/spacings).
+                  frozenViewBoundsRef.current = viewBounds
+                  setFreezeViewBounds(true)
+
+                  // Detach the segment if its endpoints are shared, so dragging moves only this segment.
+                  const baseSeg = displayGeometry.segments[idx]
+                  if (!baseSeg) return
+                  const countKey = (key: string) =>
+                    displayGeometry.segments.reduce(
+                      (sum, s, sIdx) => (sIdx !== idx && (s.from === key || s.to === key) ? sum + 1 : sum),
+                      0,
+                    )
+                  const makePointKey = () => `p${Math.random().toString(36).slice(2, 8)}`
+                  const clonePointIfShared = (
+                    geometry: UnitDetailGeometry,
+                    pointKey: string,
+                  ): { geometry: UnitDetailGeometry; nextKey: string } => {
+                    if (countKey(pointKey) <= 0) return { geometry, nextKey: pointKey }
+                    const src = geometry.points.find((pt) => pt.key === pointKey)
+                    if (!src) return { geometry, nextKey: pointKey }
+                    const nextKey = makePointKey()
+                    return {
+                      geometry: {
+                        ...geometry,
+                        points: [...geometry.points, { ...src, key: nextKey }],
+                      },
+                      nextKey,
+                    }
+                  }
+
+                  let nextGeometry = displayGeometry
+                  let fromKey = baseSeg.from
+                  let toKey = baseSeg.to
+                  // Clone endpoints when they are shared with other segments.
+                  ;({ geometry: nextGeometry, nextKey: fromKey } = clonePointIfShared(nextGeometry, fromKey))
+                  ;({ geometry: nextGeometry, nextKey: toKey } = clonePointIfShared(nextGeometry, toKey))
+                  if (fromKey !== baseSeg.from || toKey !== baseSeg.to) {
+                    const nextSegments = nextGeometry.segments.map((s, sIdx) =>
+                      sIdx === idx ? { ...s, from: fromKey, to: toKey } : s,
+                    )
+                    nextGeometry = {
+                      ...nextGeometry,
+                      segments: nextSegments,
+                      bounds: calcBounds(nextGeometry.points),
+                    }
+                    onGeometryChange(nextGeometry)
+                    const newKey = `${fromKey}-${toKey}-${idx}`
+                    selectSegment(newKey)
+                    setDragSegmentKey(newKey)
+                  } else {
+                    setDragSegmentKey(pickedKey)
+                  }
+                  const svg =
+                    (e.currentTarget as SVGLineElement).ownerSVGElement ??
+                    ((e.currentTarget as SVGLineElement).closest('svg') as SVGSVGElement | null)
+                  if (!svg) return
+                  const sp = screenToSvgFrom(e.clientX, e.clientY, svg)
+                  segmentDragRef.current = {
+                    start: sp,
+                    baseGeometry: nextGeometry,
+                    segIdx: idx,
+                    fromKey,
+                    toKey,
+                  }
+                  try {
+                    ;(e.currentTarget as SVGLineElement).setPointerCapture(e.pointerId)
+                  } catch {
+                    /* ignore */
+                  }
                 }}
               />
             </g>
@@ -2749,7 +2966,14 @@ function DetailShapeEditor({
                   r={freePointHitR}
                   fill="transparent"
                   pointerEvents={pointPe}
-                  style={{ cursor: pointPe === 'auto' ? 'pointer' : 'default' }}
+                  style={{
+                    cursor:
+                      pointPe === 'auto'
+                        ? dragPointKey === p.key
+                          ? 'grabbing'
+                          : 'grab'
+                        : 'default',
+                  }}
                   onPointerDownCapture={() => {
                     markObjectPointer()
                   }}
@@ -2757,6 +2981,22 @@ function DetailShapeEditor({
                     if (mode !== 'shape' || startMode !== 'free') return
                     beginObjectPointer(e)
                     selectPoint(p.key)
+                    pushHistorySnapshot()
+                    // Moving free-draw points updates bounds; freeze viewBox during drag for a stable feel (like rebar/spacings).
+                    frozenViewBoundsRef.current = viewBounds
+                    setFreezeViewBounds(true)
+                    const svg =
+                      (e.currentTarget as SVGCircleElement).ownerSVGElement ??
+                      ((e.currentTarget as SVGCircleElement).closest('svg') as SVGSVGElement | null)
+                    if (!svg) return
+                    const sp = screenToSvgFrom(e.clientX, e.clientY, svg)
+                    setDragPointKey(p.key)
+                    pointDragRef.current = { key: p.key, start: sp, basePoint: { x: p.x, y: p.y } }
+                    try {
+                      ;(e.currentTarget as SVGCircleElement).setPointerCapture(e.pointerId)
+                    } catch {
+                      /* ignore */
+                    }
                   }}
                 />
               </g>
@@ -3225,7 +3465,7 @@ function DetailShapeEditor({
 
             {mode === 'annotation' && selectedAnnotation && !selectedSpacing && (
               <div className="space-y-2 border-b border-border pb-3">
-                <div className="font-medium text-foreground">フリー注記</div>
+                <div className="font-medium text-foreground">フリー寸法</div>
                 {parseSpacingMm(selectedAnnotation.text) != null ? (
                   <label className="block text-muted">
                     数値（mm）
@@ -3272,7 +3512,7 @@ function DetailShapeEditor({
                   }}
                   className="rounded border border-red-200 px-2 py-1 text-[11px] text-red-700 hover:bg-red-50"
                 >
-                  この注記を削除
+                  この寸法を削除
                 </button>
               </div>
             )}
@@ -3367,12 +3607,26 @@ function DetailShapeEditor({
             {mode === 'shape' && startMode === 'free' && selectedSegmentInfo && !selectedFreePoint && (
               <div className="space-y-2 border-b border-border pb-3">
                 <div className="font-medium text-foreground">形状の線分</div>
-                <div className="text-muted space-y-1">
-                  <div>
-                    端点: {selectedSegmentInfo.seg.from} → {selectedSegmentInfo.seg.to}
-                  </div>
-                  <div>長さ（座標系）: 約 {selectedSegmentInfo.lengthMm}</div>
-                </div>
+                <label className="flex items-center justify-between gap-2 text-muted">
+                  <span>二重線</span>
+                  <input
+                    type="checkbox"
+                    checked={selectedSegmentInfo.seg.doubleLine === true}
+                    onChange={(e) => {
+                      const checked = e.target.checked
+                      pushHistorySnapshot()
+                      const nextSegments = displayGeometry.segments.map((s, idx) =>
+                        idx === selectedSegmentInfo.idx ? { ...s, doubleLine: checked } : s,
+                      )
+                      onGeometryChange({
+                        ...displayGeometry,
+                        segments: nextSegments,
+                        bounds: calcBounds(displayGeometry.points),
+                      })
+                    }}
+                    className="rounded"
+                  />
+                </label>
                 <button
                   type="button"
                   onClick={() => {
@@ -3580,27 +3834,50 @@ export function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?
         const p1 = byKey[seg.from]
         const p2 = byKey[seg.to]
         if (!p1 || !p2) return null
+        const dx = p2.x - p1.x
+        const dy = p2.y - p1.y
+        const len = Math.hypot(dx, dy) || 1
+        const nx = -dy / len
+        const ny = dx / len
         return (
           <g key={`${seg.from}-${seg.to}-${i}`}>
-            <line
-              x1={p1.x}
-              y1={p1.y}
-              x2={p2.x}
-              y2={p2.y}
-              stroke={stroke}
-              strokeWidth={large ? lineStyle.strokeWidth : Math.max(1.5, lineStyle.strokeWidth - 0.5)}
-              strokeLinecap="round"
-            />
-            {lineStyle.isDouble && (
+            {seg.doubleLine === true || lineStyle.isDouble ? (
+              (() => {
+                const baseW = large ? lineStyle.strokeWidth : Math.max(1.5, lineStyle.strokeWidth - 0.5)
+                const w = Math.max(1.1, baseW * 0.58)
+                const off = Math.max(2.0, baseW * 0.9)
+                return (
+                  <>
+                    <line
+                      x1={p1.x + nx * off}
+                      y1={p1.y + ny * off}
+                      x2={p2.x + nx * off}
+                      y2={p2.y + ny * off}
+                      stroke={stroke}
+                      strokeWidth={w}
+                      strokeLinecap="round"
+                    />
+                    <line
+                      x1={p1.x - nx * off}
+                      y1={p1.y - ny * off}
+                      x2={p2.x - nx * off}
+                      y2={p2.y - ny * off}
+                      stroke={stroke}
+                      strokeWidth={w}
+                      strokeLinecap="round"
+                    />
+                  </>
+                )
+              })()
+            ) : (
               <line
                 x1={p1.x}
                 y1={p1.y}
                 x2={p2.x}
                 y2={p2.y}
-                stroke="#ffffff"
-                strokeWidth={large ? lineStyle.innerStrokeWidth : Math.max(0.8, lineStyle.innerStrokeWidth - 0.2)}
+                stroke={stroke}
+                strokeWidth={large ? lineStyle.strokeWidth : Math.max(1.5, lineStyle.strokeWidth - 0.5)}
                 strokeLinecap="round"
-                strokeDasharray={large ? `${lineStyle.offset} ${lineStyle.offset}` : `${Math.max(2, lineStyle.offset - 1)} ${Math.max(2, lineStyle.offset - 1)}`}
               />
             )}
           </g>
@@ -3689,7 +3966,7 @@ export function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?
           </g>
         )
       })}
-      {/* 間隔線(spacings)とは別に保存される注記＝距離ラベル等（形状編集の annotations と同じ） */}
+      {/* 間隔線(spacings)とは別に保存される寸法＝距離ラベル等（形状編集の annotations と同じ） */}
       {(large ? previewRebarLayout.annotations : []).map((an) => {
         if (!Number.isFinite(an.x) || !Number.isFinite(an.y)) return null
         const t = String(an.text ?? '').trim()
@@ -3832,6 +4109,10 @@ function UnitRow({
   const colorLabel = getSegmentColorLabelJa(uc)
   /** 無効行は本文だけ薄くし、操作列のボタンは opacity を下げない */
   const dimInactiveCell = !unit.is_active ? 'opacity-50' : ''
+  const totalDimensionMm = (unit.rebar_layout?.annotations ?? [])
+    .map((an) => parseSpacingMm(an.text))
+    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0)
+    .reduce((sum, v) => sum + v, 0)
 
   return (
     <tr className="transition-colors hover:bg-gray-50">
@@ -3874,10 +4155,16 @@ function UnitRow({
           {barsSummary(unit.bars)}
         </span>
       </td>
-      {/* 間隔 */}
+      {/* 総寸法 */}
       <td className={`px-4 py-3 hidden lg:table-cell ${dimInactiveCell}`}>
         <span className="text-xs text-muted">
-          {unit.spacing_mm != null ? `${unit.spacing_mm}mm` : '-'}
+          {totalDimensionMm > 0 ? `${totalDimensionMm}mm` : '-'}
+        </span>
+      </td>
+      {/* ピッチ */}
+      <td className={`px-4 py-3 hidden lg:table-cell ${dimInactiveCell}`}>
+        <span className="text-xs text-muted">
+          {unit.pitch_mm != null ? `@${unit.pitch_mm}` : '-'}
         </span>
       </td>
       {/* 操作 */}

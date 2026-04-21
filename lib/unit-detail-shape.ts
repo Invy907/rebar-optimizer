@@ -25,7 +25,7 @@ export interface UnitDetailSpec {
 export interface UnitDetailGeometry {
   templateType: DetailShapeTemplate
   points: Array<{ key: string; x: number; y: number }>
-  segments: Array<{ from: string; to: string }>
+  segments: Array<{ from: string; to: string; doubleLine?: boolean }>
   bounds: { minX: number; minY: number; maxX: number; maxY: number }
 }
 
