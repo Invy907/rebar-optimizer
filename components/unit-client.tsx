@@ -380,6 +380,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
   const [presetSavedToast, setPresetSavedToast] = useState(false)
   const [userPresets, setUserPresets] = useState<UserUnitPreset[]>([])
   const [lengthPresetGroups, setLengthPresetGroups] = useState<LengthPresetGroup[]>([])
+  const [lengthPresetListModalOpen, setLengthPresetListModalOpen] = useState(false)
   const [lengthPresetModalOpen, setLengthPresetModalOpen] = useState(false)
   const [lengthPresetModalMode, setLengthPresetModalMode] = useState<'create' | 'edit'>('create')
   const [lengthPresetEditId, setLengthPresetEditId] = useState<string | null>(null)
@@ -408,7 +409,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
   }, [modalOpen])
 
   useEffect(() => {
-    if (!modalOpen) return
+    if (!modalOpen && !lengthPresetListModalOpen && !lengthPresetModalOpen) return
     let cancelled = false
     void (async () => {
       const list = await fetchLengthPresetGroupsFromDb(supabaseRef.current!)
@@ -417,7 +418,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     return () => {
       cancelled = true
     }
-  }, [modalOpen])
+  }, [modalOpen, lengthPresetListModalOpen, lengthPresetModalOpen])
 
   useEffect(() => {
     if (!presetSavedToast) return
@@ -847,7 +848,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
         spacing_mm: null,
         pitch_mm: resolvedPitchMm,
         description: draft.description.trim() || null,
-        is_active: draft.is_active,
+        is_active: true,
         template_id: null,
         detail_spec: detailSpec,
         detail_geometry: detailGeometry,
@@ -1023,13 +1024,22 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
             断面（形状・色・鉄筋構成の組み合わせ）を登録・管理します。
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover transition-colors"
-        >
-          + 新規作成
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setLengthPresetListModalOpen(true)}
+            className="rounded-lg border border-border bg-white px-4 py-2 text-sm font-medium text-foreground hover:bg-slate-50 transition-colors"
+          >
+            長さプリセット
+          </button>
+          <button
+            type="button"
+            onClick={openCreate}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover transition-colors"
+          >
+            + 新規作成
+          </button>
+        </div>
       </div>
 
       {/* フィルタバー */}
@@ -1277,70 +1287,6 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                 )}
               </div>
 
-              <div className="rounded-lg border border-border bg-slate-50 p-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <div className="text-xs font-semibold text-foreground">長さプリセット</div>
-                  <button
-                    type="button"
-                    onClick={openLengthPresetCreateModal}
-                    className="rounded border border-border bg-white px-2 py-1 text-[11px] hover:bg-slate-100"
-                  >
-                    追加
-                  </button>
-                </div>
-                {lengthPresetGroups.length === 0 ? (
-                  <p className="text-[11px] text-muted">保存された長さプリセットがありません。</p>
-                ) : (
-                  <div className="space-y-2">
-                    {lengthPresetGroups.map((group) => (
-                      <div key={group.id} className="rounded-md border border-border bg-white p-2">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="truncate text-xs font-semibold text-foreground">{group.name}</div>
-                            <div className="truncate text-[11px] text-muted">{group.description || '-'}</div>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => openLengthPresetEditModal(group)}
-                              className="rounded border border-border px-2 py-1 text-[11px] hover:bg-slate-100"
-                            >
-                              更新
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => deleteLengthPresetGroup(group.id)}
-                              className="rounded border border-red-200 px-2 py-1 text-[11px] text-red-700 hover:bg-red-50"
-                            >
-                              削除
-                            </button>
-                          </div>
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {(group.lengths ?? []).map((len) => (
-                            <span
-                              key={`${group.id}-${len}`}
-                              className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-mono text-slate-700"
-                            >
-                              {len}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <label className="flex cursor-pointer items-center gap-2 select-none text-sm">
-                <input
-                  type="checkbox"
-                  checked={draft.is_active}
-                  onChange={(e) => setDraft((p) => ({ ...p, is_active: e.target.checked }))}
-                  className="rounded"
-                />
-                <span>図面で使用する</span>
-              </label>
                 </>
               )}
 
@@ -1572,6 +1518,101 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
               >
                 {lengthPresetSaving ? '保存中...' : '保存'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lengthPresetListModalOpen && (
+        <div
+          className="fixed inset-0 z-[65] flex items-center justify-center bg-black/45 p-4"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setLengthPresetListModalOpen(false)
+          }}
+        >
+          <div
+            className="w-full max-w-5xl rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="length-preset-list-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-6 py-5">
+              <div>
+                <h2 id="length-preset-list-modal-title" className="text-lg font-semibold text-foreground">
+                  長さプリセット
+                </h2>
+                <p className="mt-1 text-xs text-muted">登録済みの長さグループを管理します。</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openLengthPresetCreateModal}
+                  className="rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+                >
+                  追加
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLengthPresetListModalOpen(false)}
+                  className="rounded-lg border border-border px-3.5 py-2 text-sm text-muted hover:bg-gray-50"
+                >
+                  閉じる
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[min(72vh,42rem)] space-y-3 overflow-y-auto px-6 py-5">
+              {lengthPresetGroups.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center">
+                  <p className="text-sm font-medium text-slate-700">保存された長さプリセットがありません。</p>
+                  <p className="mt-1 text-xs text-muted">「追加」ボタンから最初のプリセットを作成してください。</p>
+                </div>
+              ) : (
+                lengthPresetGroups.map((group) => (
+                  <div
+                    key={group.id}
+                    className="rounded-xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-4 shadow-sm"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-xl font-semibold tracking-tight text-foreground">
+                          {group.name}
+                        </div>
+                        <div className="mt-0.5 truncate text-sm text-muted">
+                          {group.description || '説明なし'}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openLengthPresetEditModal(group)}
+                          className="rounded-lg border border-border bg-white px-3 py-1.5 text-sm hover:bg-slate-100"
+                        >
+                          更新
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void deleteLengthPresetGroup(group.id)}
+                          className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm text-red-700 hover:bg-red-50"
+                        >
+                          削除
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(group.lengths ?? []).map((len) => (
+                        <span
+                          key={`${group.id}-${len}`}
+                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-semibold tabular-nums text-slate-700"
+                        >
+                          {len}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -1979,22 +2020,33 @@ function DetailShapeEditor({
     }
   }
 
+  function mergeBounds(
+    a: { minX: number; minY: number; maxX: number; maxY: number },
+    b: { minX: number; minY: number; maxX: number; maxY: number },
+  ) {
+    return {
+      minX: Math.min(a.minX, b.minX),
+      minY: Math.min(a.minY, b.minY),
+      maxX: Math.max(a.maxX, b.maxX),
+      maxY: Math.max(a.maxY, b.maxY),
+    }
+  }
+
+  const freeCanvasDefaultBounds = useMemo(() => createEmptyFreeGeometry().bounds, [])
+
+  const freeCanvasFloorBounds = useMemo(() => {
+    if (startMode !== 'free') return sketch.geometry.bounds
+    // free draw에서는 "현재 geometry.bounds"를 바닥값으로 쓰지 않는다.
+    // geometry.bounds는 첫 선 직후 아주 타이트하게 바뀔 수 있어서
+    // viewBox가 갑자기 중앙 재정렬된 것처럼 보일 수 있다.
+    if (displayGeometry.points.length === 0) return freeCanvasDefaultBounds
+    const contentBounds = calcBounds(displayGeometry.points)
+    return mergeBounds(freeCanvasDefaultBounds, contentBounds)
+  }, [startMode, displayGeometry.points, sketch.geometry.bounds, freeCanvasDefaultBounds])
   const viewBounds = useMemo(() => {
     if (startMode !== 'free') return sketch.geometry.bounds
-    // 描画キャンバスの視野は、テンプレート基準 bounds を下限(floor)としつつ、
-    // ユーザーが描いた点を包含するように外側にだけ広げる。
-    // これにより点を1本描いた瞬間に viewBox が急にタイトになって
-    // 「引いた線が画面中央で巨大に拡大される」現象を防ぐ。
-    const baseB = displayGeometry.bounds ?? sketch.geometry.bounds
-    if (displayGeometry.points.length === 0) return baseB
-    const b = calcBounds(displayGeometry.points)
-    return {
-      minX: Math.min(b.minX, baseB.minX),
-      minY: Math.min(b.minY, baseB.minY),
-      maxX: Math.max(b.maxX, baseB.maxX),
-      maxY: Math.max(b.maxY, baseB.maxY),
-    }
-  }, [startMode, displayGeometry.points, displayGeometry.bounds, sketch.geometry.bounds])
+    return freeCanvasFloorBounds
+  }, [startMode, sketch.geometry.bounds, freeCanvasFloorBounds])
   const effectiveViewBounds =
     freezeViewBounds && frozenViewBoundsRef.current ? frozenViewBoundsRef.current : viewBounds
   const { minX, minY, maxX, maxY } = effectiveViewBounds
@@ -2441,96 +2493,6 @@ function DetailShapeEditor({
                   二重線 {doubleLineEnabled ? 'ON' : 'OFF'}
                 </button>
               </div>
-              <details>
-                <summary className="cursor-pointer select-none text-[10px] text-muted underline underline-offset-2">
-                  詳細操作（上級）
-                </summary>
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (history.length === 0) return
-                      const last = history[history.length - 1]
-                      setHistory((prev) => prev.slice(0, -1))
-                      onGeometryChange(last)
-                    }}
-                    className="rounded border border-border px-2 py-1 text-[11px] hover:bg-gray-50"
-                  >
-                    最後の操作を戻す
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDrawAnchorKey(null)
-                      setNewPathMode(true)
-                    }}
-                    className={`rounded border px-2 py-1 text-[11px] ${newPathMode ? 'border-primary text-primary bg-primary/5' : 'border-border hover:bg-gray-50'}`}
-                  >
-                    独立した線を開始
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selection?.kind !== 'point') return
-                      setDrawAnchorKey(selection.id)
-                      setNewPathMode(false)
-                    }}
-                    className="rounded border border-border px-2 py-1 text-[11px] hover:bg-gray-50"
-                  >
-                    選択端点から開始
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSnapEnabled((v) => !v)}
-                    className={`rounded border px-2 py-1 text-[11px] ${snapEnabled ? 'border-primary text-primary bg-primary/5' : 'border-border hover:bg-gray-50'}`}
-                  >
-                    補助スナップ {snapEnabled ? 'オン' : 'オフ'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selection?.kind !== 'point') return
-                      const pointKey = selection.id
-                      pushHistorySnapshot()
-                      const nextPoints = displayGeometry.points.filter((p) => p.key !== pointKey)
-                      if (nextPoints.length === 0) return
-                      const nextSegments = displayGeometry.segments.filter(
-                        (s) => s.from !== pointKey && s.to !== pointKey,
-                      )
-                      onGeometryChange({
-                        ...displayGeometry,
-                        points: nextPoints,
-                        segments: nextSegments,
-                        bounds: calcBounds(nextPoints),
-                      })
-                      setSelection(null)
-                    }}
-                    className="rounded border border-red-200 px-2 py-1 text-[11px] text-red-700 hover:bg-red-50"
-                  >
-                    選択端点を削除
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selection?.kind !== 'segment') return
-                      const segmentKey = selection.id
-                      pushHistorySnapshot()
-                      const nextSegments = displayGeometry.segments.filter(
-                        (s, idx) => `${s.from}-${s.to}-${idx}` !== segmentKey,
-                      )
-                      onGeometryChange({
-                        ...displayGeometry,
-                        segments: nextSegments,
-                        bounds: calcBounds(displayGeometry.points),
-                      })
-                      setSelection(null)
-                    }}
-                    className="rounded border border-red-200 px-2 py-1 text-[11px] text-red-700 hover:bg-red-50"
-                  >
-                    選択線を削除
-                  </button>
-                </div>
-              </details>
             </div>
           )}
         <div className="relative">
@@ -2571,6 +2533,10 @@ function DetailShapeEditor({
             if (startMode === 'free') {
               const anchorKey =
                 !newPathMode && drawAnchorKey && freeByKey[drawAnchorKey] ? drawAnchorKey : null
+              // 새 선을 그리는 동안에도 viewBox를 고정해서
+              // 첫 드래그에서 화면이 재정렬되어 보이는 문제를 줄인다.
+              frozenViewBoundsRef.current = viewBounds
+              setFreezeViewBounds(true)
               setDrawGesture({ start: p, current: p, anchorKey, shiftLock: e.shiftKey })
             }
             return
@@ -2793,7 +2759,7 @@ function DetailShapeEditor({
           const segPe = mode === 'shape' && startMode === 'free' ? 'auto' : 'none'
           const isSegSelected = selection?.kind === 'segment' && selection.id === `${seg.from}-${seg.to}-${idx}`
           const stroke = isSegSelected ? '#7c3aed' : '#0f172a'
-          const baseStrokeW = isSegSelected ? 3.4 : 2.0
+          const baseStrokeW = isSegSelected ? 3.0 : 1.6
           const dx = p2.x - p1.x
           const dy = p2.y - p1.y
           const len = Math.hypot(dx, dy) || 1
@@ -3028,7 +2994,7 @@ function DetailShapeEditor({
             }
             stroke="#2563eb"
             strokeOpacity={0.7}
-            strokeWidth={3}
+            strokeWidth={2.25}
             strokeDasharray="5 4"
             pointerEvents="none"
           />
