@@ -65,7 +65,7 @@ export function shapeTypeToDetailTemplate(shapeType: ExtendedShapeType): DetailS
 
 export function getDefaultDetailSpec(template: DetailShapeTemplate): UnitDetailSpec {
   const base: UnitDetailSpec = {
-    pitch: 200,
+    pitch: 0,
     leftHeight: 350,
     rightHeight: 350,
     topHorizontalLength: 900,
@@ -98,7 +98,7 @@ export function getDefaultDetailSpec(template: DetailShapeTemplate): UnitDetailS
 export function normalizeDetailSpec(input: Partial<UnitDetailSpec> | null | undefined): UnitDetailSpec {
   const d = input ?? {}
   return {
-    pitch: clamp(Math.round(d.pitch ?? 200), 1, 10000),
+    pitch: clamp(Math.round(d.pitch ?? 0), 0, 10000),
     leftHeight: clamp(Math.round(d.leftHeight ?? 350), 0, 10000),
     rightHeight: clamp(Math.round(d.rightHeight ?? 350), 0, 10000),
     topHorizontalLength: clamp(Math.round(d.topHorizontalLength ?? 900), 1, 10000),

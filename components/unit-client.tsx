@@ -176,9 +176,7 @@ function draftFromUnit(unit: Unit): DraftUnit {
     pitch_mm:
       unit.pitch_mm != null
         ? `@${unit.pitch_mm}`
-        : spec?.pitch != null && Number.isFinite(spec.pitch) && spec.pitch > 0
-          ? `@${Math.round(spec.pitch)}`
-          : '',
+        : '',
     description: unit.description ?? '',
     is_active: unit.is_active,
     template_id: unit.template_id ?? null,
@@ -376,9 +374,11 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
   const [detailEditMode, setDetailEditMode] = useState<'shape' | 'rebar' | 'annotation' | 'pitch'>(
     'shape',
   )
+  const [saveValidationMessage, setSaveValidationMessage] = useState<string | null>(null)
   const [savingPreset, setSavingPreset] = useState(false)
   const [presetSavedToast, setPresetSavedToast] = useState(false)
   const [userPresets, setUserPresets] = useState<UserUnitPreset[]>([])
+  const [draggingPresetId, setDraggingPresetId] = useState<string | null>(null)
   const [lengthPresetGroups, setLengthPresetGroups] = useState<LengthPresetGroup[]>([])
   const [lengthPresetListModalOpen, setLengthPresetListModalOpen] = useState(false)
   const [lengthPresetModalOpen, setLengthPresetModalOpen] = useState(false)
@@ -401,7 +401,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     let cancelled = false
     void (async () => {
       const list = await fetchUserPresetsFromDb(supabaseRef.current!)
-      if (!cancelled) setUserPresets(list)
+      if (!cancelled) setUserPresets(applyUserPresetOrder(list))
     })()
     return () => {
       cancelled = true
@@ -425,6 +425,55 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     const id = window.setTimeout(() => setPresetSavedToast(false), 2800)
     return () => window.clearTimeout(id)
   }, [presetSavedToast])
+
+  const userPresetOrderStorageKey = 'rebar-optimizer:user-unit-presets:order:v1'
+
+  function readUserPresetOrder(): string[] {
+    try {
+      const raw = window.localStorage.getItem(userPresetOrderStorageKey)
+      const parsed = raw ? JSON.parse(raw) : []
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []
+    } catch {
+      return []
+    }
+  }
+
+  function writeUserPresetOrder(ids: string[]) {
+    try {
+      window.localStorage.setItem(userPresetOrderStorageKey, JSON.stringify(ids))
+    } catch {
+      // ignore
+    }
+  }
+
+  function applyUserPresetOrder(list: UserUnitPreset[]): UserUnitPreset[] {
+    const order = readUserPresetOrder()
+    if (order.length === 0) return list
+    const rank = new Map(order.map((id, idx) => [id, idx]))
+    return [...list].sort((a, b) => {
+      const ar = rank.get(a.id)
+      const br = rank.get(b.id)
+      if (ar != null && br != null) return ar - br
+      if (ar != null) return -1
+      if (br != null) return 1
+      return 0
+    })
+  }
+
+  function reorderUserPreset(activeId: string, overId: string) {
+    if (activeId === overId) return
+    setUserPresets((prev) => {
+      const from = prev.findIndex((p) => p.id === activeId)
+      const to = prev.findIndex((p) => p.id === overId)
+      if (from < 0 || to < 0) return prev
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      if (!moved) return prev
+      next.splice(to, 0, moved)
+      writeUserPresetOrder(next.map((p) => p.id))
+      return next
+    })
+  }
 
   // ─── フィルタ適用 ──────────────────────────────────────
   const filteredUnits = useMemo(() => {
@@ -536,7 +585,11 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
       alert('プリセットの保存に失敗しました。')
       return
     }
-    setUserPresets((prev) => [preset, ...prev])
+    setUserPresets((prev) => {
+      const next = [preset, ...prev]
+      writeUserPresetOrder(next.map((p) => p.id))
+      return next
+    })
     setSavingPreset(false)
     setPresetSavedToast(true)
   }
@@ -548,7 +601,11 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
       alert('削除に失敗しました。')
       return
     }
-    setUserPresets((prev) => prev.filter((p) => p.id !== id))
+    setUserPresets((prev) => {
+      const next = prev.filter((p) => p.id !== id)
+      writeUserPresetOrder(next.map((p) => p.id))
+      return next
+    })
   }
 
   function openLengthPresetCreateModal() {
@@ -810,7 +867,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     try {
       if (!draft.name.trim()) {
         setModalTab('basic')
-        alert('ユニット名を入力してください。')
+        setSaveValidationMessage('ユニット名を入力してください。')
         return
       }
       const selfKey = editingUnit ? unitVariantGroupKey(editingUnit) : null
@@ -818,13 +875,23 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
         alert('この色は既に別のユニットで使用されています。別の色を選んでください。')
         return
       }
+      const resolvedPitchMm = parseSpacingMm(draft.pitch_mm)
+      if (resolvedPitchMm == null || resolvedPitchMm <= 0) {
+        setModalTab('detail')
+        setDetailEditMode('pitch')
+        setSaveValidationMessage('ピッチを入力してください。')
+        return
+      }
 
       setSaving(true)
       const detailTemplate = shapeTypeToDetailTemplate(draft.shape_type)
-      const detailSpec = normalizeDetailSpecForTemplate(
-        detailTemplate,
-        draft.detail_spec ?? getDefaultDetailSpec(detailTemplate),
-      )
+      const detailSpec = {
+        ...normalizeDetailSpecForTemplate(
+          detailTemplate,
+          draft.detail_spec ?? getDefaultDetailSpec(detailTemplate),
+        ),
+        pitch: resolvedPitchMm,
+      }
       const detailGeometry =
         draft.detail_start_mode === 'free' && draft.detail_geometry
           ? draft.detail_geometry
@@ -833,8 +900,6 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
         draft.detail_start_mode === 'free'
           ? inferShapeTypeFromGeometry(detailGeometry)
           : draft.shape_type
-
-      const resolvedPitchMm = parseSpacingMm(draft.pitch_mm)
 
       const color = normalizeSegmentColor(draft.color)
       const mark = effectiveMark(autoVariant.mark, draft.mark_number)
@@ -1007,11 +1072,8 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
   const detailPitchMm = useMemo(() => {
     const fromDraft = parseSpacingMm(draft.pitch_mm)
     if (fromDraft != null) return fromDraft
-    const fromSpec = draft.detail_spec?.pitch
-    return typeof fromSpec === 'number' && Number.isFinite(fromSpec) && fromSpec > 0
-      ? Math.round(fromSpec)
-      : null
-  }, [draft.pitch_mm, draft.detail_spec?.pitch])
+    return null
+  }, [draft.pitch_mm])
 
   // ─── レンダリング ────────────────────────────────────
   return (
@@ -1138,6 +1200,33 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
       )}
 
       {/* 作成/編集 モーダル */}
+      {saveValidationMessage && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-amber-200 bg-white shadow-xl">
+            <div className="border-b border-amber-100 bg-amber-50 px-5 py-4">
+              <h3 className="text-sm font-semibold text-amber-950">入力が必要です</h3>
+              <p className="mt-1 text-xs text-amber-800">
+                保存する前に必須項目を確認してください。
+              </p>
+            </div>
+            <div className="px-5 py-4">
+              <p className="rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2 text-sm font-medium text-amber-950">
+                {saveValidationMessage}
+              </p>
+            </div>
+            <div className="flex justify-end border-t border-border px-5 py-3">
+              <button
+                type="button"
+                onClick={() => setSaveValidationMessage(null)}
+                className="rounded-md bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:bg-primary-hover"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {modalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
@@ -1166,7 +1255,10 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setModalTab('detail')}
+                  onClick={() => {
+                    if (!editingUnit) setDetailEditMode('shape')
+                    setModalTab('detail')
+                  }}
                   className={`rounded px-3 py-1 text-xs ${
                     showDetailTab ? 'bg-white font-semibold text-foreground shadow-sm' : 'text-muted'
                   }`}
@@ -1256,27 +1348,54 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                 {userPresets.length === 0 ? (
                   <p className="text-[11px] text-muted">保存されたプリセットがありません。（作成して追加するとここに表示されます）</p>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="grid gap-2">
                     {userPresets.map((preset) => (
                       <div
                         key={preset.id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-white px-3 py-2"
+                        draggable
+                        onDragStart={(e) => {
+                          setDraggingPresetId(preset.id)
+                          e.dataTransfer.effectAllowed = 'move'
+                          e.dataTransfer.setData('text/plain', preset.id)
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault()
+                          e.dataTransfer.dropEffect = 'move'
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          const activeId = e.dataTransfer.getData('text/plain') || draggingPresetId
+                          if (activeId) reorderUserPreset(activeId, preset.id)
+                          setDraggingPresetId(null)
+                        }}
+                        onDragEnd={() => setDraggingPresetId(null)}
+                        className={`group flex cursor-grab items-center justify-between gap-3 rounded-lg border bg-white p-2.5 shadow-sm transition active:cursor-grabbing ${
+                          draggingPresetId === preset.id
+                            ? 'border-primary bg-primary/5 opacity-60'
+                            : 'border-border hover:border-slate-300 hover:shadow-md'
+                        }`}
                       >
-                        <div className="flex min-w-0 items-center gap-2">
+                        <div className="flex min-w-0 flex-1 items-center gap-3">
+                          <span
+                            className="flex h-8 w-5 shrink-0 items-center justify-center rounded bg-slate-100 text-[13px] font-bold leading-none text-slate-400 group-hover:text-slate-600"
+                            title="ドラッグして並び替え"
+                          >
+                            ⋮⋮
+                          </span>
                           <PresetShapeThumbnail payload={preset.payload} />
                         </div>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex shrink-0 items-center gap-1.5">
                           <button
                             type="button"
                             onClick={() => applyUserPreset(preset)}
-                            className="rounded border border-border px-2 py-1 text-[11px] hover:bg-slate-100"
+                            className="rounded-md border border-border bg-white px-2.5 py-1.5 text-[11px] font-medium hover:bg-slate-100"
                           >
                             読み込み
                           </button>
                           <button
                             type="button"
                             onClick={() => deleteUserPreset(preset.id)}
-                            className="rounded border border-red-200 px-2 py-1 text-[11px] text-red-700 hover:bg-red-50"
+                            className="rounded-md border border-red-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-red-700 hover:bg-red-50"
                           >
                             削除
                           </button>
@@ -1303,6 +1422,8 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                     expanded
                     mode={detailEditMode}
                     onModeChange={setDetailEditMode}
+                    pitchValue={draft.pitch_mm}
+                    onPitchChange={(nextPitch) => setDraft((p) => ({ ...p, pitch_mm: nextPitch }))}
                     startMode={draft.detail_start_mode}
                     spec={normalizeDetailSpecForTemplate(
                       shapeTypeToDetailTemplate(draft.shape_type),
@@ -1788,6 +1909,8 @@ function DetailShapeEditor({
   shapeType,
   spec,
   onChange,
+  pitchValue,
+  onPitchChange,
   expanded = false,
   mode,
   onModeChange,
@@ -1801,6 +1924,8 @@ function DetailShapeEditor({
   shapeType: ExtendedShapeType
   spec: UnitDetailSpec
   onChange: (next: UnitDetailSpec) => void
+  pitchValue: string
+  onPitchChange: (next: string) => void
   expanded?: boolean
   mode: 'shape' | 'rebar' | 'annotation' | 'pitch'
   onModeChange: (next: 'shape' | 'rebar' | 'annotation' | 'pitch') => void
@@ -1822,6 +1947,12 @@ function DetailShapeEditor({
   const [history, setHistory] = useState<UnitDetailGeometry[]>([])
   const [selection, setSelection] = useState<CanvasSelection | null>(null)
   const [spacingMmDraft, setSpacingMmDraft] = useState<number>(() => spec.pitch)
+  const [annotationInput, setAnnotationInput] = useState<{
+    x: number
+    y: number
+    value: string
+    error: string | null
+  } | null>(null)
   /** 形状編集キャンバス初期ズーム（UI表示は clampedZoom×100%、既定 100%） */
   const [zoomScale, setZoomScale] = useState(1)
   const [zoomCenter, setZoomCenter] = useState<{ x: number; y: number } | null>(null)
@@ -1953,6 +2084,7 @@ function DetailShapeEditor({
     const next = normalizeDetailSpecForTemplate(template, { ...spec, [dimKey]: value })
     onChange(next)
   }
+  const hasPitchValue = Number.isFinite(spec.pitch) && spec.pitch > 0
 
   function handlePointerMove(
     e: React.PointerEvent<SVGSVGElement>,
@@ -2111,11 +2243,19 @@ function DetailShapeEditor({
   }
 
   function addAnnotationAt(x: number, y: number) {
-    const raw = window.prompt('寸法値（mm）を入力してください', String(spacingMmDraft))?.trim()
-    if (raw == null || raw === '') return
+    setAnnotationInput({ x, y, value: String(spacingMmDraft || ''), error: null })
+  }
+
+  function submitAnnotationInput() {
+    if (!annotationInput) return
+    const raw = annotationInput.value.trim()
+    if (raw === '') {
+      setAnnotationInput((prev) => (prev ? { ...prev, error: '寸法値を入力してください。' } : prev))
+      return
+    }
     const mm = Number.parseInt(raw, 10)
     if (!Number.isFinite(mm) || mm <= 0) {
-      alert('正の数値（mm）を入力してください。')
+      setAnnotationInput((prev) => (prev ? { ...prev, error: '正の数値（mm）を入力してください。' } : prev))
       return
     }
     setSpacingMmDraft(mm)
@@ -2124,10 +2264,11 @@ function DetailShapeEditor({
     onRebarLayoutChange(
       normalizeRebarLayout({
         ...rebarLayout,
-        annotations: [...rebarLayout.annotations, { id, x, y, text }],
+        annotations: [...rebarLayout.annotations, { id, x: annotationInput.x, y: annotationInput.y, text }],
       }),
     )
     selectAnnotation(id)
+    setAnnotationInput(null)
   }
 
   function addFreeSpacingByDrag(start: { x: number; y: number }, end: { x: number; y: number }) {
@@ -3374,12 +3515,22 @@ function DetailShapeEditor({
                 <label className="block text-muted">
                   値（mm, 例: @200）
                   <input
-                    value={`@${Math.max(0, Math.round(spec.pitch ?? 0))}`}
+                    value={pitchValue}
                     onChange={(e) => {
-                      const mm = parseSpacingMm(e.target.value)
-                      setDim('pitch', mm ?? 0)
+                      const compact = e.target.value.replace(/\s+/g, '')
+                      if (compact === '') {
+                        onPitchChange('')
+                        return
+                      }
+                      const normalized = compact.startsWith('@') ? compact : `@${compact}`
+                      onPitchChange(normalized)
+                      const mm = parseSpacingMm(normalized)
+                      if (mm != null) setDim('pitch', mm)
                     }}
-                    className="mt-1 w-32 rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
+                    placeholder="@200"
+                    className={`mt-1 w-32 rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary ${
+                      hasPitchValue ? 'font-semibold' : 'font-normal'
+                    }`}
                   />
                 </label>
               </div>
@@ -3652,6 +3803,73 @@ function DetailShapeEditor({
 
         {aggregationSlot}
       </aside>
+
+      {annotationInput && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/35 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-border bg-white shadow-xl">
+            <div className="border-b border-border px-5 py-4">
+              <h3 className="text-sm font-semibold text-foreground">寸法値</h3>
+              <p className="mt-1 text-xs text-muted">
+                図形に表示する寸法値を mm で入力してください。
+              </p>
+            </div>
+            <div className="px-5 py-4">
+              <label className="block text-xs font-medium text-muted">
+                寸法値（mm）
+                <input
+                  type="number"
+                  min={1}
+                  inputMode="numeric"
+                  value={annotationInput.value}
+                  onChange={(e) =>
+                    setAnnotationInput((prev) =>
+                      prev ? { ...prev, value: e.target.value, error: null } : prev,
+                    )
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      submitAnnotationInput()
+                    }
+                    if (e.key === 'Escape') {
+                      e.preventDefault()
+                      setAnnotationInput(null)
+                    }
+                  }}
+                  autoFocus
+                  className={`mt-1 w-full rounded-md border px-3 py-2 text-sm font-mono outline-none ${
+                    annotationInput.error
+                      ? 'border-red-300 bg-red-50 focus:border-red-500'
+                      : 'border-border bg-white focus:border-primary'
+                  }`}
+                  placeholder="例: 300"
+                />
+              </label>
+              {annotationInput.error ? (
+                <p className="mt-2 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                  {annotationInput.error}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
+              <button
+                type="button"
+                onClick={() => setAnnotationInput(null)}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:bg-gray-50"
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                onClick={submitAnnotationInput}
+                className="rounded-md bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:bg-primary-hover"
+              >
+                追加
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -3715,9 +3933,7 @@ export function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?
   const previewRebarLayout = normalizeRebarLayout(unit.rebar_layout)
   const pitchMm = Number.isFinite(unit.pitch_mm as number)
     ? Math.round(unit.pitch_mm as number)
-    : Number.isFinite(spec.pitch as number)
-      ? Math.round(spec.pitch as number)
-      : null
+    : null
   const previewRebars = previewRebarLayout.rebars.filter(
     (rb) => Number.isFinite(rb.x) && Number.isFinite(rb.y),
   )
@@ -3773,20 +3989,47 @@ export function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?
     .filter((x): x is NonNullable<typeof x> => !!x)
   const rebarR = large ? 12 : 5.4
   const rebarStrokeW = large ? 2 : 1
-  const spacingFont = large ? 19 : 13
+  const spacingFont = large ? 26 : 13
   const spacingTickHalf = large ? 7 : 4.2
+  const previewBarDiameters = Array.from(
+    new Set((unit.bars ?? []).map((b) => String(b.diameter ?? '').trim().toUpperCase()).filter(Boolean)),
+  )
 
   return (
-    <svg
-      viewBox={`${minX - pad} ${minY - pad} ${w} ${h}`}
-      preserveAspectRatio="xMidYMid meet"
-      className={large ? 'h-80 w-full rounded border border-border bg-white' : 'h-12 w-28 rounded border border-border bg-white'}
-      aria-label="shape thumbnail"
-    >
-      {pitchMm != null && (
+    <div className={large ? 'relative h-80 w-full' : 'contents'}>
+      {large && pitchMm != null && (
+        <div className="pointer-events-none absolute left-4 top-3 z-10 text-[14px] font-bold leading-none text-slate-800">
+          @{pitchMm}
+        </div>
+      )}
+      {large && previewBarDiameters.length > 0 && (
+        <div className="pointer-events-none absolute right-4 top-3 z-10 flex flex-col items-end gap-1.5">
+          {previewBarDiameters.map((diameter) => {
+            const token = rebarDiameterVisualToken(diameter)
+            const radius = 8 * token.radiusScale
+            return (
+              <div key={diameter} className="flex items-center gap-1.5 rounded border border-slate-200 bg-white/85 px-1.5 py-1 shadow-sm">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                  <RebarSymbol x={12} y={12} token={token} radius={radius} strokeWidth={1.8} />
+                </svg>
+                <span className="min-w-7 text-left text-[10px] font-semibold leading-none text-slate-700">
+                  {diameter}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <svg
+        viewBox={`${minX - pad} ${minY - pad} ${w} ${h}`}
+        preserveAspectRatio="xMidYMid meet"
+        className={large ? 'h-full w-full rounded border border-border bg-white' : 'h-12 w-28 rounded border border-border bg-white'}
+        aria-label="shape thumbnail"
+      >
+      {!large && pitchMm != null && (
         <text
-          x={maxX + pad - 2}
-          y={minY - pad + 44}
+          x={minX - pad + w - (large ? 1 : 2)}
+          y={minY - pad + (large ? 18 : 44)}
           textAnchor="end"
           dominantBaseline="hanging"
           fontSize={large ? 42 : 24}
@@ -3953,7 +4196,7 @@ export function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?
             key={`an-${an.id}`}
             x={an.x}
             y={an.y}
-            fontSize={11}
+            fontSize={18}
             fill="#0f172a"
             fontWeight={700}
           >
@@ -3993,7 +4236,8 @@ export function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?
           ))}
         </g>
       )}
-    </svg>
+      </svg>
+    </div>
   )
 }
 
@@ -4019,21 +4263,22 @@ function PresetShapeThumbnail({ payload }: { payload: UserUnitPresetPayload }) {
   const minY = Number.isFinite(bounds?.minY) ? bounds!.minY : Math.min(...ys, 0)
   const maxX = Number.isFinite(bounds?.maxX) ? bounds!.maxX : Math.max(...xs, 100)
   const maxY = Number.isFinite(bounds?.maxY) ? bounds!.maxY : Math.max(...ys, 60)
-  const pad = 8
-  const w = Math.max(70, maxX - minX + pad * 2)
-  const h = Math.max(42, maxY - minY + pad * 2)
+  const pad = 28
+  const w = Math.max(140, maxX - minX + pad * 2)
+  const h = Math.max(76, maxY - minY + pad * 2)
   const byKey = Object.fromEntries(previewGeometry.points.map((p) => [p.key, p]))
   const span = Math.hypot(maxX - minX, maxY - minY) || 80
   // viewBox 全体が縮小されるため、形状座標系でやや太めに描くとサムネで視認しやすい
   const strokeMain = Math.max(5, span * 0.035)
   const strokeHalo = strokeMain * 1.55
   const presetHasDoubleLine = previewGeometry.segments.some((s) => s.doubleLine === true)
+  const presetStroke = getSegmentStrokeHex(normalizeSegmentColor(payload.color), false)
 
   return (
     <svg
       viewBox={`${minX - pad} ${minY - pad} ${w} ${h}`}
       preserveAspectRatio="xMidYMid meet"
-      className="h-12 w-24 shrink-0 rounded border border-slate-300/80 bg-white shadow-sm"
+      className="h-16 w-32 shrink-0 rounded-md border border-slate-200 bg-gradient-to-br from-white to-slate-50 shadow-inner"
       aria-label="preset shape thumbnail"
     >
       {previewGeometry.segments.map((seg, i) => {
@@ -4058,7 +4303,7 @@ function PresetShapeThumbnail({ payload }: { payload: UserUnitPresetPayload }) {
                       y1={p1.y + ny * off}
                       x2={p2.x + nx * off}
                       y2={p2.y + ny * off}
-                      stroke="#020617"
+                      stroke={presetStroke}
                       strokeWidth={w}
                       strokeLinecap="round"
                     />
@@ -4067,7 +4312,7 @@ function PresetShapeThumbnail({ payload }: { payload: UserUnitPresetPayload }) {
                       y1={p1.y - ny * off}
                       x2={p2.x - nx * off}
                       y2={p2.y - ny * off}
-                      stroke="#020617"
+                      stroke={presetStroke}
                       strokeWidth={w}
                       strokeLinecap="round"
                     />
@@ -4090,7 +4335,7 @@ function PresetShapeThumbnail({ payload }: { payload: UserUnitPresetPayload }) {
                   y1={p1.y}
                   x2={p2.x}
                   y2={p2.y}
-                  stroke="#020617"
+                  stroke={presetStroke}
                   strokeWidth={strokeMain}
                   strokeLinecap="round"
                 />

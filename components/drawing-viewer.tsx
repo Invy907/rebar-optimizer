@@ -46,6 +46,10 @@ import {
   type TemplateSummary,
 } from '@/lib/unit-variant-resolver'
 import { generateUnitCode } from '@/lib/unit-types'
+import {
+  fetchLengthPresetGroupsFromDb,
+  type LengthPresetGroup,
+} from '@/lib/length-presets'
 
 interface Point {
   x: number
@@ -72,6 +76,13 @@ type QuickMarkPickModalState = {
   numbered: Unit[]
   availableMarks: number[]
   sourceUnit: Unit
+}
+
+type LengthPresetDrawModalState = {
+  p1: Point
+  p2: Point
+  sourceUnit: Unit
+  preset: LengthPresetGroup
 }
 
 const BAR_TYPES = ['D10', 'D13', 'D16', 'D19', 'D22', 'D25', 'D29', 'D32']
@@ -234,6 +245,13 @@ export function DrawingViewer({
   const [quickMarkPickModal, setQuickMarkPickModal] = useState<QuickMarkPickModalState | null>(null)
   const quickMarkPickModalRef = useRef<QuickMarkPickModalState | null>(null)
   quickMarkPickModalRef.current = quickMarkPickModal
+  const [lengthPresetDrawModal, setLengthPresetDrawModal] = useState<LengthPresetDrawModalState | null>(null)
+  const lengthPresetDrawModalRef = useRef<LengthPresetDrawModalState | null>(null)
+  lengthPresetDrawModalRef.current = lengthPresetDrawModal
+  const submitLengthPresetDrawLengthRef = useRef<
+    ((ctx: LengthPresetDrawModalState, lengthMm: number, markNumber: number | null) => Promise<void>) | null
+  >(null)
+  const [lengthPresetCustomMm, setLengthPresetCustomMm] = useState('')
   const [quickMarkArbitraryMm, setQuickMarkArbitraryMm] = useState('')
   const quickMarkArbitraryInputRef = useRef<HTMLInputElement>(null)
   /** 新しいバリアント追加インプット */
@@ -393,9 +411,13 @@ export function DrawingViewer({
   const activeUnitStorageKey = `project:${projectId}:activeDrawingUnitId`
   const activeTemplateStorageKey = `project:${projectId}:activeTemplateId`
   const activeColorStorageKey = `project:${projectId}:activeTemplateColor`
+  const activeLengthPresetStorageKey = `project:${projectId}:activeLengthPresetGroupId`
   const [activeDrawingUnitId, setActiveDrawingUnitId] = useState<string | null>(null)
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null)
   const [activeTemplateColor, setActiveTemplateColor] = useState<SegmentColor>('red')
+  const [lengthPresetGroups, setLengthPresetGroups] = useState<LengthPresetGroup[]>([])
+  const [activeLengthPresetGroupId, setActiveLengthPresetGroupId] = useState<string | null>(null)
+  const [lengthPresetSelectUnit, setLengthPresetSelectUnit] = useState<Unit | null>(null)
 
   const templateSummaries = useMemo<TemplateSummary[]>(
     () => buildTemplateSummaries(persistedActiveUnits),
@@ -408,6 +430,14 @@ export function DrawingViewer({
         ? persistedActiveUnits.find((u) => u.id === activeDrawingUnitId) ?? null
         : null,
     [activeDrawingUnitId, persistedActiveUnits],
+  )
+
+  const activeLengthPresetGroup = useMemo(
+    () =>
+      activeLengthPresetGroupId
+        ? lengthPresetGroups.find((g) => g.id === activeLengthPresetGroupId) ?? null
+        : null,
+    [activeLengthPresetGroupId, lengthPresetGroups],
   )
 
   // アクティブユニット選択肢: 色ベース（例: red）ごとに 1 件だけ代表を持つ
@@ -428,6 +458,24 @@ export function DrawingViewer({
     () => templateSummaries.find((t) => t.id === activeTemplateId) ?? null,
     [templateSummaries, activeTemplateId],
   )
+
+  function selectActiveDrawingUnit(unitId: string | null, opts?: { openLengthPresetPicker?: boolean }) {
+    setActiveDrawingUnitId(unitId)
+    if (!unitId) {
+      setActiveLengthPresetGroupId(null)
+      setLengthPresetSelectUnit(null)
+      return
+    }
+    const picked = persistedActiveUnits.find((u) => u.id === unitId) ?? null
+    if (!picked) return
+    setActiveTemplateId(picked.template_id ?? `shape:${picked.shape_type}`)
+    setActiveTemplateColor(normalizeSegmentColor(picked.color))
+    pushRecentUnitId(projectId, unitId)
+    setUnitPrefsTick((x) => x + 1)
+    if (opts?.openLengthPresetPicker) {
+      setLengthPresetSelectUnit(picked)
+    }
+  }
 
   useEffect(() => {
     try {
@@ -460,6 +508,28 @@ export function DrawingViewer({
 
   useEffect(() => {
     try {
+      const raw = window.localStorage.getItem(activeLengthPresetStorageKey)
+      if (raw) setActiveLengthPresetGroupId(raw)
+    } catch {
+      // ignore
+    }
+  }, [activeLengthPresetStorageKey, projectId])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const list = await fetchLengthPresetGroupsFromDb(supabase)
+      if (!cancelled) setLengthPresetGroups(list)
+    })()
+    return () => {
+      cancelled = true
+    }
+    // supabase is created per render by the local helper; projectId is the meaningful reload boundary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  useEffect(() => {
+    try {
       if (activeDrawingUnitId) {
         window.localStorage.setItem(activeUnitStorageKey, activeDrawingUnitId)
       } else {
@@ -469,6 +539,18 @@ export function DrawingViewer({
       // ignore
     }
   }, [activeDrawingUnitId, activeUnitStorageKey])
+
+  useEffect(() => {
+    try {
+      if (activeLengthPresetGroupId) {
+        window.localStorage.setItem(activeLengthPresetStorageKey, activeLengthPresetGroupId)
+      } else {
+        window.localStorage.removeItem(activeLengthPresetStorageKey)
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeLengthPresetGroupId, activeLengthPresetStorageKey])
 
   useEffect(() => {
     try {
@@ -489,6 +571,14 @@ export function DrawingViewer({
       setActiveDrawingUnitId(null)
     }
   }, [activeDrawingUnitId, persistedActiveUnits])
+
+  useEffect(() => {
+    if (!activeLengthPresetGroupId) return
+    if (lengthPresetGroups.length === 0) return
+    if (!lengthPresetGroups.some((g) => g.id === activeLengthPresetGroupId)) {
+      setActiveLengthPresetGroupId(null)
+    }
+  }, [activeLengthPresetGroupId, lengthPresetGroups])
 
   /** 保存済みユニットが1件だけなら、アクティブ未設定時に自動選択（連続描画の摩擦を減らす） */
   useEffect(() => {
@@ -535,15 +625,46 @@ export function DrawingViewer({
           ? '#0f766e'
           : '#22c55e'
         : getSegmentStrokeHex(segColor, isSelected)
+      if (isSelected) {
+        ctx.save()
+        ctx.beginPath()
+        ctx.moveTo(seg.x1, seg.y1)
+        ctx.lineTo(seg.x2, seg.y2)
+        ctx.strokeStyle = isSpacing ? 'rgba(16, 185, 129, 0.24)' : 'rgba(250, 204, 21, 0.34)'
+        ctx.lineWidth = 10 / scale
+        ctx.lineCap = 'round'
+        ctx.stroke()
+        ctx.restore()
+      }
       ctx.strokeStyle = isLastSplit && !isSelected ? baseStroke : baseStroke
       ctx.lineWidth =
         isSelected ? 3 / scale : isLastSplit ? 3 / scale : 2 / scale
+      ctx.lineCap = 'round'
       if (isSpacing) {
         ctx.setLineDash([4 / scale, 4 / scale])
       }
       ctx.stroke()
       if (isSpacing) {
         ctx.setLineDash([])
+      }
+
+      if (isSelected) {
+        ctx.save()
+        const handleR = 5 / scale
+        const handleStroke = isSpacing ? '#0f766e' : getSegmentStrokeHex(segColor, true)
+        for (const p of [
+          { x: seg.x1, y: seg.y1 },
+          { x: seg.x2, y: seg.y2 },
+        ]) {
+          ctx.beginPath()
+          ctx.arc(p.x, p.y, handleR, 0, Math.PI * 2)
+          ctx.fillStyle = '#ffffff'
+          ctx.fill()
+          ctx.lineWidth = 2 / scale
+          ctx.strokeStyle = handleStroke
+          ctx.stroke()
+        }
+        ctx.restore()
       }
 
       const midX = (seg.x1 + seg.x2) / 2
@@ -748,6 +869,10 @@ export function DrawingViewer({
         t?.isContentEditable
 
       if (e.key === 'Escape') {
+        if (lengthPresetDrawModalRef.current) {
+          setLengthPresetDrawModal(null)
+          return
+        }
         if (quickMarkPickModalRef.current) {
           setQuickMarkPickModal(null)
           setQuickMarkArbitraryMm('')
@@ -775,6 +900,20 @@ export function DrawingViewer({
       }
 
       /** 番号選択モーダル: 入力欄にフォーカスがないとき 1–9 で該当マークのユニットを即確定 */
+      if (lengthPresetDrawModalRef.current && !isTyping) {
+        const modal = lengthPresetDrawModalRef.current
+        if (/^[1-7]$/.test(e.key)) {
+          const idx = Number.parseInt(e.key, 10) - 1
+          const lengthMm = modal.preset.lengths[idx]
+          if (typeof lengthMm === 'number' && Number.isFinite(lengthMm) && lengthMm > 0) {
+            e.preventDefault()
+            setLengthPresetDrawModal(null)
+            void submitLengthPresetDrawLengthRef.current?.(modal, lengthMm, idx + 1)
+            return
+          }
+        }
+      }
+
       if (quickMarkPickModalRef.current && !isTyping) {
         const modal = quickMarkPickModalRef.current
         if (/^[0-9]$/.test(e.key)) {
@@ -1406,6 +1545,21 @@ export function DrawingViewer({
   }
 
   async function quickInsertRebar(p1: Point, p2: Point, lengthMm: number) {
+    if (
+      activeUnit &&
+      activeLengthPresetGroup &&
+      activeLengthPresetGroup.lengths.some((len) => Number.isFinite(len) && len > 0)
+    ) {
+      setLengthPresetDrawModal({
+        p1,
+        p2,
+        sourceUnit: activeUnit,
+        preset: activeLengthPresetGroup,
+      })
+      setLengthPresetCustomMm('')
+      return
+    }
+
     if (activeUnit) {
       const base = getUnitCodeBase(activeUnit)
       const ac = normalizeSegmentColor(activeUnit.color)
@@ -1474,6 +1628,61 @@ export function DrawingViewer({
     })
   }
   submitQuickMarkPickUnitRef.current = submitQuickMarkPickUnit
+
+  async function submitLengthPresetDrawLength(
+    ctx: LengthPresetDrawModalState,
+    lengthMm: number,
+    markNumber: number | null,
+  ) {
+    const source = ctx.sourceUnit
+    const color = normalizeSegmentColor(source.color)
+    const sameFamily = (u: Unit) =>
+      getUnitCodeBase(u) === getUnitCodeBase(source) &&
+      normalizeSegmentColor(u.color) === color
+
+    const matchedVariant = persistedActiveUnits.find(
+      (u) =>
+        sameFamily(u) &&
+        typeof u.length_mm === 'number' &&
+        Number.isFinite(u.length_mm) &&
+        u.length_mm === lengthMm,
+    )
+    if (matchedVariant) {
+      const bars = matchedVariant.bars
+        .filter((b) => BAR_TYPES.includes(b.diameter as (typeof BAR_TYPES)[number]))
+        .map((b) => ({ barType: b.diameter, quantity: b.qtyPerUnit }))
+      await quickInsertRebarContinue(ctx.p1, ctx.p2, lengthMm, {
+        bars: bars.length ? bars : [{ barType: 'D10', quantity: 1 }],
+        color: normalizeSegmentColor(matchedVariant.color),
+        unitId: matchedVariant.id,
+        unitCode: matchedVariant.code ?? null,
+        unitName: matchedVariant.name ?? null,
+        markNumber: markNumber ?? matchedVariant.mark_number ?? null,
+        label:
+          markNumber != null
+            ? String(markNumber)
+            : matchedVariant.code ?? matchedVariant.name ?? computeNextSegmentLabel(),
+        skipVariantResolution: true,
+      })
+      return
+    }
+
+    const bars = source.bars
+      .filter((b) => BAR_TYPES.includes(b.diameter as (typeof BAR_TYPES)[number]))
+      .map((b) => ({ barType: b.diameter, quantity: b.qtyPerUnit }))
+    const finalBars = bars.length ? bars : [{ barType: 'D10', quantity: 1 }]
+    await quickInsertRebarContinue(ctx.p1, ctx.p2, lengthMm, {
+      bars: finalBars,
+      color,
+      unitId: null,
+      unitCode: null,
+      unitName: null,
+      markNumber,
+      label: markNumber != null ? String(markNumber) : computeNextSegmentLabel(),
+      skipVariantResolution: true,
+    })
+  }
+  submitLengthPresetDrawLengthRef.current = submitLengthPresetDrawLength
 
   async function submitQuickMarkArbitraryLength(ctx: QuickMarkPickModalState, mmStr: string) {
     const v = parseInt(mmStr.trim(), 10)
@@ -2284,16 +2493,7 @@ export function DrawingViewer({
               value={activeDrawingUnitId ?? ''}
               onChange={(ev) => {
                 const v = ev.target.value ? ev.target.value : null
-                setActiveDrawingUnitId(v)
-                if (v) {
-                  const picked = persistedActiveUnits.find((u) => u.id === v) ?? null
-                  if (picked) {
-                    setActiveTemplateId(picked.template_id ?? `shape:${picked.shape_type}`)
-                    setActiveTemplateColor(normalizeSegmentColor(picked.color))
-                  }
-                  pushRecentUnitId(projectId, v)
-                  setUnitPrefsTick((x) => x + 1)
-                }
+                selectActiveDrawingUnit(v, { openLengthPresetPicker: true })
               }}
               className="max-w-[200px] rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
               title="先に選ぶと、線を描くだけで色・円番号・鉄筋・unit_id が自動適用されます（推奨）。詳細入力は Alt+描画。"
@@ -2329,6 +2529,14 @@ export function DrawingViewer({
                     プレビュー
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => setLengthPresetSelectUnit(activeUnit)}
+                  className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-100"
+                  title="長さプリセットを選択"
+                >
+                  {activeLengthPresetGroup ? activeLengthPresetGroup.name : 'プリセットなし'}
+                </button>
               </>
             ) : null}
           </div>
@@ -2418,6 +2626,189 @@ export function DrawingViewer({
         activeTemplateId={activeTemplateId ?? ''}
         activeTemplateColor={activeTemplateColor}
       />
+
+      {lengthPresetSelectUnit && (
+        <div className="fixed inset-0 z-[46] flex items-center justify-center bg-black/45 p-4">
+          <div
+            className="w-full max-w-lg rounded-xl bg-white shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="length-preset-select-title"
+          >
+            <div className="border-b border-border px-6 py-4">
+              <h2 id="length-preset-select-title" className="text-base font-semibold">
+                長さプリセットを選択
+              </h2>
+              <p className="mt-1 text-xs text-muted">
+                {lengthPresetSelectUnit.name} で線を描くときに使う長さ候補を選べます。
+              </p>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveLengthPresetGroupId(null)
+                  setLengthPresetSelectUnit(null)
+                }}
+                className={`mb-3 w-full rounded-lg border px-4 py-3 text-left transition-colors ${
+                  activeLengthPresetGroupId == null
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border bg-white hover:bg-gray-50'
+                }`}
+              >
+                <div className="text-sm font-semibold">プリセットなし</div>
+                <div className="mt-1 text-xs text-muted">
+                  この図面上で使う長さを、線を描くたびに直接決めます。
+                </div>
+              </button>
+              {lengthPresetGroups.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted">
+                  保存済みの長さプリセットがありません。
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {lengthPresetGroups.map((group) => (
+                    <button
+                      key={group.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveLengthPresetGroupId(group.id)
+                        setLengthPresetSelectUnit(null)
+                      }}
+                      className={`w-full rounded-lg border px-4 py-3 text-left transition-colors ${
+                        activeLengthPresetGroupId === group.id
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border bg-white hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-semibold">{group.name}</span>
+                      </div>
+                      {group.description ? (
+                        <div className="mt-1 text-xs text-muted">{group.description}</div>
+                      ) : null}
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {group.lengths.slice(0, 12).map((len) => (
+                          <span
+                            key={len}
+                            className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-mono text-slate-700"
+                          >
+                            {len.toLocaleString('ja-JP')}
+                          </span>
+                        ))}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end border-t border-border px-6 py-3">
+              <button
+                type="button"
+                onClick={() => setLengthPresetSelectUnit(null)}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:bg-gray-50"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lengthPresetDrawModal && (
+        <div className="fixed inset-0 z-[46] flex items-center justify-center bg-black/45 p-4">
+          <div
+            className="w-full max-w-md rounded-xl bg-white shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="length-preset-draw-title"
+          >
+            <div className="border-b border-border px-6 py-4">
+              <h2 id="length-preset-draw-title" className="text-base font-semibold">
+                長さを選択
+              </h2>
+              <p className="mt-1 text-xs text-muted">
+                {lengthPresetDrawModal.preset.name} の長さをクリック、または数字キーで選択できます。
+              </p>
+            </div>
+            <div className="px-6 py-4">
+              <div className="space-y-2">
+                {lengthPresetDrawModal.preset.lengths.map((len, idx) => (
+                  <button
+                    key={`${len}-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      const ctx = lengthPresetDrawModal
+                      setLengthPresetDrawModal(null)
+                      void submitLengthPresetDrawLength(ctx, len, idx < 7 ? idx + 1 : null)
+                    }}
+                    className="flex w-full items-center gap-3 rounded-lg border border-border bg-white px-3 py-2.5 text-left hover:border-primary hover:bg-primary/5"
+                  >
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-xs font-bold text-slate-700">
+                      {idx < 7 ? idx + 1 : '-'}
+                    </div>
+                    <div className="font-mono text-sm font-semibold">
+                      {len.toLocaleString('ja-JP')}mm
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="mt-4 rounded-lg border border-dashed border-border bg-slate-50 px-3 py-3">
+                <label className="mb-1 block text-xs font-medium text-muted">
+                  任意の長さ
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    inputMode="numeric"
+                    value={lengthPresetCustomMm}
+                    onChange={(e) => setLengthPresetCustomMm(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return
+                      e.preventDefault()
+                      const v = Number.parseInt(lengthPresetCustomMm.trim(), 10)
+                      if (!Number.isFinite(v) || v <= 0) return
+                      const ctx = lengthPresetDrawModal
+                      setLengthPresetDrawModal(null)
+                      setLengthPresetCustomMm('')
+                      void submitLengthPresetDrawLength(ctx, v, null)
+                    }}
+                    placeholder="例: 3000"
+                    className="min-w-0 flex-1 rounded-md border border-border bg-white px-2 py-1.5 text-sm font-mono outline-none focus:border-primary"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const v = Number.parseInt(lengthPresetCustomMm.trim(), 10)
+                      if (!Number.isFinite(v) || v <= 0) return
+                      const ctx = lengthPresetDrawModal
+                      setLengthPresetDrawModal(null)
+                      setLengthPresetCustomMm('')
+                      void submitLengthPresetDrawLength(ctx, v, null)
+                    }}
+                    className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-hover"
+                  >
+                    使用
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end border-t border-border px-6 py-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setLengthPresetDrawModal(null)
+                  setLengthPresetCustomMm('')
+                }}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:bg-gray-50"
+              >
+                キャンセル
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {quickMarkPickModal && (
         <div className="fixed inset-0 z-[45] flex items-center justify-center bg-black/45 p-4">
