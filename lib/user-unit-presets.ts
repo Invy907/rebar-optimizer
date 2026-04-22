@@ -15,6 +15,7 @@ export type UserUnitPresetPayload = {
   bars: UnitBar[]
   spacing_mm: string
   pitch_mm: string
+  l_shape_count?: string
   description: string
   detail_spec: UnitDetailSpec
   detail_geometry: UnitDetailGeometry | null

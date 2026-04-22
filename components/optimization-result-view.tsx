@@ -31,6 +31,7 @@ export function OptimizationResultView({
 }) {
   void stockLengthMm
   void projectId
+  void segmentLabelById
   void segmentDrawingIdById
   void focusSegmentId
   void unitCalculationRows
@@ -44,34 +45,25 @@ export function OptimizationResultView({
     }
 
     const lines: string[] = []
-    lines.push(
-      [
-        'bar_type',
-        'stock_index',
-        'piece_seq',
-        'segment_label',
-        'segment_id',
-        'length_mm',
-        'stock_used_mm',
-        'stock_waste_mm',
-      ].join(','),
-    )
-    for (const stock of result.stocks) {
-      stock.pieces.forEach((piece) => {
-        const label = segmentLabelById[piece.segmentId] ?? ''
-        const row = [
-          stock.barType,
-          String(stock.stockIndex),
-          String(piece.sequenceNo),
-          label,
-          piece.segmentId,
-          String(piece.lengthMm),
-          String(stock.usedLengthMm),
-          String(stock.wasteMm),
-        ].map(escapeCsvField)
-        lines.push(row.join(','))
-      })
-    }
+    lines.push(['item', 'value'].join(','))
+    lines.push(['total_stock_count', String(result.totalStockCount)].map(escapeCsvField).join(','))
+    lines.push(['total_waste_mm', String(result.totalWasteMm)].map(escapeCsvField).join(','))
+    lines.push(['waste_ratio', String(result.wasteRatio)].map(escapeCsvField).join(','))
+    lines.push('')
+    lines.push(['bar_type', 'stock_count', 'total_used_mm', 'total_waste_mm', 'waste_ratio'].join(','))
+    Object.entries(result.byBarType).forEach(([barType, row]) => {
+      lines.push(
+        [
+          barType,
+          String(row.stockCount),
+          String(row.totalUsed),
+          String(row.totalWaste),
+          String(row.wasteRatio),
+        ]
+          .map(escapeCsvField)
+          .join(','),
+      )
+    })
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -81,7 +73,7 @@ export function OptimizationResultView({
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
-  }, [result, segmentLabelById])
+  }, [result])
 
   const handlePrint = useCallback(() => {
     window.print()

@@ -4,7 +4,6 @@ import Link from 'next/link'
 import type {
   Project,
   DrawingSegment,
-  OptimizationRun,
   Drawing,
   Unit,
 } from '@/lib/types/database'
@@ -51,13 +50,6 @@ export default async function OptimizePage({
     )
     .returns<DrawingSegment[]>()
 
-  const { data: pastRuns } = await supabase
-    .from('optimization_runs')
-    .select('*')
-    .eq('project_id', projectId)
-    .order('created_at', { ascending: false })
-    .returns<OptimizationRun[]>()
-
   const { data: units } = await supabase
     .from('units')
     .select('*')
@@ -84,7 +76,6 @@ export default async function OptimizePage({
       <OptimizeClient
         projectId={projectId}
         segments={segments ?? []}
-        pastRuns={pastRuns ?? []}
         initialFocusSegmentId={segmentId}
         units={units ?? []}
       />

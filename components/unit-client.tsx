@@ -102,6 +102,7 @@ type DraftUnit = {
   bars: UnitBar[]
   spacing_mm: string
   pitch_mm: string
+  l_shape_count: string
   description: string
   is_active: boolean
   template_id: string | null
@@ -122,6 +123,7 @@ const DEFAULT_DRAFT: DraftUnit = {
   bars: [],
   spacing_mm: '',
   pitch_mm: '',
+  l_shape_count: '',
   description: '',
   is_active: true,
   template_id: null,
@@ -176,6 +178,10 @@ function draftFromUnit(unit: Unit): DraftUnit {
     pitch_mm:
       unit.pitch_mm != null
         ? `@${unit.pitch_mm}`
+        : '',
+    l_shape_count:
+      unit.l_shape_count != null && Number.isFinite(unit.l_shape_count)
+        ? String(Math.max(0, Math.floor(unit.l_shape_count)))
         : '',
     description: unit.description ?? '',
     is_active: unit.is_active,
@@ -338,7 +344,8 @@ function draftToPresetPayload(draft: DraftUnit): UserUnitPresetPayload {
     mark_number: DEFAULT_DRAFT.mark_number,
     bars: [],
     spacing_mm: '',
-    pitch_mm: '',
+    pitch_mm: draft.pitch_mm,
+    l_shape_count: draft.l_shape_count,
     description: draft.description,
     detail_spec: spec,
     detail_geometry: draft.detail_geometry ? JSON.parse(JSON.stringify(draft.detail_geometry)) : null,
@@ -555,6 +562,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
       ...prev,
       shape_type: p.shape_type,
       description: p.description ?? prev.description,
+      l_shape_count: p.l_shape_count ?? '',
       detail_spec: spec,
       detail_geometry: p.detail_geometry
         ? JSON.parse(JSON.stringify(p.detail_geometry))
@@ -876,6 +884,11 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
         return
       }
       const resolvedPitchMm = parseSpacingMm(draft.pitch_mm)
+      const resolvedLShapeCountRaw = Number.parseInt(draft.l_shape_count, 10)
+      const resolvedLShapeCount =
+        Number.isFinite(resolvedLShapeCountRaw) && resolvedLShapeCountRaw >= 0
+          ? Math.floor(resolvedLShapeCountRaw)
+          : null
       if (resolvedPitchMm == null || resolvedPitchMm <= 0) {
         setModalTab('detail')
         setDetailEditMode('pitch')
@@ -912,6 +925,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
         bars: aggregateBarsFromRebarLayout(normalizeRebarLayout(draft.rebar_layout)).filter((b) => b.qtyPerUnit > 0),
         spacing_mm: null,
         pitch_mm: resolvedPitchMm,
+        l_shape_count: resolvedLShapeCount,
         description: draft.description.trim() || null,
         is_active: true,
         template_id: null,
@@ -946,13 +960,14 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
           .eq('id', editingUnit.id)
           .select()
           .single()
-        if (error && /(detail_(spec|geometry)|rebar_layout|pitch_mm)/i.test(error.message)) {
+        if (error && /(detail_(spec|geometry)|rebar_layout|pitch_mm|l_shape_count)/i.test(error.message)) {
           alert(
             '保存に失敗しました: ユニット詳細用カラムが不足しています。\n\n' +
               'Supabase マイグレーションを適用してください:\n' +
               '- 20260318_add_unit_detail_shape.sql\n' +
               '- 20260318_add_unit_rebar_layout.sql\n' +
-              '- 20260421_add_unit_pitch_mm.sql',
+              '- 20260421_add_unit_pitch_mm.sql\n' +
+              '- 20260422_add_unit_l_shape_count.sql',
           )
           return
         }
@@ -974,13 +989,14 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
           .insert({ ...payload, user_id: user.id })
           .select()
           .single()
-        if (error && /(detail_(spec|geometry)|rebar_layout|pitch_mm)/i.test(error.message)) {
+        if (error && /(detail_(spec|geometry)|rebar_layout|pitch_mm|l_shape_count)/i.test(error.message)) {
           alert(
             '保存に失敗しました: ユニット詳細用カラムが不足しています。\n\n' +
               'Supabase マイグレーションを適用してください:\n' +
               '- 20260318_add_unit_detail_shape.sql\n' +
               '- 20260318_add_unit_rebar_layout.sql\n' +
-              '- 20260421_add_unit_pitch_mm.sql',
+              '- 20260421_add_unit_pitch_mm.sql\n' +
+              '- 20260422_add_unit_l_shape_count.sql',
           )
           return
         }
@@ -1451,6 +1467,27 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                     onRebarLayoutChange={setDraftRebarLayout}
                     aggregationSlot={
                       <div className="rounded-lg border border-border bg-white p-3 shadow-sm">
+                        <div className="mb-4 border-b border-border pb-3">
+                          <label className="inline-flex flex-col gap-1.5 text-xs font-semibold text-foreground">
+                            <span>L字本数</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={draft.l_shape_count ?? ''}
+                              onChange={(e) => {
+                                const raw = e.target.value
+                                if (raw === '') {
+                                  setDraft((p) => ({ ...p, l_shape_count: '' }))
+                                  return
+                                }
+                                const next = Math.max(0, Math.floor(Number.parseInt(raw, 10) || 0))
+                                setDraft((p) => ({ ...p, l_shape_count: String(next) }))
+                              }}
+                              placeholder="例: 1"
+                              className="h-9 w-20 rounded-md border border-slate-200 bg-slate-50/60 px-2.5 text-[13px] font-medium text-slate-800 outline-none transition-colors placeholder:text-[12px] placeholder:font-normal placeholder:text-slate-300 focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/10"
+                            />
+                          </label>
+                        </div>
                         <div className="text-xs font-semibold text-foreground">鉄筋構成（自動集計）</div>
                         <p className="mt-1 text-[10px] leading-snug text-muted">
                           キャンバス上に配置した鉄筋から自動で集計しています。

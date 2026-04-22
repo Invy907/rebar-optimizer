@@ -129,6 +129,7 @@ export interface Unit {
   bars: UnitBar[]
   spacing_mm: number | null
   pitch_mm?: number | null
+  l_shape_count?: number | null
   description: string | null
   is_active: boolean
   template_id: string | null
