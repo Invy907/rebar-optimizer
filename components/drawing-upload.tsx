@@ -57,12 +57,16 @@ export function DrawingUpload({ projectId }: { projectId: string }) {
 
     const fileType = ext === 'pdf' ? 'pdf' : ext === 'png' ? 'png' : 'jpg'
 
-    const { error: dbError } = await supabase.from('drawings').insert({
-      project_id: projectId,
-      file_name: file.name,
-      file_path: filePath,
-      file_type: fileType,
-    })
+    const { data: createdDrawing, error: dbError } = await supabase
+      .from('drawings')
+      .insert({
+        project_id: projectId,
+        file_name: file.name,
+        file_path: filePath,
+        file_type: fileType,
+      })
+      .select('id')
+      .single()
 
     if (dbError) {
       alert('図面情報の保存に失敗しました: ' + dbError.message)
@@ -80,7 +84,7 @@ export function DrawingUpload({ projectId }: { projectId: string }) {
     }
 
     setUploading(false)
-    router.refresh()
+    router.push(`/projects/${projectId}/drawings/${createdDrawing.id}`)
   }
 
   async function generatePdfThumbnail(

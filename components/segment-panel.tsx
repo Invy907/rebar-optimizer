@@ -2,15 +2,15 @@
 
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
 import Link from 'next/link'
+import { UnitShapeThumbnail } from '@/components/unit-client'
 import {
   decodeSegmentMeta,
   encodeSegmentMeta,
   getSegmentResolvedMarkNumber,
   getSegmentBars,
-  getSegmentBarsSummary,
   getSegmentColor,
   getSegmentEffectiveLengthMm,
   legacyFieldsFromBars,
@@ -86,6 +86,7 @@ export function SegmentPanel({
   )
   const [bulkTemplateId, setBulkTemplateId] = useState('')
   const [bulkColor, setBulkColor] = useState<SegmentColor>(activeTemplateColor)
+  const [previewUnit, setPreviewUnit] = useState<Unit | null>(null)
   const resolvedBulkTemplateId =
     bulkTemplateId && templateOptions.some((t) => t.id === bulkTemplateId)
       ? bulkTemplateId
@@ -112,38 +113,99 @@ export function SegmentPanel({
   const selectedNote = selected
     ? (decoded?.meta?.note ?? decoded?.legacyNote ?? '')
     : ''
-  const selectedAssignedUnit =
-    selected?.unit_id != null
-      ? units.find((u) => u.id === selected.unit_id) ?? null
-      : null
-
   // 円番号(ユニット由来)で集計し、表示長さは線分に保存された実長を優先（マスタ変更で既存線が変わらない）
-  type CircleRow = { len: number; no: number | null; count: number; color: SegmentColor }
-  const circleRows = (() => {
+  const getSegmentSummaryGroup = (seg: DrawingSegment, color: SegmentColor) => {
+    const linkedUnit =
+      seg.unit_id != null ? units.find((u) => u.id === seg.unit_id) ?? null : null
+    const sameColorUnit =
+      units.find(
+        (u) =>
+          u.is_active !== false &&
+          isPersistedUnitId(u.id) &&
+          normalizeSegmentColor(u.color) === color,
+      ) ?? null
+    const name =
+      linkedUnit?.name?.trim() ||
+      seg.unit_name?.trim() ||
+      sameColorUnit?.name?.trim() ||
+      getSegmentColorLabelJa(color)
+
+    return {
+      key: `color:${color}`,
+      name,
+      unit: linkedUnit ?? sameColorUnit ?? null,
+    }
+  }
+
+  type CircleRow = {
+    len: number
+    no: number | null
+    count: number
+    color: SegmentColor
+    groupKey: string
+    groupName: string
+    groupUnit: Unit | null
+  }
+  type CircleGroup = {
+    key: string
+    name: string
+    color: SegmentColor
+    unit: Unit | null
+    rows: CircleRow[]
+  }
+  const circleGroups = (() => {
     const m = new Map<string, CircleRow>()
     for (const seg of rebarSegments) {
       const no = getSegmentResolvedMarkNumber(seg, units)
       const color = getSegmentColor(seg, units)
       const len = getSegmentEffectiveLengthMm(seg, units)
-      const key = `${color}::${no ?? 'none'}`
+      const group = getSegmentSummaryGroup(seg, color)
+      const key = `${group.key}::${no ?? 'none'}::${len}`
       const existing = m.get(key)
       if (!existing) {
-        m.set(key, { len, no, count: 1, color })
+        m.set(key, {
+          len,
+          no,
+          count: 1,
+          color,
+          groupKey: group.key,
+          groupName: group.name,
+          groupUnit: group.unit,
+        })
       } else {
         existing.count += 1
       }
     }
-    return [...m.values()].sort((a, b) => {
-      const byColor = compareSegmentColorOrder(a.color, b.color)
-      if (byColor !== 0) return byColor
-      if (b.len !== a.len) return b.len - a.len
-      const aNo = a.no ?? Number.MAX_SAFE_INTEGER
-      const bNo = b.no ?? Number.MAX_SAFE_INTEGER
-      if (aNo !== bNo) return aNo - bNo
-      return 0
-    })
-  })()
 
+    const groups = new Map<string, CircleGroup>()
+    for (const row of m.values()) {
+      const existing = groups.get(row.groupKey)
+      if (existing) {
+        existing.rows.push(row)
+      } else {
+        groups.set(row.groupKey, {
+          key: row.groupKey,
+          name: row.groupName || '使用したユニット名',
+          color: row.color,
+          unit: row.groupUnit,
+          rows: [row],
+        })
+      }
+    }
+
+    return [...groups.values()]
+      .sort((a, b) => compareSegmentColorOrder(a.color, b.color))
+      .map((group) => ({
+        ...group,
+        rows: group.rows.sort((a, b) => {
+          if (b.len !== a.len) return b.len - a.len
+          const aNo = a.no ?? Number.MAX_SAFE_INTEGER
+          const bNo = b.no ?? Number.MAX_SAFE_INTEGER
+          if (aNo !== bNo) return aNo - bNo
+          return 0
+        }),
+      }))
+  })()
   return (
     <div className="w-72 shrink-0 flex flex-col rounded-lg border border-border bg-white overflow-hidden">
       {/* Header */}
@@ -478,97 +540,6 @@ export function SegmentPanel({
               </div>
             </div>
           )}
-          {/* ユニット連結（登録済みユニットから選択） */}
-          {units.filter((u) => u.is_active !== false && isPersistedUnitId(u.id)).length > 0 &&
-            !selectedIsSpacing && (
-            <div>
-              <div className="mb-1 flex items-center gap-1.5">
-                <label className="block text-xs text-muted">ユニット割当</label>
-                {(selectedAssignedUnit?.detail_spec || selectedAssignedUnit?.detail_geometry) && (
-                  <span className="rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
-                    詳細形状あり
-                  </span>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-                {units
-                  .filter((u) => u.is_active !== false && isPersistedUnitId(u.id))
-                  .slice()
-                  .sort((a, b) => {
-                    const ca = normalizeSegmentColor(a.color)
-                    const cb = normalizeSegmentColor(b.color)
-                    const byColor = compareSegmentColorOrder(ca, cb)
-                    if (byColor !== 0) return byColor
-                    const ma = a.mark_number ?? 0
-                    const mb = b.mark_number ?? 0
-                    if (ma !== mb) return ma - mb
-                    return (a.code ?? a.name ?? '').localeCompare(
-                      b.code ?? b.name ?? '',
-                      'ja',
-                    )
-                  })
-                  .map((u) => {
-                    const uc = normalizeSegmentColor(u.color)
-                    const stroke = getSegmentStrokeHex(uc, false)
-                    const tint = getSegmentStrokeHex(uc, true)
-                    const isAssigned = selected.unit_id === u.id
-                    return (
-                      <button
-                        key={u.id}
-                        type="button"
-                        title={u.name}
-                        onClick={() => {
-                          const bars: SegmentBarItem[] = u.bars.map((b) => ({
-                            barType: b.diameter,
-                            quantity: b.qtyPerUnit,
-                          }))
-                          const legacy = legacyFieldsFromBars(bars)
-                          const { meta, legacyNote } = decodeSegmentMeta(selected.memo)
-                          const memo = encodeSegmentMeta({
-                            v: 1,
-                            color: uc,
-                            bars,
-                            note: meta?.note ?? legacyNote ?? null,
-                          })
-                          const markNum = u.mark_number ?? 1
-                          onUpdate(selected.id, {
-                            memo,
-                            bar_type: legacy.bar_type,
-                            quantity: legacy.quantity,
-                            label: u.code ?? u.name,
-                            unit_id: u.id,
-                            unit_code: u.code ?? null,
-                            unit_name: u.name ?? null,
-                            mark_number: markNum,
-                          })
-                        }}
-                        className={`rounded-md border text-[10px] px-2 py-0.5 transition-colors font-medium ${
-                          isAssigned
-                            ? 'ring-1 ring-offset-0.5'
-                            : 'hover:brightness-95'
-                        }`}
-                        style={{
-                          borderColor: stroke,
-                          background: isAssigned ? stroke : '#fff',
-                          color: isAssigned ? '#fff' : tint,
-                        }}
-                      >
-                        {u.code ?? u.name}
-                      </button>
-                    )
-                  })}
-              </div>
-              {selected.unit_id && (
-                <button
-                  type="button"
-                  className="mt-1.5 text-[11px] text-muted hover:text-foreground underline"
-                  onClick={() => onUpdate(selected.id, { ...CLEAR_UNIT_LINK })}
-                >
-                  割当を解除（参照のみ外す）
-                </button>
-              )}
-            </div>
-          )}
           <div>
             <label className="block text-xs text-muted mb-0.5">メモ</label>
             <textarea
@@ -601,18 +572,37 @@ export function SegmentPanel({
           </div>
         ) : (
           <div>
-            <div className="px-4 py-3 border-b border-border space-y-1 text-[13px] font-semibold font-mono">
-              {circleRows
-                .filter((r) => r.count > 0)
-                .map((r) => (
-                  <div
-                    key={`${r.color}-${r.no ?? 'none'}`}
-                    style={{ color: getSegmentStrokeHex(r.color, false) }}
-                  >
-                    {circledNumber(r.no)}
-                    {r.len.toLocaleString()} × {r.count}
+            <div className="px-4 py-3 border-b border-border space-y-4">
+              {circleGroups.map((group) => (
+                <div key={group.key} className="space-y-1">
+                  {group.unit ? (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewUnit(group.unit!)}
+                      className="text-left text-[11px] font-semibold text-muted underline-offset-2 hover:text-foreground hover:underline"
+                    >
+                      {group.name || '使用したユニット名'}
+                    </button>
+                  ) : (
+                    <div className="text-[11px] font-semibold text-muted">
+                      {group.name || '使用したユニット名'}
+                    </div>
+                  )}
+                  <div className="space-y-1 text-[13px] font-semibold font-mono">
+                    {group.rows
+                      .filter((r) => r.count > 0)
+                      .map((r) => (
+                        <div
+                          key={`${r.groupKey}-${r.no ?? 'none'}-${r.len}`}
+                          style={{ color: getSegmentStrokeHex(r.color, false) }}
+                        >
+                          {circledNumber(r.no)}
+                          {r.len.toLocaleString()} × {r.count}
+                        </div>
+                      ))}
                   </div>
-                ))}
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -677,6 +667,36 @@ export function SegmentPanel({
                 0,
               )}本
             </span>
+          </div>
+        </div>
+      )}
+      {previewUnit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <h3 className="text-base font-semibold text-foreground">
+                {previewUnit.name}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setPreviewUnit(null)}
+                className="text-sm text-muted hover:text-foreground"
+              >
+                閉じる
+              </button>
+            </div>
+            <div className="p-5">
+              <UnitShapeThumbnail unit={previewUnit} large />
+            </div>
+            <div className="flex justify-end border-t border-border px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setPreviewUnit(null)}
+                className="rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
+              >
+                閉じる
+              </button>
+            </div>
           </div>
         </div>
       )}

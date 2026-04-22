@@ -1,3 +1,4 @@
+// components/optimize-client.tsx
 'use client'
 
 import { useMemo, useState } from 'react'
@@ -5,11 +6,11 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import type { DrawingSegment, OptimizationRun, Unit } from '@/lib/types/database'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
-import { optimize, type PieceInput, type OptimizationOutput, type AlgorithmType } from '@/lib/optimizer'
+import { optimize, type PieceInput, type OptimizationOutput } from '@/lib/optimizer'
 import { OptimizationResultView } from '@/components/optimization-result-view'
+import { UnitShapeThumbnail } from '@/components/unit-client'
 import {
   getSegmentBars,
-  getSegmentBarsSummary,
   getSegmentColor,
   getSegmentEffectiveLengthMm,
   getSegmentResolvedMarkNumber,
@@ -17,7 +18,9 @@ import {
 } from '@/lib/segment-meta'
 import {
   compareSegmentColorOrder,
+  getSegmentColorLabelJa,
   getSegmentStrokeHex,
+  normalizeSegmentColor,
 } from '@/lib/segment-colors'
 import {
   buildUnitCalculationRows,
@@ -43,8 +46,6 @@ export function OptimizeClient({
   )
 
   const [stockLength, setStockLength] = useState(6000)
-  const [algorithm, setAlgorithm] = useState<AlgorithmType>('best-fit')
-  const [cuttingLossMm, setCuttingLossMm] = useState(0)
   const [pieceLengthAdjustmentMm, setPieceLengthAdjustmentMm] = useState(-30)
   const [result, setResult] = useState<OptimizationOutput | null>(null)
   const [barSummaryTable, setBarSummaryTable] = useState<BarSummaryRow[] | null>(null)
@@ -59,6 +60,7 @@ export function OptimizeClient({
   const [calculating, setCalculating] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [previewUnit, setPreviewUnit] = useState<Unit | null>(null)
   const supabase = createClient()
   const router = useRouter()
 
@@ -103,8 +105,7 @@ export function OptimizeClient({
     setCalculating(true)
     queueMicrotask(() => {
       const output = optimize(pieces, stockLength, {
-        algorithm,
-        cuttingLossMm: cuttingLossMm || 0,
+        algorithm: 'best-fit',
       })
       setResult(output)
       setBarSummaryTable(buildBarSummaryTable(pieces))
@@ -188,13 +189,47 @@ export function OptimizeClient({
   return (
     <div className="space-y-6">
       {/* 入力サマリ */}
+      {previewUnit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <h3 className="text-base font-semibold text-foreground">
+                {previewUnit.name}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setPreviewUnit(null)}
+                className="text-sm text-muted hover:text-foreground"
+              >
+                閉じる
+              </button>
+            </div>
+            <div className="p-5">
+              <UnitShapeThumbnail unit={previewUnit} large />
+            </div>
+            <div className="flex justify-end border-t border-border px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setPreviewUnit(null)}
+                className="rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <section className="rounded-lg border border-border bg-white p-5">
         <h2 className="text-base font-semibold mb-3">入力データ</h2>
         {segments.filter((s) => s.bar_type !== 'SPACING').length === 0 ? (
           <p className="text-sm text-muted">線分データがありません。</p>
         ) : (
           <div className="space-y-4">
-            <CircleInputSummary groups={circleInputSummaryGroups} />
+            <CircleInputSummary
+              groups={circleInputSummaryGroups}
+              onPreviewUnit={setPreviewUnit}
+            />
             <p className="text-sm text-muted">
               合計{' '}
               {segments
@@ -210,6 +245,36 @@ export function OptimizeClient({
         )}
       </section>
 
+      <section className="rounded-lg border border-border bg-white p-5">
+        <h2 className="text-base font-semibold mb-3">顧客情報</h2>
+        <div className="grid gap-3 md:grid-cols-3">
+          <label className="text-sm text-muted">
+            会社名
+            <input
+              value={customerCompany}
+              onChange={(e) => setCustomerCompany(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary"
+            />
+          </label>
+          <label className="text-sm text-muted">
+            住所
+            <input
+              value={customerAddress}
+              onChange={(e) => setCustomerAddress(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary"
+            />
+          </label>
+          <label className="text-sm text-muted">
+            顧客名
+            <input
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary"
+            />
+          </label>
+        </div>
+      </section>
+
       {/* 計算設定 */}
       <section className="rounded-lg border border-border bg-white p-5">
         <h2 className="text-base font-semibold mb-3">計算設定</h2>
@@ -222,31 +287,6 @@ export function OptimizeClient({
               type="number"
               value={stockLength}
               onChange={(e) => setStockLength(parseInt(e.target.value) || 6000)}
-              className="w-40 rounded-lg border border-border px-3 py-2 text-sm font-mono outline-none focus:border-primary"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-muted mb-1">
-              配置アルゴリズム
-            </label>
-            <select
-              value={algorithm}
-              onChange={(e) => setAlgorithm(e.target.value as AlgorithmType)}
-              className="w-40 rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary bg-white"
-            >
-              <option value="best-fit">Best Fit（残りが最小になる場所・推奨）</option>
-              <option value="first-fit">First Fit（比較用・最初に空く場所）</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-muted mb-1">
-              1カットあたりの切断損失 (mm)
-            </label>
-            <input
-              type="number"
-              min={0}
-              value={cuttingLossMm}
-              onChange={(e) => setCuttingLossMm(Math.max(0, parseInt(e.target.value) || 0))}
               className="w-40 rounded-lg border border-border px-3 py-2 text-sm font-mono outline-none focus:border-primary"
             />
           </div>
@@ -300,35 +340,6 @@ export function OptimizeClient({
       {/* 結果 */}
       {result && !calculating && (
         <section className="space-y-4">
-          <div className="rounded-lg border border-border bg-white p-5">
-            <h2 className="text-base font-semibold mb-3">顧客情報</h2>
-            <div className="grid gap-3 md:grid-cols-3">
-              <label className="text-sm text-muted">
-                会社名
-                <input
-                  value={customerCompany}
-                  onChange={(e) => setCustomerCompany(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary"
-                />
-              </label>
-              <label className="text-sm text-muted">
-                住所
-                <input
-                  value={customerAddress}
-                  onChange={(e) => setCustomerAddress(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary"
-                />
-              </label>
-              <label className="text-sm text-muted">
-                顧客名
-                <input
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary"
-                />
-              </label>
-            </div>
-          </div>
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">計算結果</h2>
             <button
@@ -436,9 +447,12 @@ interface CircleSummaryLine {
 }
 
 interface CircleInputSummaryGroup {
+  key: string
+  name: string
   color: SegmentColor
   /** 例: D10×1, D13×4（同一色・同一構成の線分をまとめる） */
   barsSummary: string
+  unit: Unit | null
   lines: CircleSummaryLine[]
 }
 
@@ -449,27 +463,64 @@ function circledNumberForSummary(n: number): string {
   return n >= 1 && n <= chars.length ? chars[n - 1]! : `(${n})`
 }
 
+function isPersistedUnitId(id: string): boolean {
+  return !id.startsWith('mock-') && !id.startsWith('local-')
+}
+
+function getSegmentSummaryGroup(
+  seg: DrawingSegment,
+  color: SegmentColor,
+  units?: Unit[] | null,
+): { key: string; name: string; unit: Unit | null } {
+  const linkedUnit =
+    seg.unit_id != null ? units?.find((u) => u.id === seg.unit_id) ?? null : null
+  const sameColorUnit =
+    units?.find(
+      (u) =>
+        u.is_active !== false &&
+        isPersistedUnitId(u.id) &&
+        normalizeSegmentColor(u.color) === color,
+    ) ?? null
+  const name =
+    linkedUnit?.name?.trim() ||
+    seg.unit_name?.trim() ||
+    sameColorUnit?.name?.trim() ||
+    getSegmentColorLabelJa(color)
+
+  return {
+    key: `color:${color}`,
+    name,
+    unit: linkedUnit ?? sameColorUnit ?? null,
+  }
+}
+
 function buildCircleInputSummaryGroups(
   segments: DrawingSegment[],
   units?: Unit[] | null,
 ): CircleInputSummaryGroup[] {
   const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
-  type AccRow = CircleSummaryLine & { barsSummary: string }
+  type AccRow = CircleSummaryLine & {
+    groupKey: string
+    groupName: string
+    groupUnit: Unit | null
+  }
   const countsByKey = new Map<string, AccRow>()
 
   for (const seg of rebarSegments) {
     const color = getSegmentColor(seg, units)
     const lengthMm = getSegmentEffectiveLengthMm(seg, units)
     const markNo = getSegmentResolvedMarkNumber(seg, units)
-    const barsSummary = getSegmentBarsSummary(seg, units)
-    const key = `${lengthMm}|${color}|${markNo ?? 'none'}|${barsSummary}`
+    const group = getSegmentSummaryGroup(seg, color, units)
+    const key = `${group.key}|${lengthMm}|${markNo ?? 'none'}`
     const cur =
       countsByKey.get(key) ??
       ({
         lengthMm,
         color,
         markNo,
-        barsSummary,
+        groupKey: group.key,
+        groupName: group.name,
+        groupUnit: group.unit,
         count: 0,
       } satisfies AccRow)
     cur.count++
@@ -480,8 +531,6 @@ function buildCircleInputSummaryGroups(
   flat.sort((a, b) => {
     const byColor = compareSegmentColorOrder(a.color, b.color)
     if (byColor !== 0) return byColor
-    const byBars = a.barsSummary.localeCompare(b.barsSummary, 'ja')
-    if (byBars !== 0) return byBars
     if (b.lengthMm !== a.lengthMm) return b.lengthMm - a.lengthMm
     const aM = a.markNo ?? Number.MAX_SAFE_INTEGER
     const bM = b.markNo ?? Number.MAX_SAFE_INTEGER
@@ -491,12 +540,15 @@ function buildCircleInputSummaryGroups(
   const groupKeyOrder: string[] = []
   const groupMap = new Map<string, CircleInputSummaryGroup>()
   for (const r of flat) {
-    const gk = `${r.color}::${r.barsSummary}`
+    const gk = r.groupKey
     if (!groupMap.has(gk)) {
       groupKeyOrder.push(gk)
       groupMap.set(gk, {
+        key: gk,
+        name: r.groupName || '使用したユニット名',
         color: r.color,
-        barsSummary: r.barsSummary,
+        barsSummary: r.groupName || '使用したユニット名',
+        unit: r.groupUnit,
         lines: [],
       })
     }
@@ -514,8 +566,10 @@ function buildCircleInputSummaryGroups(
 
 function CircleInputSummary({
   groups,
+  onPreviewUnit,
 }: {
   groups: CircleInputSummaryGroup[]
+  onPreviewUnit: (unit: Unit) => void
 }) {
   if (groups.length === 0) return null
   return (
@@ -528,12 +582,16 @@ function CircleInputSummary({
             g.barsSummary && g.barsSummary !== '-' ? g.barsSummary : '（鉄筋未設定）'
           return (
             <div key={`${g.color}::${g.barsSummary}`} className="space-y-1">
-              <p
-                className="font-mono text-sm font-semibold leading-snug"
-                style={{ color: hex }}
+              <button
+                type="button"
+                onClick={() => {
+                  if (g.unit) onPreviewUnit(g.unit)
+                }}
+                className="text-left text-sm font-semibold leading-snug text-muted underline-offset-2 hover:text-foreground hover:underline disabled:no-underline"
+                disabled={!g.unit}
               >
                 {barsLabel}
-              </p>
+              </button>
               <ul className="space-y-1 pl-0">
                 {g.lines.map((r) => {
                   const markPrefix =

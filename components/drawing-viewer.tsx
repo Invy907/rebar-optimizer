@@ -15,6 +15,7 @@ import {
   getSegmentBars,
   getSegmentColor,
   getSegmentEffectiveLengthMm,
+  getSegmentResolvedMarkNumber,
   getSegmentMarkNumberForCanvas,
   legacyFieldsFromBars,
   parseMarkFromUnitCode,
@@ -27,6 +28,7 @@ import {
 } from '@/lib/drawing-unit-prefs'
 import { UnitShapeThumbnail, UnitVariantLengthList } from '@/components/unit-client'
 import {
+  compareSegmentColorOrder,
   getSegmentColorLabelJa,
   getSegmentStrokeHex,
   isSegmentColor,
@@ -86,9 +88,116 @@ type LengthPresetDrawModalState = {
 }
 
 const BAR_TYPES = ['D10', 'D13', 'D16', 'D19', 'D22', 'D25', 'D29', 'D32']
+const MIN_REBAR_LENGTH_MM = 10
+const CIRCLED_SUMMARY_NUMS = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
+
+type DrawingPrintSummaryRow = {
+  len: number
+  no: number | null
+  count: number
+  color: SegmentColor
+}
+
+type DrawingPrintSummaryGroup = {
+  key: string
+  name: string
+  color: SegmentColor
+  rows: DrawingPrintSummaryRow[]
+}
 
 function isPersistedUnitId(id: string): boolean {
   return !id.startsWith('mock-') && !id.startsWith('local-')
+}
+
+function circledSummaryNumber(n: number | null): string {
+  if (n == null) return ''
+  const chars = [...CIRCLED_SUMMARY_NUMS]
+  return n >= 1 && n <= chars.length ? chars[n - 1]! : `(${n})`
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function buildDrawingPrintSummaryGroups(
+  segments: DrawingSegment[],
+  units: Unit[],
+): DrawingPrintSummaryGroup[] {
+  type AccRow = DrawingPrintSummaryRow & {
+    groupKey: string
+    groupName: string
+  }
+  const rows = new Map<string, AccRow>()
+  const rebarSegments = segments.filter(
+    (s) => !(s.bar_type === 'SPACING' && s.quantity === 0),
+  )
+
+  for (const seg of rebarSegments) {
+    const color = getSegmentColor(seg, units)
+    const linkedUnit =
+      seg.unit_id != null ? units.find((u) => u.id === seg.unit_id) ?? null : null
+    const sameColorUnit =
+      units.find(
+        (u) =>
+          u.is_active !== false &&
+          isPersistedUnitId(u.id) &&
+          normalizeSegmentColor(u.color) === color,
+      ) ?? null
+    const groupKey = `color:${color}`
+    const groupName =
+      linkedUnit?.name?.trim() ||
+      seg.unit_name?.trim() ||
+      sameColorUnit?.name?.trim() ||
+      getSegmentColorLabelJa(color)
+    const len = getSegmentEffectiveLengthMm(seg, units)
+    const no = getSegmentResolvedMarkNumber(seg, units)
+    const key = `${groupKey}::${no ?? 'none'}::${len}`
+    const existing = rows.get(key)
+    if (existing) {
+      existing.count += 1
+    } else {
+      rows.set(key, {
+        len,
+        no,
+        count: 1,
+        color,
+        groupKey,
+        groupName,
+      })
+    }
+  }
+
+  const groups = new Map<string, DrawingPrintSummaryGroup>()
+  for (const row of rows.values()) {
+    const existing = groups.get(row.groupKey)
+    if (existing) {
+      existing.rows.push(row)
+    } else {
+      groups.set(row.groupKey, {
+        key: row.groupKey,
+        name: row.groupName,
+        color: row.color,
+        rows: [row],
+      })
+    }
+  }
+
+  return [...groups.values()]
+    .sort((a, b) => compareSegmentColorOrder(a.color, b.color))
+    .map((group) => ({
+      ...group,
+      rows: group.rows.sort((a, b) => {
+        if (b.len !== a.len) return b.len - a.len
+        const aNo = a.no ?? Number.MAX_SAFE_INTEGER
+        const bNo = b.no ?? Number.MAX_SAFE_INTEGER
+        return aNo - bNo
+      }),
+    }))
 }
 
 function getUnitCodeBase(u: Pick<Unit, 'code' | 'name' | 'id'>): string {
@@ -335,6 +444,13 @@ export function DrawingViewer({
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 })
   const [panning, setPanning] = useState(false)
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 })
+  const [printSummaryPos, setPrintSummaryPos] = useState<Point>({ x: 24, y: 24 })
+  const [printSummaryScale, setPrintSummaryScale] = useState(1)
+  const [printModalImageUrl, setPrintModalImageUrl] = useState<string | null>(null)
+  const [summaryDragging, setSummaryDragging] = useState(false)
+  const summaryDragRef = useRef<Point | null>(null)
+  const summaryBoxRef = useRef<HTMLDivElement>(null)
+  const printPreviewRef = useRef<HTMLDivElement>(null)
 
   const supabase = createClient()
   const router = useRouter()
@@ -369,6 +485,38 @@ export function DrawingViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 上記
   }, [serverUnits.length])
 
+  useEffect(() => {
+    if (!summaryDragging) return
+
+    function handleMove(ev: MouseEvent) {
+      const container = printPreviewRef.current
+      const drag = summaryDragRef.current
+      if (!container || !drag) return
+      const rect = container.getBoundingClientRect()
+      const nextX = ev.clientX - rect.left - drag.x
+      const nextY = ev.clientY - rect.top - drag.y
+      const boxEl = summaryBoxRef.current
+      const boxW = (boxEl?.offsetWidth ?? 120) * printSummaryScale
+      const boxH = (boxEl?.offsetHeight ?? 80) * printSummaryScale
+      setPrintSummaryPos({
+        x: Math.max(0, Math.min(nextX, Math.max(0, rect.width - boxW))),
+        y: Math.max(0, Math.min(nextY, Math.max(0, rect.height - boxH))),
+      })
+    }
+
+    function handleUp() {
+      summaryDragRef.current = null
+      setSummaryDragging(false)
+    }
+
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleUp)
+    }
+  }, [summaryDragging, printSummaryScale])
+
   const effectiveUnits = useMemo(() => {
     const base = serverUnits.length > 0 ? serverUnits : (clientUnits ?? [])
     if (localExtraUnits.length === 0) return base
@@ -398,6 +546,10 @@ export function DrawingViewer({
     (a.created_at ?? '').localeCompare(b.created_at ?? ''),
   )
   const labelById = getSegmentLabelMap(segments)
+  const drawingPrintSummaryGroups = useMemo(
+    () => buildDrawingPrintSummaryGroups(segments, effectiveUnits),
+    [segments, effectiveUnits],
+  )
 
   function computeNextSegmentLabel(): string {
     const last = segmentsSortedForLabels[segmentsSortedForLabels.length - 1]
@@ -1309,6 +1461,14 @@ export function DrawingViewer({
         const kind = tool === 'spacing' ? 'spacing' : 'rebar'
         const useModal = e.altKey
 
+        if (kind === 'rebar' && snappedLen < MIN_REBAR_LENGTH_MM) {
+          alert(`${MIN_REBAR_LENGTH_MM}mm未満の鉄筋線分は作成できません。`)
+          setDrawing(false)
+          setStartPoint(null)
+          setCurrentPoint(null)
+          return
+        }
+
         if (useModal) {
           openNewSegmentForm(kind, p1, p2, { precomputedLengthMm: snappedLen })
         } else if (kind === 'spacing') {
@@ -1417,6 +1577,11 @@ export function DrawingViewer({
     lengthMm: number,
     seed: QuickRebarInsertSeed | null,
   ) {
+    if (lengthMm < MIN_REBAR_LENGTH_MM) {
+      alert(`${MIN_REBAR_LENGTH_MM}mm未満の鉄筋線分は作成できません。`)
+      return
+    }
+
     const nextLabel = computeNextSegmentLabel()
     const templateId = activeTemplateId ?? templateSummaries[0]?.id ?? null
     const preferredColor = normalizeSegmentColor(activeTemplateColor)
@@ -2027,6 +2192,10 @@ export function DrawingViewer({
       alert('有効な長さ (mm) を入力してください。')
       return
     }
+    if (!isSpacing && lengthMm < MIN_REBAR_LENGTH_MM) {
+      alert(`${MIN_REBAR_LENGTH_MM}mm未満の鉄筋線分は作成できません。`)
+      return
+    }
     if (!isSpacing && bars.length === 0) {
       alert('鉄筋種別と数量を入力してください。')
       return
@@ -2197,6 +2366,11 @@ export function DrawingViewer({
 
     const lengthA = Math.max(1, Math.round(segment.length_mm * t))
     const lengthB = Math.max(1, segment.length_mm - lengthA)
+    const isSpacingSegment = segment.bar_type === 'SPACING' && segment.quantity === 0
+    if (!isSpacingSegment && (lengthA < MIN_REBAR_LENGTH_MM || lengthB < MIN_REBAR_LENGTH_MM)) {
+      alert(`${MIN_REBAR_LENGTH_MM}mm未満の鉄筋線分ができる位置では分割できません。`)
+      return
+    }
 
     const unitFields = {
       unit_id: segment.unit_id ?? null,
@@ -2449,6 +2623,103 @@ export function DrawingViewer({
     }
   }
 
+  function openPrintPreview() {
+    const canvas = canvasRef.current
+    if (!canvas || !imgLoaded) return
+    setPrintModalImageUrl(canvas.toDataURL('image/png'))
+  }
+
+  function handlePrintDrawing() {
+    const canvas = canvasRef.current
+    const preview = printPreviewRef.current
+    const dataUrl = printModalImageUrl
+    if (!canvas || !preview || !dataUrl) return
+
+    const rect = preview.getBoundingClientRect()
+    const scaleX = rect.width > 0 ? canvas.width / rect.width : 1
+    const scaleY = rect.height > 0 ? canvas.height / rect.height : 1
+    const summaryLeft = Math.round(printSummaryPos.x * scaleX)
+    const summaryTop = Math.round(printSummaryPos.y * scaleY)
+    const summaryScale = Math.max(0.7, Math.min(1.8, printSummaryScale))
+    const summaryHtml =
+      drawingPrintSummaryGroups.length > 0
+        ? `<div class="summary" style="left:${summaryLeft}px;top:${summaryTop}px;--sum-scale:${summaryScale};">${drawingPrintSummaryGroups
+            .map((group) => {
+              const color = getSegmentStrokeHex(group.color, false)
+              const rows = group.rows
+                .map((row) =>
+                  `<div class="summary-row" style="color:${color};">${escapeHtml(
+                    `${circledSummaryNumber(row.no)}${row.len.toLocaleString('ja-JP')} × ${row.count}`,
+                  )}</div>`,
+                )
+                .join('')
+              return `<section class="summary-group"><h2>${escapeHtml(group.name)}</h2>${rows}</section>`
+            })
+            .join('')}</div>`
+        : ''
+
+    const win = window.open('', '_blank')
+    if (!win) {
+      window.print()
+      return
+    }
+
+    win.document.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>drawing-print</title>
+  <style>
+    @page { margin: 8mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #fff; font-family: Arial, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; }
+    .sheet { position: relative; width: ${canvas.width}px; max-width: 100vw; margin: 0 auto; }
+    .sheet img { display: block; width: 100%; height: auto; }
+    .summary {
+      position: absolute;
+      min-width: 0;
+      padding: 0;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+      font-weight: 700;
+      line-height: 1.32;
+    }
+    .summary-group + .summary-group { margin-top: calc(18px * var(--sum-scale, 1)); }
+    .summary h2 {
+      margin: 0 0 calc(8px * var(--sum-scale, 1));
+      color: #64748b;
+      font-size: calc(18px * var(--sum-scale, 1));
+      line-height: 1.2;
+    }
+    .summary-row {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: calc(18px * var(--sum-scale, 1));
+      white-space: nowrap;
+    }
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .sheet { max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <img src="${dataUrl}" alt="drawing" />
+    ${summaryHtml}
+  </div>
+  <script>
+    window.addEventListener('load', () => {
+      window.focus();
+      window.print();
+    });
+  </script>
+</body>
+</html>`)
+    win.document.close()
+  }
+
   return (
     <div className="flex flex-1 gap-2 min-h-0">
       {/* Canvas area */}
@@ -2554,6 +2825,15 @@ export function DrawingViewer({
           >
             ↺ 90°
           </button>
+          <button
+            type="button"
+            onClick={openPrintPreview}
+            disabled={!imgLoaded}
+            className="rounded-md bg-gray-100 px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+            title="印刷プレビューを開く"
+          >
+            印刷
+          </button>
           <span className="text-xs text-muted ml-2">
             {splitArmedSegmentId
               ? '分割: 図面上の線をクリックして分割点を選択（Escでキャンセル）'
@@ -2626,6 +2906,136 @@ export function DrawingViewer({
         activeTemplateId={activeTemplateId ?? ''}
         activeTemplateColor={activeTemplateColor}
       />
+
+      {printModalImageUrl && (
+        <div className="fixed inset-0 z-[60] flex flex-col bg-black/55 p-4">
+          <div className="mx-auto flex w-full max-w-6xl flex-1 min-h-0 flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <div>
+                <h2 className="text-sm font-semibold">印刷プレビュー</h2>
+                <p className="text-xs text-muted">
+                  入力データのボックスをドラッグして位置を決めてから印刷してください。
+                </p>
+                {drawingPrintSummaryGroups.length > 0 && (
+                  <div className="mt-2 inline-flex items-center gap-2 rounded border border-border bg-slate-50 px-2 py-1 text-xs">
+                    <span className="text-muted">サイズ</span>
+                    <button
+                      type="button"
+                      onClick={() => setPrintSummaryScale((prev) => Math.max(0.7, Number((prev - 0.1).toFixed(2))))}
+                      className="rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-white"
+                      aria-label="decrease summary size"
+                    >
+                      -
+                    </button>
+                    <input
+                      type="range"
+                      min={70}
+                      max={180}
+                      step={5}
+                      value={Math.round(printSummaryScale * 100)}
+                      onChange={(e) => {
+                        const next = Number(e.target.value) / 100
+                        setPrintSummaryScale(Math.max(0.7, Math.min(1.8, next)))
+                      }}
+                      aria-label="summary size"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setPrintSummaryScale((prev) => Math.min(1.8, Number((prev + 0.1).toFixed(2))))}
+                      className="rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-white"
+                      aria-label="increase summary size"
+                    >
+                      +
+                    </button>
+                    <span className="w-10 text-right font-mono text-[11px] text-slate-700">
+                      {Math.round(printSummaryScale * 100)}%
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePrintDrawing}
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+                >
+                  印刷
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPrintModalImageUrl(null)
+                    setSummaryDragging(false)
+                    summaryDragRef.current = null
+                  }}
+                  className="rounded-md border border-border px-4 py-2 text-sm text-muted hover:bg-gray-50"
+                >
+                  閉じる
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto bg-slate-100 p-4">
+              <div
+                ref={printPreviewRef}
+                className="relative mx-auto w-fit max-w-full overflow-hidden bg-white shadow"
+              >
+                <img
+                  src={printModalImageUrl}
+                  alt="drawing print preview"
+                  className="block max-h-[72vh] max-w-full select-none"
+                  draggable={false}
+                />
+                {drawingPrintSummaryGroups.length > 0 && (
+                  <div
+                    ref={summaryBoxRef}
+                    className="absolute z-20 min-w-[150px] cursor-move select-none rounded-md border border-slate-300/70 bg-white/85 px-3 py-2 shadow-sm backdrop-blur-[1px]"
+                    style={{
+                      left: printSummaryPos.x,
+                      top: printSummaryPos.y,
+                      transform: `scale(${printSummaryScale})`,
+                      transformOrigin: 'top left',
+                    }}
+                    onMouseDown={(ev) => {
+                      ev.preventDefault()
+                      ev.stopPropagation()
+                      summaryDragRef.current = {
+                        x: ev.clientX - ev.currentTarget.getBoundingClientRect().left,
+                        y: ev.clientY - ev.currentTarget.getBoundingClientRect().top,
+                      }
+                      setSummaryDragging(true)
+                    }}
+                    title="Drag to set print position"
+                  >
+                    <div className="space-y-4">
+                      {drawingPrintSummaryGroups.map((group) => {
+                        const color = getSegmentStrokeHex(group.color, false)
+                        return (
+                          <section key={group.key}>
+                            <div className="mb-1 text-sm font-bold leading-tight text-slate-500">
+                              {group.name}
+                            </div>
+                            <div className="space-y-0.5 font-mono text-[13px] font-bold leading-tight">
+                              {group.rows.map((row) => (
+                                <div
+                                  key={`${group.key}-${row.no ?? 'none'}-${row.len}`}
+                                  style={{ color }}
+                                >
+                                  {circledSummaryNumber(row.no)}
+                                  {row.len.toLocaleString('ja-JP')} × {row.count}
+                                </div>
+                              ))}
+                            </div>
+                          </section>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {lengthPresetSelectUnit && (
         <div className="fixed inset-0 z-[46] flex items-center justify-center bg-black/45 p-4">
