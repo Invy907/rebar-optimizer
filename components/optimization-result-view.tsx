@@ -1,3 +1,5 @@
+// components/optimization-result-view.tsx
+
 'use client'
 
 import { useCallback, useMemo } from 'react'
@@ -49,13 +51,13 @@ export function OptimizationResultView({
       const key = row.unitId ?? `name:${row.unitName}`
       const existing = map.get(key)
       if (existing) {
-        existing.totalCount += row.computedCount
+        existing.totalCount += row.unitSummaryCount
       } else {
         map.set(key, {
           key,
           unitName: row.unitName,
           shapeLengthMm: row.unitShapeLengthMm,
-          totalCount: row.computedCount,
+          totalCount: row.unitSummaryCount,
         })
       }
     }

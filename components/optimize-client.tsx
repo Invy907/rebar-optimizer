@@ -296,6 +296,19 @@ interface BarSummaryRow {
   total: number
 }
 
+function compareBarTypeDesc(a: string, b: string): number {
+  const parse = (value: string) => {
+    const match = value.match(/^D(\d+)$/i)
+    return match ? Number.parseInt(match[1] ?? '', 10) : null
+  }
+  const an = parse(a)
+  const bn = parse(b)
+  if (an != null && bn != null && an !== bn) return bn - an
+  if (an != null && bn == null) return -1
+  if (an == null && bn != null) return 1
+  return a.localeCompare(b)
+}
+
 function buildBarSummaryTable(pieces: PieceInput[]): BarSummaryRow[] {
   const map = new Map<number, Map<string, number>>()
   for (const p of pieces) {
@@ -512,7 +525,7 @@ function BarSummarySection({
 }) {
   const allBarTypes = Array.from(
     new Set(rows.flatMap((r) => Object.keys(r.byBarType))),
-  ).sort()
+  ).sort(compareBarTypeDesc)
   const totals: Record<string, number> = {}
   let grandTotal = 0
   for (const bt of allBarTypes) totals[bt] = 0

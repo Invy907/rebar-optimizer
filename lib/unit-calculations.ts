@@ -1,6 +1,6 @@
 import type { DrawingSegment, Unit, UnitRebarSpacingItem } from '@/lib/types/database'
 import {
-  getSegmentBars,
+  decodeSegmentMeta,
   getSegmentColor,
   getSegmentEffectiveLengthMm,
   resolveLinkedUnit,
@@ -19,6 +19,7 @@ export type UnitCalculationRow = {
   baseCount: number
   barCount: number
   computedCount: number
+  unitSummaryCount: number
   intervalLengthMm: number
   intervalTimesCount: number
   formulaText: string
@@ -163,11 +164,26 @@ export function getUnitIntervalLengthMm(unit: Unit | null | undefined): number {
   }, 0)
 }
 
-function applyRounding(raw: number, mode: UnitCountRoundingMode): number {
-  if (!Number.isFinite(raw) || raw <= 0) return 0
-  if (mode === 'floor') return Math.floor(raw)
-  if (mode === 'ceil') return Math.ceil(raw)
-  return Math.round(raw)
+export function normalizeLengthForPitch(lengthMm: number): number {
+  if (!Number.isFinite(lengthMm) || lengthMm <= 0) return 0
+  return Math.round(lengthMm / 100) * 100
+}
+
+export function getPitchBaseCount(lengthMm: number, pitchMm: number): number {
+  if (!Number.isFinite(pitchMm) || pitchMm <= 0) return 0
+  const normalizedLengthMm = normalizeLengthForPitch(lengthMm)
+  if (normalizedLengthMm <= 0) return 0
+  return Math.round(normalizedLengthMm / pitchMm)
+}
+
+function getSegmentCalculationBarCount(segment: DrawingSegment): number {
+  const { meta } = decodeSegmentMeta(segment.memo)
+  const memoCount = meta?.bars?.reduce((sum, item) => {
+    const qty = Math.max(0, Math.floor(Number(item.quantity) || 0))
+    return sum + qty
+  }, 0)
+  if (memoCount != null && memoCount > 0) return memoCount
+  return Math.max(0, Math.floor(Number(segment.quantity) || 0))
 }
 
 /**
@@ -195,16 +211,18 @@ export function buildUnitCalculationRows(
   units: Unit[],
   roundingMode: UnitCountRoundingMode = 'round',
 ): UnitCalculationRow[] {
+  void roundingMode
   return segments
     .filter((segment) => segment.bar_type !== 'SPACING')
     .map((segment) => {
       const unit = resolveUnitForCalc(segment, units)
       const lengthMm = getSegmentEffectiveLengthMm(segment, units)
       const pitchMm = getUnitPitchMm(unit)
-      const bars = getSegmentBars(segment, units)
-      const barCount = bars.reduce((sum, item) => sum + item.quantity, 0)
-      const baseCount = pitchMm && pitchMm > 0 ? applyRounding(lengthMm / pitchMm, roundingMode) : 0
+      const barCount = getSegmentCalculationBarCount(segment)
+      const normalizedLengthMm = normalizeLengthForPitch(lengthMm)
+      const baseCount = pitchMm && pitchMm > 0 ? getPitchBaseCount(lengthMm, pitchMm) : 0
       const computedCount = baseCount * barCount
+      const unitSummaryCount = baseCount
       const intervalLengthMm = getUnitIntervalLengthMm(unit)
       const unitShapeLengthMm = getUnitShapeLengthMm(unit)
       const unitLShapeCount = Math.max(0, Math.floor(unit?.l_shape_count ?? 0))
@@ -219,11 +237,12 @@ export function buildUnitCalculationRows(
         baseCount,
         barCount,
         computedCount,
+        unitSummaryCount,
         intervalLengthMm,
         intervalTimesCount: intervalLengthMm * computedCount,
         formulaText:
           pitchMm && pitchMm > 0
-            ? `${lengthMm} ÷ ${pitchMm} = ${(lengthMm / pitchMm).toFixed(2)} → ${baseCount} × ${barCount}`
+            ? `${lengthMm} -> ${normalizedLengthMm} -> ${normalizedLengthMm} ÷ ${pitchMm} = ${(normalizedLengthMm / pitchMm).toFixed(2)} -> ${baseCount}`
             : `${lengthMm} / ピッチ未設定`,
         unitShapeLengthMm,
         unitLShapeCount,
