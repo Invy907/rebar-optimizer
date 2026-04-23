@@ -106,7 +106,7 @@ export function OptimizeClient({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="optimize-print-root space-y-6">
       {/* 入力サマリ */}
       {previewUnit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
@@ -139,7 +139,7 @@ export function OptimizeClient({
         </div>
       )}
 
-      <section className="rounded-lg border border-border bg-white p-5">
+      <section className="optimize-print-input rounded-lg border border-border bg-white p-5">
         <h2 className="text-base font-semibold mb-3">入力データ</h2>
         {segments.filter((s) => s.bar_type !== 'SPACING').length === 0 ? (
           <p className="text-sm text-muted">線分データがありません。</p>
@@ -164,7 +164,7 @@ export function OptimizeClient({
         )}
       </section>
 
-      <section className="rounded-lg border border-border bg-white p-5">
+      <section className="optimize-print-customer rounded-lg border border-border bg-white p-5">
         <h2 className="text-base font-semibold mb-3">顧客情報</h2>
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-sm text-muted">
@@ -195,7 +195,7 @@ export function OptimizeClient({
       </section>
 
       {/* 計算設定 */}
-      <section className="rounded-lg border border-border bg-white p-5">
+      <section className="optimize-print-settings rounded-lg border border-border bg-white p-5">
         <h2 className="text-base font-semibold mb-3">計算設定</h2>
         <div className="flex w-full flex-wrap items-end gap-4">
           <div>
@@ -231,7 +231,7 @@ export function OptimizeClient({
           <button
             onClick={handleCalculate}
             disabled={segments.length === 0 || calculating}
-            className="ml-auto rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50 transition-colors flex items-center gap-2 min-w-[140px] justify-center"
+            className="ml-auto flex min-w-[140px] items-center justify-center gap-2 rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50 print:hidden"
           >
             {calculating ? (
               <>
@@ -258,7 +258,7 @@ export function OptimizeClient({
 
       {/* 結果 */}
       {result && !calculating && (
-        <section className="space-y-4">
+        <section className="optimize-print-results space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">計算結果</h2>
           </div>

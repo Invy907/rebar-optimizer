@@ -16,7 +16,7 @@ export function DashboardNav({ userEmail }: { userEmail: string }) {
   }
 
   return (
-    <header className="border-b border-border bg-white">
+    <header className="border-b border-border bg-white print:hidden">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
         <Link
           href="/projects"

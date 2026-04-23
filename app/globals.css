@@ -33,3 +33,47 @@ button,
 [role='button'] {
   cursor: pointer;
 }
+
+@media print {
+  @page {
+    margin: 10mm;
+  }
+
+  body {
+    background: white;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  .optimize-print-root {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 14px !important;
+  }
+
+  .optimize-print-customer {
+    order: 1 !important;
+  }
+
+  .optimize-print-input {
+    order: 2 !important;
+  }
+
+  .optimize-print-settings {
+    order: 3 !important;
+  }
+
+  .optimize-print-results {
+    order: 4 !important;
+  }
+
+  .optimize-print-root section,
+  .optimize-print-root > div {
+    break-inside: avoid;
+  }
+}

@@ -17,6 +17,13 @@ export default async function DashboardLayout({
   return (
     <div className="min-h-screen">
       <DashboardNav userEmail={user.email ?? ''} />
+      <div className="hidden print:block">
+        <img
+          src="/logo.png"
+          alt="サプロン建材工業株式会社"
+          className="mb-6 h-10 w-auto"
+        />
+      </div>
       <main className="mx-auto max-w-6xl px-4 py-8">
         {children}
       </main>

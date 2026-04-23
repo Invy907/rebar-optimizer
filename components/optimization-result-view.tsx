@@ -115,6 +115,13 @@ export function OptimizationResultView({
   }, [result])
 
   const handlePrint = useCallback(() => {
+    const originalTitle = document.title
+    document.title = ''
+    const restoreTitle = () => {
+      document.title = originalTitle
+      window.removeEventListener('afterprint', restoreTitle)
+    }
+    window.addEventListener('afterprint', restoreTitle)
     window.print()
   }, [])
 
@@ -158,7 +165,7 @@ export function OptimizationResultView({
         )}
       </div>
 
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-2 print:hidden">
         <button
           type="button"
           onClick={handleExportCsv}
