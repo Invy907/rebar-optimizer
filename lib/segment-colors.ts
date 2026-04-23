@@ -12,6 +12,16 @@ export const SEGMENT_COLOR_DEFINITIONS = [
   { id: 'lime', labelJa: '黄緑', stroke: '#65a30d', strokeSelected: '#4d7c0f', tint: '#f7fee7' },
   { id: 'slate', labelJa: '灰', stroke: '#475569', strokeSelected: '#334155', tint: '#f1f5f9' },
   { id: 'fuchsia', labelJa: 'マゼンタ', stroke: '#c026d3', strokeSelected: '#a21caf', tint: '#fdf4ff' },
+  { id: 'rose', labelJa: '紅', stroke: '#e11d48', strokeSelected: '#be123c', tint: '#fff1f2' },
+  { id: 'sky', labelJa: '空', stroke: '#0284c7', strokeSelected: '#0369a1', tint: '#f0f9ff' },
+  { id: 'teal', labelJa: '青緑', stroke: '#0d9488', strokeSelected: '#0f766e', tint: '#f0fdfa' },
+  { id: 'yellow', labelJa: '黄', stroke: '#ca8a04', strokeSelected: '#a16207', tint: '#fefce8' },
+  { id: 'indigo', labelJa: '藍', stroke: '#4f46e5', strokeSelected: '#4338ca', tint: '#eef2ff' },
+  { id: 'stone', labelJa: '石', stroke: '#57534e', strokeSelected: '#44403c', tint: '#fafaf9' },
+  { id: 'brown', labelJa: '茶', stroke: '#92400e', strokeSelected: '#78350f', tint: '#fffbeb' },
+  { id: 'black', labelJa: '黒', stroke: '#111827', strokeSelected: '#030712', tint: '#f9fafb' },
+  { id: 'navy', labelJa: '紺', stroke: '#1e3a8a', strokeSelected: '#1e40af', tint: '#eff6ff' },
+  { id: 'coral', labelJa: '珊瑚', stroke: '#f97316', strokeSelected: '#ea580c', tint: '#fff7ed' },
 ] as const
 
 export type SegmentColor = (typeof SEGMENT_COLOR_DEFINITIONS)[number]['id']
