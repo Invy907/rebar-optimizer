@@ -1,8 +1,15 @@
 'use client'
 
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import type { OptimizationOutput } from '@/lib/optimizer'
 import type { UnitCalculationRow, UnitCountRoundingMode } from '@/lib/unit-calculations'
+
+interface UnitResultSummary {
+  key: string
+  unitName: string
+  shapeLengthMm: number
+  totalCount: number
+}
 
 export function OptimizationResultView({
   result,
@@ -34,8 +41,38 @@ export function OptimizationResultView({
   void segmentLabelById
   void segmentDrawingIdById
   void focusSegmentId
-  void unitCalculationRows
   void roundingMode
+
+  const unitSummaries = useMemo<UnitResultSummary[]>(() => {
+    const map = new Map<string, UnitResultSummary>()
+    for (const row of unitCalculationRows) {
+      const key = row.unitId ?? `name:${row.unitName}`
+      const existing = map.get(key)
+      if (existing) {
+        existing.totalCount += row.computedCount
+      } else {
+        map.set(key, {
+          key,
+          unitName: row.unitName,
+          shapeLengthMm: row.unitShapeLengthMm,
+          totalCount: row.computedCount,
+        })
+      }
+    }
+    return Array.from(map.values()).filter((s) => s.totalCount > 0)
+  }, [unitCalculationRows])
+
+  const noSummaryReason = useMemo<string | null>(() => {
+    if (unitSummaries.length > 0) return null
+    if (unitCalculationRows.length === 0) {
+      return 'ユニット別集計の対象となる線分がありません（線分にユニットが割り当てられていない、または同色の永続化済みユニットがありません）。'
+    }
+    const hasZeroCount = unitCalculationRows.some((r) => r.computedCount === 0)
+    if (hasZeroCount) {
+      return 'ピッチ・本数から算出した本数が 0 のため集計に含まれません（長さ < ピッチ、または本数が 0）。'
+    }
+    return 'ユニット別集計の対象が見つかりませんでした。'
+  }, [unitSummaries, unitCalculationRows])
 
   const handleExportCsv = useCallback(() => {
     const escapeCsvField = (value: string): string => {
@@ -97,6 +134,27 @@ export function OptimizationResultView({
           </div>
         </div>
       )}
+
+      <div className="rounded-lg border border-border bg-white p-4">
+        <h3 className="mb-3 text-sm font-semibold">フック付</h3>
+        {unitSummaries.length > 0 ? (
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+            {unitSummaries.map((s) => (
+              <div
+                key={s.key}
+                className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm leading-snug"
+              >
+                <div className="font-medium text-foreground">{s.unitName}</div>
+                <div className="font-mono text-base font-semibold tabular-nums">
+                  {s.shapeLengthMm.toLocaleString('ja-JP')} × {s.totalCount.toLocaleString('ja-JP')}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted">{noSummaryReason}</p>
+        )}
+      </div>
 
       <div className="flex justify-end gap-2">
         <button

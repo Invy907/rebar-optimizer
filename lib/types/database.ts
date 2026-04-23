@@ -101,6 +101,8 @@ export interface UnitRebarSpacingItem {
   label: string
   label_x?: number
   label_y?: number
+  /** true なら形状長さ合計から除外する（断面寸法など）。未設定/false = 経路長さとして合算 */
+  is_excluded?: boolean
 }
 
 export interface UnitRebarAnnotationItem {
@@ -108,12 +110,16 @@ export interface UnitRebarAnnotationItem {
   x: number
   y: number
   text: string
+  /** true なら形状長さ合計から除外する（断面寸法など）。未設定/false = 経路長さとして合算 */
+  is_excluded?: boolean
 }
 
 export interface UnitRebarLayout {
   rebars: UnitRebarLayoutItem[]
   spacings: UnitRebarSpacingItem[]
   annotations: UnitRebarAnnotationItem[]
+  /** ユニット保存時に計算済みの形状長さ (mm)。L字補正適用済み */
+  shape_length_mm?: number | null
 }
 
 /** DB の units テーブル行。拡張フィールドは nullable で後方互換を維持 */

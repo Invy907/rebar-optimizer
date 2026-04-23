@@ -1,5 +1,11 @@
 import type { DrawingSegment, Unit, UnitRebarSpacingItem } from '@/lib/types/database'
-import { getSegmentBars, getSegmentEffectiveLengthMm, resolveLinkedUnit } from '@/lib/segment-meta'
+import {
+  getSegmentBars,
+  getSegmentColor,
+  getSegmentEffectiveLengthMm,
+  resolveLinkedUnit,
+} from '@/lib/segment-meta'
+import { normalizeSegmentColor } from '@/lib/segment-colors'
 
 export type UnitCountRoundingMode = 'round' | 'floor' | 'ceil'
 
@@ -16,6 +22,10 @@ export type UnitCalculationRow = {
   intervalLengthMm: number
   intervalTimesCount: number
   formulaText: string
+  /** 結果表示用: ユニット形状の折れ線合計長さ（L字本数>0 の場合は 20mm 減算済） */
+  unitShapeLengthMm: number
+  /** 結果表示用: ユニットの L 字本数（DB の l_shape_count） */
+  unitLShapeCount: number
 }
 
 function parseMm(value: string | number | null | undefined): number | null {
@@ -64,6 +74,85 @@ function isDiagonalSpacing(spacing: UnitRebarSpacingItem, unit: Unit): boolean {
   return dx > 1 && dy > 1
 }
 
+/**
+ * 結果表示用: ユニットの形状長さ合計 (mm)。
+ *
+ * 優先順:
+ * 1. rebar_layout.shape_length_mm (保存済み計算値)
+ * 2. spacings + annotations の数値ラベル合計 — is_excluded === true のみ除外
+ *    (デフォルト ON: 未設定は経路長さとして合算)
+ * 3. detail_geometry の実線分合計 (フォールバック)
+ *
+ * l_shape_count > 0 のとき最終値から 20mm を一度だけ減算 (2, 3 の場合のみ適用。
+ * 1 は保存時に適用済み)。
+ */
+export function getUnitShapeLengthMm(unit: Unit | null | undefined): number {
+  if (!unit) return 0
+  const lCount = Math.max(0, Math.floor(unit.l_shape_count ?? 0))
+  const applyLAdjust = (n: number) => (lCount > 0 ? n - 20 : n)
+
+  // 1. 保存済み計算値
+  const stored = unit.rebar_layout?.shape_length_mm
+  if (typeof stored === 'number' && Number.isFinite(stored)) return stored
+
+  // 2. annotations の数値合計 (is_excluded === true のみ除外)
+  // 間隔線(spacings)は視覚用のみで計算対象外
+  const annotations = unit.rebar_layout?.annotations ?? []
+  const numericAnnotations = annotations
+    .map((a) => ({ value: parseMm(a.text), excluded: a.is_excluded === true }))
+    .filter((a): a is { value: number; excluded: boolean } => a.value != null && a.value > 0)
+
+  if (numericAnnotations.length > 0) {
+    const sum = numericAnnotations
+      .filter((a) => !a.excluded)
+      .reduce((s, a) => s + a.value, 0)
+    return applyLAdjust(sum)
+  }
+
+  // 3. フォールバック: detail_geometry の実線分合計
+  const geo = unit.detail_geometry
+  if (!geo || !geo.points?.length || !geo.segments?.length) return 0
+  const byKey = new Map(geo.points.map((p) => [p.key, p]))
+  let total = 0
+  for (const seg of geo.segments) {
+    const a = byKey.get(seg.from)
+    const b = byKey.get(seg.to)
+    if (!a || !b) continue
+    total += Math.hypot(b.x - a.x, b.y - a.y)
+  }
+  return applyLAdjust(Math.round(total))
+}
+
+/**
+ * ユニット保存前に rebar_layout.shape_length_mm を計算して返す。
+ * annotations の数値ラベルを合算し、is_excluded === true の項目のみ除外。
+ * 間隔線(spacings)は視覚用のため計算対象外。
+ * l_shape_count > 0 なら合計から 20 減算。
+ * 有効な数値が一件もなければ null を返す。
+ */
+export function computeShapeLengthMm(
+  _spacings: unknown,
+  annotations: { text: string; is_excluded?: boolean }[],
+  lShapeCount: number,
+): number | null {
+  function extractMm(raw: string): number | null {
+    const m = String(raw ?? '').trim().match(/@?\s*(\d+)/)
+    if (!m) return null
+    const v = Number.parseInt(m[1] ?? '', 10)
+    return Number.isFinite(v) && v > 0 ? v : null
+  }
+
+  const values = annotations
+    .filter((a) => a.is_excluded !== true)
+    .map((a) => extractMm(a.text))
+    .filter((v): v is number => v != null)
+
+  if (values.length === 0) return null
+  const sum = values.reduce((s, v) => s + v, 0)
+  const lCount = Math.max(0, Math.floor(lShapeCount))
+  return lCount > 0 ? sum - 20 : sum
+}
+
 export function getUnitIntervalLengthMm(unit: Unit | null | undefined): number {
   if (!unit?.rebar_layout?.spacings?.length) return 0
   return unit.rebar_layout.spacings.reduce((sum, spacing) => {
@@ -81,6 +170,26 @@ function applyRounding(raw: number, mode: UnitCountRoundingMode): number {
   return Math.round(raw)
 }
 
+/**
+ * 計算用にユニットを解決する。
+ * 1. 線分に unit_id が付いていればそれを使用
+ * 2. 未リンクなら同色・アクティブな永続化済みユニットを使用（入力サマリと同じ挙動）
+ */
+function resolveUnitForCalc(segment: DrawingSegment, units: Unit[]): Unit | null {
+  const linked = resolveLinkedUnit(segment, units)
+  if (linked) return linked
+  const color = getSegmentColor(segment, units)
+  const isPersisted = (id: string) => !id.startsWith('mock-') && !id.startsWith('local-')
+  return (
+    units.find(
+      (u) =>
+        u.is_active !== false &&
+        isPersisted(u.id) &&
+        normalizeSegmentColor(u.color) === color,
+    ) ?? null
+  )
+}
+
 export function buildUnitCalculationRows(
   segments: DrawingSegment[],
   units: Unit[],
@@ -89,7 +198,7 @@ export function buildUnitCalculationRows(
   return segments
     .filter((segment) => segment.bar_type !== 'SPACING')
     .map((segment) => {
-      const unit = resolveLinkedUnit(segment, units)
+      const unit = resolveUnitForCalc(segment, units)
       const lengthMm = getSegmentEffectiveLengthMm(segment, units)
       const pitchMm = getUnitPitchMm(unit)
       const bars = getSegmentBars(segment, units)
@@ -97,6 +206,8 @@ export function buildUnitCalculationRows(
       const baseCount = pitchMm && pitchMm > 0 ? applyRounding(lengthMm / pitchMm, roundingMode) : 0
       const computedCount = baseCount * barCount
       const intervalLengthMm = getUnitIntervalLengthMm(unit)
+      const unitShapeLengthMm = getUnitShapeLengthMm(unit)
+      const unitLShapeCount = Math.max(0, Math.floor(unit?.l_shape_count ?? 0))
 
       return {
         key: `${segment.id}:${unit?.id ?? 'unlinked'}`,
@@ -114,6 +225,8 @@ export function buildUnitCalculationRows(
           pitchMm && pitchMm > 0
             ? `${lengthMm} ÷ ${pitchMm} = ${(lengthMm / pitchMm).toFixed(2)} → ${baseCount} × ${barCount}`
             : `${lengthMm} / ピッチ未設定`,
+        unitShapeLengthMm,
+        unitLShapeCount,
       }
     })
     .filter((row) => row.pitchMm != null && row.barCount > 0)

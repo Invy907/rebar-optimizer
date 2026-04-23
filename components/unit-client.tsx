@@ -53,6 +53,7 @@ import {
   unitVariantGroupKey,
   unitVariantLengthMm,
 } from '@/lib/unit-variant-group'
+import { computeShapeLengthMm } from '@/lib/unit-calculations'
 
 const BAR_TYPES = ['D10', 'D13', 'D16', 'D19', 'D22', 'D25', 'D29', 'D32']
 
@@ -137,8 +138,31 @@ function normalizeRebarLayout(input: UnitRebarLayout | null | undefined): UnitRe
   const base = input ?? { rebars: [], spacings: [], annotations: [] }
   return {
     rebars: Array.isArray(base.rebars) ? base.rebars : [],
-    spacings: Array.isArray(base.spacings) ? base.spacings : [],
-    annotations: Array.isArray(base.annotations) ? base.annotations : [],
+    spacings: Array.isArray(base.spacings)
+      ? base.spacings.map((s) => ({
+          id: s.id,
+          ...(s.from != null ? { from: s.from } : {}),
+          ...(s.to != null ? { to: s.to } : {}),
+          ...(s.x1 != null ? { x1: s.x1 } : {}),
+          ...(s.y1 != null ? { y1: s.y1 } : {}),
+          ...(s.x2 != null ? { x2: s.x2 } : {}),
+          ...(s.y2 != null ? { y2: s.y2 } : {}),
+          label: s.label,
+          ...(s.label_x != null ? { label_x: s.label_x } : {}),
+          ...(s.label_y != null ? { label_y: s.label_y } : {}),
+          ...(s.is_excluded === true ? { is_excluded: true as const } : {}),
+        }))
+      : [],
+    annotations: Array.isArray(base.annotations)
+      ? base.annotations.map((a) => ({
+          id: a.id,
+          x: a.x,
+          y: a.y,
+          text: a.text,
+          ...(a.is_excluded === true ? { is_excluded: true as const } : {}),
+        }))
+      : [],
+    ...(typeof base.shape_length_mm === 'number' ? { shape_length_mm: base.shape_length_mm } : {}),
   }
 }
 
@@ -917,12 +941,23 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
       const color = normalizeSegmentColor(draft.color)
       const mark = effectiveMark(autoVariant.mark, draft.mark_number)
 
+      const normalizedLayout = normalizeRebarLayout(draft.rebar_layout)
+      const shapeLengthMm = computeShapeLengthMm(
+        normalizedLayout.spacings,
+        normalizedLayout.annotations,
+        resolvedLShapeCount ?? 0,
+      )
+      const rebarLayoutWithLength: UnitRebarLayout = {
+        ...normalizedLayout,
+        ...(shapeLengthMm != null ? { shape_length_mm: shapeLengthMm } : {}),
+      }
+
       const payload = {
         name: draft.name.trim(),
         location_type: draft.location_type,
         shape_type: resolvedShapeType,
         color,
-        bars: aggregateBarsFromRebarLayout(normalizeRebarLayout(draft.rebar_layout)).filter((b) => b.qtyPerUnit > 0),
+        bars: aggregateBarsFromRebarLayout(normalizedLayout).filter((b) => b.qtyPerUnit > 0),
         spacing_mm: null,
         pitch_mm: resolvedPitchMm,
         l_shape_count: resolvedLShapeCount,
@@ -931,7 +966,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
         template_id: null,
         detail_spec: detailSpec,
         detail_geometry: detailGeometry,
-        rebar_layout: normalizeRebarLayout(draft.rebar_layout),
+        rebar_layout: rebarLayoutWithLength,
         code: generateUnitCode(color, mark),
         mark_number: mark,
         length_mm: null,
@@ -3603,6 +3638,7 @@ function DetailShapeEditor({
             {mode === 'annotation' && selectedSpacing && (
               <div className="space-y-2 border-b border-border pb-3">
                 <div className="font-medium text-foreground">間隔（鉄筋間）</div>
+                <div className="text-muted">値: {selectedSpacing.label}</div>
                 <button
                   type="button"
                   onClick={() => {
@@ -3654,9 +3690,28 @@ function DetailShapeEditor({
                     />
                   </label>
                 )}
-                <div className="text-muted">
-                  位置: {Math.round(selectedAnnotation.x)}, {Math.round(selectedAnnotation.y)}
-                </div>
+                <label className="flex items-start gap-2 rounded border border-dashed border-border bg-slate-50/60 px-2 py-1.5">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={selectedAnnotation.is_excluded === true}
+                    onChange={(e) => {
+                      const checked = e.target.checked
+                      const nextAnnotations = rebarLayout.annotations.map((an) =>
+                        an.id === selectedAnnotation.id
+                          ? { ...an, is_excluded: checked ? true : undefined }
+                          : an,
+                      )
+                      onRebarLayoutChange(normalizeRebarLayout({ ...rebarLayout, annotations: nextAnnotations }))
+                    }}
+                  />
+                  <span className="text-[11px] leading-snug text-foreground">
+                    形状長さから除外する
+                    <span className="mt-0.5 block text-[10px] text-muted">
+                      断面寸法など、経路長さに含めない場合にチェック（デフォルトは合算対象）。
+                    </span>
+                  </span>
+                </label>
                 <button
                   type="button"
                   onClick={() => {
