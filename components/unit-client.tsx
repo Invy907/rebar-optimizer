@@ -2681,7 +2681,7 @@ function DetailShapeEditor({
         )}
         {mode === 'pitch' && (
           <p className="rounded border border-dashed border-border/45 bg-slate-50/70 px-2 py-1 text-[10px] font-medium leading-snug text-foreground/80">
-            ピッチは「@200」のように指定します。ピッチが違うと別単面扱いになり、結果・色分けも別になります。
+            ピッチは「@200」のように指定します。
           </p>
         )}
         {mode === 'shape' && startMode === 'free' && (
