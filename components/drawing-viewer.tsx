@@ -1186,6 +1186,11 @@ export function DrawingViewer({
         setTool('select')
         return
       }
+      if ((e.key === 'z' || e.key === 'Z') && selectedSegmentIds.length > 0) {
+        e.preventDefault()
+        void Promise.all(selectedSegmentIds.map((id) => deleteSegment(id)))
+        return
+      }
       if (e.key === 'c' || e.key === 'C') {
         e.preventDefault()
         const rebarSorted = [...segments]
@@ -1213,7 +1218,7 @@ export function DrawingViewer({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [segments, effectiveUnits, projectId, tool, drawing, newSegmentDraft])
+  }, [segments, effectiveUnits, projectId, tool, drawing, newSegmentDraft, selectedSegmentIds])
 
   useEffect(() => {
     if (fileType === 'pdf') {
@@ -2767,7 +2772,7 @@ export function DrawingViewer({
                 selectActiveDrawingUnit(v, { openLengthPresetPicker: true })
               }}
               className="max-w-[200px] rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
-              title="先に選ぶと、線を描くだけで色・円番号・鉄筋・unit_id が自動適用されます（推奨）。詳細入力は Alt+描画。"
+              title="先にユニットと表示色を選ぶと入力しやすくなります。選択した線は Z キーで削除できます。Shift キーを押しながら描画すると、線を水平または垂直にまっすぐ描けます。"
             >
               <option value="">ユニットを選択してください</option>
               {activeUnitChoices.map((u) => {
@@ -2837,7 +2842,7 @@ export function DrawingViewer({
           <span className="text-xs text-muted ml-2">
             {splitArmedSegmentId
               ? '分割: 図面上の線をクリックして分割点を選択（Escでキャンセル）'
-              : '推奨: テンプレート+色を先に選択→線を描く（長さから Variant を自動解決）／Esc:描画中はストロークのみ取消→もう一度Escで選択モード／D:描画 G:間隔 S:選択 Enter/C:直前線をアクティブに／Alt+描画:詳細モーダル'}
+              : 'Escキー: 描画中の線を取り消します。もう一度押すと選択モードに戻ります。／Dキー: 描画／Gキー: 間隔線／Sキー: 選択／Zキー: 選択した線を削除します。／Shiftキーを押しながら描画: 線を水平または垂直にまっすぐ描けます。'}
           </span>
           </div>
           {persistedActiveUnits.length === 0 ? (
