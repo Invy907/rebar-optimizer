@@ -22,7 +22,6 @@ export function OptimizationResultView({
   focusSegmentId,
   unitCalculationRows,
   roundingMode,
-  customerInfo,
 }: {
   result: OptimizationOutput
   stockLengthMm: number
@@ -32,11 +31,6 @@ export function OptimizationResultView({
   focusSegmentId?: string | null
   unitCalculationRows: UnitCalculationRow[]
   roundingMode: UnitCountRoundingMode
-  customerInfo: {
-    company: string
-    address: string
-    name: string
-  }
 }) {
   void stockLengthMm
   void projectId
@@ -127,23 +121,6 @@ export function OptimizationResultView({
 
   return (
     <div className="space-y-4">
-      {(customerInfo.company || customerInfo.address || customerInfo.name) && (
-        <div className="rounded-lg border border-border bg-white p-4">
-          <h3 className="mb-2 text-sm font-semibold">顧客情報</h3>
-          <div className="grid gap-2 text-sm md:grid-cols-3">
-            <div>
-              <span className="text-muted">会社名:</span> {customerInfo.company || '-'}
-            </div>
-            <div>
-              <span className="text-muted">住所:</span> {customerInfo.address || '-'}
-            </div>
-            <div>
-              <span className="text-muted">顧客名:</span> {customerInfo.name || '-'}
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="rounded-lg border border-border bg-white p-4">
         <h3 className="mb-3 text-sm font-semibold">フック付</h3>
         {unitSummaries.length > 0 ? (

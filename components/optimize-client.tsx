@@ -278,11 +278,6 @@ export function OptimizeClient({
             focusSegmentId={focusSegmentId ?? undefined}
             unitCalculationRows={unitCalculationRows}
             roundingMode={unitCountRoundingMode}
-            customerInfo={{
-              company: customerCompany,
-              address: customerAddress,
-              name: customerName,
-            }}
           />
         </section>
       )}
