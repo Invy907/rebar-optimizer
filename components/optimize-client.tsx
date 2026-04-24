@@ -1,7 +1,7 @@
 // components/optimize-client.tsx
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput } from '@/lib/optimizer'
@@ -64,6 +64,45 @@ export function OptimizeClient({
     () => buildUnitCalculationRows(segments, units, unitCountRoundingMode),
     [segments, unitCountRoundingMode, units],
   )
+
+  const customerInfoStorageKey = useMemo(
+    () => `optimize-customer-info:${projectId}`,
+    [projectId],
+  )
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const raw = window.localStorage.getItem(customerInfoStorageKey)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as {
+        company?: string
+        address?: string
+        name?: string
+      }
+      setCustomerCompany(parsed.company ?? '')
+      setCustomerAddress(parsed.address ?? '')
+      setCustomerName(parsed.name ?? '')
+    } catch {
+      // Ignore malformed local data and continue with empty fields.
+    }
+  }, [customerInfoStorageKey])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(
+        customerInfoStorageKey,
+        JSON.stringify({
+          company: customerCompany,
+          address: customerAddress,
+          name: customerName,
+        }),
+      )
+    } catch {
+      // Ignore storage write errors so the form stays usable.
+    }
+  }, [customerAddress, customerCompany, customerInfoStorageKey, customerName])
 
   function handleCalculate() {
     const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
