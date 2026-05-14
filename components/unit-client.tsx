@@ -2046,6 +2046,7 @@ function DetailShapeEditor({
   const [dragSpacingLabelId, setDragSpacingLabelId] = useState<string | null>(null)
   const [dragAnnotationId, setDragAnnotationId] = useState<string | null>(null)
   const [dragRebarId, setDragRebarId] = useState<string | null>(null)
+  const [selectedRebarIds, setSelectedRebarIds] = useState<string[]>([])
   const rebarDragRef = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null)
   const [doubleLineEnabled, setDoubleLineEnabled] = useState(false)
   const [dragSegmentKey, setDragSegmentKey] = useState<string | null>(null)
@@ -2072,6 +2073,7 @@ function DetailShapeEditor({
 
   function clearCanvasSelections() {
     setSelection(null)
+    setSelectedRebarIds([])
     setDraggingKey(null)
     setDragPointKey(null)
     setDrawAnchorKey(null)
@@ -2110,6 +2112,7 @@ function DetailShapeEditor({
 
   function selectRebar(rebarId: string) {
     setSelection({ kind: 'rebar', id: rebarId })
+    setSelectedRebarIds([rebarId])
   }
 
   function selectSpacing(spacingId: string) {
@@ -2540,7 +2543,7 @@ function DetailShapeEditor({
 
   const selectedPointKey = selection?.kind === 'point' ? selection.id : null
   const selectedSegmentKey = selection?.kind === 'segment' ? selection.id : null
-  const selectedRebarId = selection?.kind === 'rebar' ? selection.id : null
+  const selectedRebarId = selectedRebarIds.length === 1 ? selectedRebarIds[0] : null
   const selectedSpacingId = selection?.kind === 'spacing' ? selection.id : null
   const selectedAnnotationId = selection?.kind === 'annotation' ? selection.id : null
 
@@ -3418,7 +3421,7 @@ function DetailShapeEditor({
         {rebarLayout.rebars.map((rb) => {
           const rebarPe = mode === 'rebar' || mode === 'annotation' ? 'auto' : 'none'
           const token = rebarDiameterVisualToken(rb.diameter)
-          const isSelected = selection?.kind === 'rebar' && selection.id === rb.id
+          const isSelected = selectedRebarIds.includes(rb.id)
           const bodyRadius = rebarBodyR * token.radiusScale
           const hitRadius = Math.max(rebarHitR, bodyRadius + 10)
           return (
@@ -3465,7 +3468,7 @@ function DetailShapeEditor({
                 style={{
                   cursor:
                     rebarPe === 'auto'
-                      ? dragRebarId === rb.id
+                      ? dragRebarId === rb.id && selectedRebarIds.length <= 1
                         ? 'grabbing'
                         : 'grab'
                       : 'default',
@@ -3476,6 +3479,22 @@ function DetailShapeEditor({
                 onPointerDown={(e) => {
                   if (mode !== 'rebar' && mode !== 'annotation') return
                   beginObjectPointer(e)
+                  if (e.shiftKey) {
+                    setSelectedRebarIds((prev) => {
+                      const next = prev.includes(rb.id)
+                        ? prev.filter((id) => id !== rb.id)
+                        : [...prev, rb.id]
+                      if (next.length === 1) {
+                        setSelection({ kind: 'rebar', id: next[0] })
+                      } else if (next.length === 0) {
+                        setSelection(null)
+                      } else {
+                        setSelection({ kind: 'rebar', id: rb.id })
+                      }
+                      return next
+                    })
+                    return
+                  }
                   onRebarClick(rb.id)
                   const svg =
                     (e.currentTarget as SVGCircleElement).ownerSVGElement ??
@@ -3617,24 +3636,28 @@ function DetailShapeEditor({
                   D10・D13・D16・D19 は記号のみ。それ以外の径（D22 など）は円の内側に径ラベルを表示します。
                 </p>
                 <div className="flex flex-wrap gap-3">
-                  {(['D10', 'D13', 'D16', 'D19'] as const).map((d) => {
-                    const token = rebarDiameterVisualToken(d)
-                    const r = 10 * token.radiusScale
-                    return (
-                      <div key={d} className="flex flex-col items-center gap-1">
-                        <svg
-                          width={40}
-                          height={40}
-                          viewBox="-20 -20 40 40"
-                          className="rounded border border-slate-200 bg-white"
-                          aria-hidden
-                        >
-                          <RebarSymbol x={0} y={0} token={token} radius={r} strokeWidth={1.9} />
-                        </svg>
-                        <span className="font-mono text-[10px] font-semibold text-slate-700">{d}</span>
-                      </div>
-                    )
-                  })}
+                  {(() => {
+                    const activeDiameter = selectedRebar?.diameter ?? 'D13'
+                    return (['D10', 'D13', 'D16', 'D19'] as const).map((d) => {
+                      const token = rebarDiameterVisualToken(d)
+                      const r = 10 * token.radiusScale
+                      const isActive = d === activeDiameter
+                      return (
+                        <div key={d} className="flex flex-col items-center gap-1">
+                          <svg
+                            width={40}
+                            height={40}
+                            viewBox="-20 -20 40 40"
+                            className={`rounded bg-white ${isActive ? 'border-2 border-primary ring-1 ring-primary' : 'border border-slate-200'}`}
+                            aria-hidden
+                          >
+                            <RebarSymbol x={0} y={0} token={token} radius={r} strokeWidth={1.9} />
+                          </svg>
+                          <span className={`font-mono text-[10px] font-semibold ${isActive ? 'text-primary' : 'text-slate-700'}`}>{d}</span>
+                        </div>
+                      )
+                    })
+                  })()}
                 </div>
               </div>
             )}
@@ -3725,6 +3748,31 @@ function DetailShapeEditor({
                   className="rounded border border-red-200 px-2 py-1 text-[11px] text-red-700 hover:bg-red-50"
                 >
                   この寸法を削除
+                </button>
+              </div>
+            )}
+
+            {mode === 'rebar' && selectedRebarIds.length > 1 && (
+              <div className="space-y-2 border-b border-border pb-3">
+                <div className="font-medium text-foreground">鉄筋（複数選択）</div>
+                <div className="text-muted text-[11px]">{selectedRebarIds.length}本を選択中</div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const idSet = new Set(selectedRebarIds)
+                    const nextRebars = rebarLayout.rebars.filter((r) => !idSet.has(r.id))
+                    const nextSpacings = rebarLayout.spacings.filter(
+                      (s) => !(s.from && idSet.has(s.from)) && !(s.to && idSet.has(s.to)),
+                    )
+                    onRebarLayoutChange(
+                      normalizeRebarLayout({ ...rebarLayout, rebars: nextRebars, spacings: nextSpacings }),
+                    )
+                    setSelectedRebarIds([])
+                    setSelection(null)
+                  }}
+                  className="rounded border border-red-200 px-2 py-1 text-[11px] text-red-700 hover:bg-red-50"
+                >
+                  選択した鉄筋をすべて削除
                 </button>
               </div>
             )}
@@ -3889,9 +3937,16 @@ function DetailShapeEditor({
               (mode === 'shape' && startMode === 'template') ||
               mode === 'pitch'
             ) && (
-              <p className="text-[11px] leading-relaxed text-muted">
-                キャンバス上の点・線・鉄筋・間隔・注記を選択してください。
-              </p>
+              <>
+                <p className="text-[11px] leading-relaxed text-muted">
+                  キャンバス上の点・線・鉄筋・間隔・注記を選択してください。
+                </p>
+                {mode === 'rebar' && (
+                  <p className="text-[10px] leading-snug text-muted/70">
+                    Shift + 鉄筋クリックで複数選択できます。
+                  </p>
+                )}
+              </>
             )}
           </div>
         </div>
