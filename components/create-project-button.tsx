@@ -20,17 +20,17 @@ export function CreateProjectButton() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const { error } = await supabase.from('projects').insert({
+    const { data, error } = await supabase.from('projects').insert({
       name: name.trim(),
       description: description.trim() || null,
       user_id: user.id,
-    })
+    }).select('id').single()
 
-    if (!error) {
+    if (!error && data) {
       setName('')
       setDescription('')
       setOpen(false)
-      router.refresh()
+      router.push(`/projects/${data.id}`)
     }
     setLoading(false)
   }
