@@ -592,6 +592,9 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
         ? JSON.parse(JSON.stringify(p.detail_geometry))
         : createEmptyFreeGeometry(),
       detail_start_mode: p.detail_start_mode ?? 'free',
+      bars: [],
+      spacing_mm: '',
+      rebar_layout: { rebars: [], spacings: [], annotations: [] },
     }))
     setDetailEditMode('shape')
     setModalTab('detail')
