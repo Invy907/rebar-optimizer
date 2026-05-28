@@ -360,21 +360,21 @@ function aggregateBarsFromRebarLayout(layout: UnitRebarLayout): UnitBar[] {
 function draftToPresetPayload(draft: DraftUnit): UserUnitPresetPayload {
   const t = shapeTypeToDetailTemplate(draft.shape_type)
   const spec = normalizeDetailSpecForTemplate(t, draft.detail_spec ?? getDefaultDetailSpec(t))
-  // Shape-only preset: intentionally store only shape-related data.
+  const rebarLayout = normalizeRebarLayout(draft.rebar_layout)
   return {
     location_type: draft.location_type,
     shape_type: draft.shape_type,
     color: DEFAULT_DRAFT.color,
     mark_number: DEFAULT_DRAFT.mark_number,
-    bars: [],
-    spacing_mm: '',
+    bars: aggregateBarsFromRebarLayout(rebarLayout),
+    spacing_mm: draft.spacing_mm,
     pitch_mm: draft.pitch_mm,
     l_shape_count: draft.l_shape_count,
     description: draft.description,
     detail_spec: spec,
     detail_geometry: draft.detail_geometry ? JSON.parse(JSON.stringify(draft.detail_geometry)) : null,
     detail_start_mode: draft.detail_start_mode,
-    rebar_layout: { rebars: [], spacings: [], annotations: [] },
+    rebar_layout: JSON.parse(JSON.stringify(rebarLayout)) as UnitRebarLayout,
   }
 }
 
@@ -582,26 +582,33 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     const p = preset.payload
     const t = shapeTypeToDetailTemplate(p.shape_type)
     const spec = normalizeDetailSpecForTemplate(t, p.detail_spec)
+    const rebarLayout = remapRebarLayoutIds(normalizeRebarLayout(p.rebar_layout))
+    const barsFromLayout = aggregateBarsFromRebarLayout(rebarLayout)
     setDraft((prev) => ({
       ...prev,
       shape_type: p.shape_type,
       description: p.description ?? prev.description,
       l_shape_count: p.l_shape_count ?? '',
+      pitch_mm: p.pitch_mm ?? prev.pitch_mm,
+      spacing_mm: p.spacing_mm ?? prev.spacing_mm,
       detail_spec: spec,
       detail_geometry: p.detail_geometry
         ? JSON.parse(JSON.stringify(p.detail_geometry))
         : createEmptyFreeGeometry(),
       detail_start_mode: p.detail_start_mode ?? 'free',
-      bars: [],
-      spacing_mm: '',
-      rebar_layout: { rebars: [], spacings: [], annotations: [] },
+      bars: barsFromLayout,
+      rebar_layout: rebarLayout,
     }))
-    setDetailEditMode('shape')
+    const hasRebar =
+      rebarLayout.rebars.length > 0 ||
+      rebarLayout.spacings.length > 0 ||
+      rebarLayout.annotations.length > 0
+    setDetailEditMode(hasRebar ? 'rebar' : p.pitch_mm?.trim() ? 'pitch' : 'shape')
     setModalTab('detail')
   }
 
   async function handleSaveAsPreset() {
-    const autoName = `shape-${new Date().toISOString()}`
+    const autoName = `preset-${new Date().toISOString()}`
     setSavingPreset(true)
     const {
       data: { user },
@@ -1396,7 +1403,8 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
               <div className="rounded-lg border border-border bg-slate-50 p-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div>
-                    <div className="text-xs font-semibold text-foreground">形状プリセット</div>
+                    <div className="text-xs font-semibold text-foreground">プリセット</div>
+                    <p className="text-[10px] text-muted">形状・鉄筋・間隔・ピッチ</p>
                   </div>
                 </div>
                 {userPresets.length === 0 ? (
@@ -1507,7 +1515,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                       <div className="rounded-lg border border-border bg-white p-3 shadow-sm">
                         <div className="mb-4 border-b border-border pb-3">
                           <label className="inline-flex flex-col gap-1.5 text-xs font-semibold text-foreground">
-                            <span>L字本数</span>
+                            <span>90度の箇所</span>
                             <input
                               type="number"
                               min={0}
@@ -1557,18 +1565,16 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                     }
                   />
 
-                  {detailEditMode === 'shape' && (
-                    <div className="flex flex-wrap items-center justify-end gap-2 border-t border-dashed border-border pt-2">
-                      <button
-                        type="button"
-                        onClick={() => void handleSaveAsPreset()}
-                        disabled={savingPreset}
-                        className="text-[11px] text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900"
-                      >
-                        {savingPreset ? '保存中...' : '形状プリセットとして保存'}
-                      </button>
-                    </div>
-                  )}
+                  <div className="flex flex-wrap items-center justify-end gap-2 border-t border-dashed border-border pt-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveAsPreset()}
+                      disabled={savingPreset}
+                      className="text-[11px] text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900"
+                    >
+                      {savingPreset ? '保存中...' : 'プリセットとして保存'}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

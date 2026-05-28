@@ -2,7 +2,7 @@
 
 'use client'
 
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { OptimizationOutput } from '@/lib/optimizer'
 import type { UnitCalculationRow, UnitCountRoundingMode } from '@/lib/unit-calculations'
 
@@ -39,6 +39,12 @@ export function OptimizationResultView({
   void focusSegmentId
   void roundingMode
 
+  const [shapeLengthOverrides, setShapeLengthOverrides] = useState<
+    Record<string, number>
+  >({})
+  const [editingShapeKey, setEditingShapeKey] = useState<string | null>(null)
+  const [shapeLengthDraft, setShapeLengthDraft] = useState('')
+
   const unitSummaries = useMemo<UnitResultSummary[]>(() => {
     const map = new Map<string, UnitResultSummary>()
     for (const row of unitCalculationRows) {
@@ -57,6 +63,17 @@ export function OptimizationResultView({
     }
     return Array.from(map.values()).filter((s) => s.totalCount > 0)
   }, [unitCalculationRows])
+
+  useEffect(() => {
+    const validKeys = new Set(unitSummaries.map((s) => s.key))
+    setShapeLengthOverrides((prev) => {
+      const next: Record<string, number> = {}
+      for (const [k, v] of Object.entries(prev)) {
+        if (validKeys.has(k)) next[k] = v
+      }
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next
+    })
+  }, [unitSummaries])
 
   const noSummaryReason = useMemo<string | null>(() => {
     if (unitSummaries.length > 0) return null
@@ -131,8 +148,41 @@ export function OptimizationResultView({
                 className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm leading-snug"
               >
                 <div className="font-medium text-foreground">{s.unitName}</div>
-                <div className="font-mono text-base font-semibold tabular-nums">
-                  {s.shapeLengthMm.toLocaleString('ja-JP')} × {s.totalCount.toLocaleString('ja-JP')}
+                <div className="mt-1 flex items-center gap-1.5 font-mono text-base font-semibold tabular-nums">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    aria-label={`${s.unitName} の長さ (mm)`}
+                    value={
+                      editingShapeKey === s.key
+                        ? shapeLengthDraft
+                        : (
+                            shapeLengthOverrides[s.key] ?? s.shapeLengthMm
+                          ).toLocaleString('ja-JP')
+                    }
+                    onFocus={() => {
+                      setEditingShapeKey(s.key)
+                      setShapeLengthDraft(
+                        String(shapeLengthOverrides[s.key] ?? s.shapeLengthMm),
+                      )
+                    }}
+                    onChange={(e) => {
+                      setShapeLengthDraft(e.target.value.replace(/[^\d]/g, ''))
+                    }}
+                    onBlur={() => {
+                      const n = Number.parseInt(shapeLengthDraft, 10)
+                      if (Number.isFinite(n) && n > 0) {
+                        setShapeLengthOverrides((prev) => ({
+                          ...prev,
+                          [s.key]: n,
+                        }))
+                      }
+                      setEditingShapeKey(null)
+                    }}
+                    className="w-[5.5rem] rounded border border-border bg-white px-1.5 py-0.5 text-base font-semibold outline-none focus:border-primary print:border-transparent print:bg-transparent print:p-0"
+                  />
+                  <span className="text-muted">×</span>
+                  <span>{s.totalCount.toLocaleString('ja-JP')}</span>
                 </div>
               </div>
             ))}

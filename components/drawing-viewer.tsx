@@ -255,12 +255,20 @@ type LastAction =
   | { type: 'create'; segment: DrawingSegment }
   | { type: 'delete'; segment: DrawingSegment }
   | { type: 'update'; before: DrawingSegment; after: DrawingSegment }
+  | { type: 'move'; before: DrawingSegment[]; after: DrawingSegment[] }
   | {
       type: 'split'
       before: DrawingSegment
       created: [DrawingSegment, DrawingSegment]
     }
   | null
+
+type SegmentDragState = {
+  ids: string[]
+  origin: Point
+  startPositions: Record<string, { x1: number; y1: number; x2: number; y2: number }>
+  snapshots: Record<string, DrawingSegment>
+}
 
 export function DrawingViewer({
   drawingId,
@@ -444,6 +452,8 @@ export function DrawingViewer({
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 })
   const [panning, setPanning] = useState(false)
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 })
+  const [segmentDrag, setSegmentDrag] = useState<SegmentDragState | null>(null)
+  const segmentDragMovedRef = useRef(false)
   const [printSummaryPos, setPrintSummaryPos] = useState<Point>({ x: 24, y: 24 })
   const [printSummaryScale, setPrintSummaryScale] = useState(1)
   const [printModalImageUrl, setPrintModalImageUrl] = useState<string | null>(null)
@@ -516,6 +526,75 @@ export function DrawingViewer({
       window.removeEventListener('mouseup', handleUp)
     }
   }, [summaryDragging, printSummaryScale])
+
+  useEffect(() => {
+    if (!segmentDrag) return
+
+    const drag = segmentDrag
+    const dragThreshold = 2
+
+    function pointFromClient(clientX: number, clientY: number): Point {
+      const canvas = canvasRef.current
+      if (!canvas) return { x: 0, y: 0 }
+      const rect = canvas.getBoundingClientRect()
+      const xr = (clientX - rect.left - offset.x) / scale
+      const yr = (clientY - rect.top - offset.y) / scale
+      const img = imgRef.current
+      if (!img) return { x: xr, y: yr }
+      const w = img.width
+      const h = img.height
+      const steps = ((rotationSteps % 4) + 4) % 4
+      if (steps === 0) return { x: xr, y: yr }
+      if (steps === 1) return { x: yr, y: h - xr }
+      if (steps === 2) return { x: w - xr, y: h - yr }
+      return { x: w - yr, y: xr }
+    }
+
+    function applyDelta(dx: number, dy: number) {
+      setSegments((prev) =>
+        prev.map((seg) => {
+          const start = drag.startPositions[seg.id]
+          if (!start) return seg
+          return {
+            ...seg,
+            x1: start.x1 + dx,
+            y1: start.y1 + dy,
+            x2: start.x2 + dx,
+            y2: start.y2 + dy,
+          }
+        }),
+      )
+    }
+
+    function handleMove(ev: MouseEvent) {
+      const pt = pointFromClient(ev.clientX, ev.clientY)
+      const dx = pt.x - drag.origin.x
+      const dy = pt.y - drag.origin.y
+      if (!segmentDragMovedRef.current && Math.hypot(dx, dy) < dragThreshold / scale) {
+        return
+      }
+      segmentDragMovedRef.current = true
+      applyDelta(dx, dy)
+    }
+
+    function handleUp(ev: MouseEvent) {
+      const pt = pointFromClient(ev.clientX, ev.clientY)
+      const dx = pt.x - drag.origin.x
+      const dy = pt.y - drag.origin.y
+      if (segmentDragMovedRef.current) {
+        void commitSegmentDrag(drag, dx, dy)
+      }
+      segmentDragMovedRef.current = false
+      setSegmentDrag(null)
+    }
+
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleUp)
+    }
+  }, [segmentDrag, offset.x, offset.y, scale, rotationSteps])
 
   const effectiveUnits = useMemo(() => {
     const base = serverUnits.length > 0 ? serverUnits : (clientUnits ?? [])
@@ -841,30 +920,31 @@ export function DrawingViewer({
       } else {
         const circleNum = getSegmentMarkNumberForCanvas(seg, effectiveUnits)
         const stroke = getSegmentStrokeHex(segColor, false)
-        const displayLen = getSegmentEffectiveLengthMm(seg, effectiveUnits)
 
         if (circleNum == null) {
-          // 任意長さ・ユニット未割当: 円なし。線の法線方向にオフセットした大きめラベル
+          const displayLen = getSegmentEffectiveLengthMm(seg, effectiveUnits)
+          // 任意長さ・ユニット未割当: 円なし。線の中点に沿って線と平行な寸法ラベル
           const dx = seg.x2 - seg.x1
           const dy = seg.y2 - seg.y1
-          const segLen = Math.hypot(dx, dy) || 1
-          const nx = -dy / segLen
-          const ny = dx / segLen
-          const offset = 22 / scale
-          const labelX = midX + nx * offset
-          const labelY = midY + ny * offset
+          const segAngle = Math.atan2(dy, dx)
+          // 図面回転後の画面x方向成分: cos(segAngle + s*90°)
+          // これが負なら文字が右→左を向くため、π加算して向きを反転
+          const screenX = Math.cos(segAngle + s * Math.PI / 2)
+          const screenY = Math.sin(segAngle + s * Math.PI / 2)
+          const shouldFlip = screenX < 0 || (Math.abs(screenX) < 1e-9 && screenY < 0)
+          const drawAngle = shouldFlip ? segAngle + Math.PI : segAngle
           const text = displayLen.toLocaleString('ja-JP')
-          const fontPx = text.replace(/,/g, '').length > 5 ? 12 : 15
+          const fontPx = text.replace(/,/g, '').length > 5 ? 10 : 12
           ctx.save()
-          ctx.translate(labelX, labelY)
-          ctx.rotate(counterAngleRad)
+          ctx.translate(midX, midY)
+          ctx.rotate(drawAngle)
           ctx.textAlign = 'center'
           ctx.textBaseline = 'middle'
           ctx.font = `800 ${fontPx / scale}px sans-serif`
           ctx.lineJoin = 'round'
           ctx.miterLimit = 2
           const fillCol = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
-          ctx.lineWidth = 4 / scale
+          ctx.lineWidth = 3 / scale
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)'
           ctx.strokeText(text, 0, 0)
           ctx.fillStyle = fillCol
@@ -896,14 +976,6 @@ export function DrawingViewer({
 
           ctx.textAlign = 'left'
           ctx.textBaseline = 'alphabetic'
-
-          ctx.save()
-          ctx.translate(midX, yCenter + 12 / scale)
-          ctx.rotate(counterAngleRad)
-          ctx.font = `${9 / scale}px sans-serif`
-          ctx.fillStyle = stroke
-          ctx.fillText(`${displayLen}`, 0, 0)
-          ctx.restore()
         }
       }
     })
@@ -1320,12 +1392,12 @@ export function DrawingViewer({
     return () => window.removeEventListener('resize', handleResize)
   }, [drawCanvas])
 
-  function screenToCanvas(e: React.MouseEvent): Point {
+  function clientPointToCanvas(clientX: number, clientY: number): Point {
     const canvas = canvasRef.current
     if (!canvas) return { x: 0, y: 0 }
     const rect = canvas.getBoundingClientRect()
-    const xr = (e.clientX - rect.left - offset.x) / scale
-    const yr = (e.clientY - rect.top - offset.y) / scale
+    const xr = (clientX - rect.left - offset.x) / scale
+    const yr = (clientY - rect.top - offset.y) / scale
     const img = imgRef.current
     if (!img) return { x: xr, y: yr }
 
@@ -1339,6 +1411,10 @@ export function DrawingViewer({
     if (steps === 1) return { x: yr, y: h - xr } // 90deg clockwise
     if (steps === 2) return { x: w - xr, y: h - yr } // 180deg
     return { x: w - yr, y: xr } // 270deg clockwise
+  }
+
+  function screenToCanvas(e: React.MouseEvent): Point {
+    return clientPointToCanvas(e.clientX, e.clientY)
   }
 
   function handleMouseDown(e: React.MouseEvent) {
@@ -1378,15 +1454,39 @@ export function DrawingViewer({
       const found = segments.find((seg) => {
         return distToSegment(pt, { x: seg.x1, y: seg.y1 }, { x: seg.x2, y: seg.y2 }) < clickRadius
       })
+
+      let nextIds: string[]
       if (e.ctrlKey || e.metaKey) {
         if (found) {
-          setSelectedSegmentIds((prev) => {
-            if (prev.includes(found.id)) return prev.filter((id) => id !== found.id)
-            return [...prev, found.id]
-          })
+          nextIds = selectedSegmentIds.includes(found.id)
+            ? selectedSegmentIds.filter((id) => id !== found.id)
+            : [...selectedSegmentIds, found.id]
+        } else {
+          nextIds = selectedSegmentIds
         }
+        setSelectedSegmentIds(nextIds)
       } else {
-        setSelectedSegmentIds(found ? [found.id] : [])
+        if (found && selectedSegmentIds.includes(found.id)) {
+          nextIds = selectedSegmentIds
+        } else {
+          nextIds = found ? [found.id] : []
+        }
+        setSelectedSegmentIds(nextIds)
+      }
+
+      if (found && nextIds.includes(found.id)) {
+        const startPositions: SegmentDragState['startPositions'] = {}
+        const snapshots: SegmentDragState['snapshots'] = {}
+        for (const id of nextIds) {
+          const seg = segments.find((s) => s.id === id)
+          if (!seg) continue
+          startPositions[id] = { x1: seg.x1, y1: seg.y1, x2: seg.x2, y2: seg.y2 }
+          snapshots[id] = seg
+        }
+        segmentDragMovedRef.current = false
+        setSegmentDrag({ ids: nextIds, origin: pt, startPositions, snapshots })
+      } else {
+        setSegmentDrag(null)
       }
     }
   }
@@ -1394,6 +1494,9 @@ export function DrawingViewer({
   function handleMouseMove(e: React.MouseEvent) {
     if (panning) {
       setOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y })
+      return
+    }
+    if (segmentDrag) {
       return
     }
     if (tool === 'select' && splitArmedSegmentId) {
@@ -1442,6 +1545,9 @@ export function DrawingViewer({
   async function handleMouseUp(e: React.MouseEvent) {
     if (panning) {
       setPanning(false)
+      return
+    }
+    if (segmentDrag) {
       return
     }
 
@@ -2277,6 +2383,85 @@ export function DrawingViewer({
     }
   }
 
+  async function commitSegmentDrag(drag: SegmentDragState, dx: number, dy: number) {
+    const rdx = Math.round(dx)
+    const rdy = Math.round(dy)
+    if (rdx === 0 && rdy === 0) {
+      setSegments((prev) =>
+        prev.map((seg) => {
+          const start = drag.startPositions[seg.id]
+          if (!start) return seg
+          return { ...seg, ...start }
+        }),
+      )
+      return
+    }
+
+    const before: DrawingSegment[] = []
+    const after: DrawingSegment[] = []
+    const patches: {
+      id: string
+      x1: number
+      y1: number
+      x2: number
+      y2: number
+    }[] = []
+
+    for (const id of drag.ids) {
+      const start = drag.startPositions[id]
+      if (!start) continue
+      const seg = drag.snapshots[id]
+      if (!seg) continue
+      const b: DrawingSegment = {
+        ...seg,
+        x1: start.x1,
+        y1: start.y1,
+        x2: start.x2,
+        y2: start.y2,
+      }
+      const a: DrawingSegment = {
+        ...seg,
+        x1: start.x1 + rdx,
+        y1: start.y1 + rdy,
+        x2: start.x2 + rdx,
+        y2: start.y2 + rdy,
+      }
+      before.push(b)
+      after.push(a)
+      patches.push({ id, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 })
+    }
+
+    if (patches.length === 0) return
+
+    const results = await Promise.all(
+      patches.map((p) =>
+        supabase
+          .from('drawing_segments')
+          .update({ x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2 })
+          .eq('id', p.id),
+      ),
+    )
+
+    if (results.every((r) => !r.error)) {
+      setSegments((prev) =>
+        prev.map((seg) => {
+          const moved = after.find((x) => x.id === seg.id)
+          return moved ?? seg
+        }),
+      )
+      setLastAction({ type: 'move', before, after })
+      void uploadCompositeThumbnail()
+    } else {
+      setSegments((prev) =>
+        prev.map((seg) => {
+          const orig = before.find((x) => x.id === seg.id)
+          return orig ?? seg
+        }),
+      )
+      alert('線分の移動に失敗しました。')
+    }
+  }
+
   async function bulkApplyTemplateColorToSelection(templateId: string, color: SegmentColor) {
     if (!enableTemplateVariantFlow) return
     const ids = selectedSegmentIds.filter((sid) => {
@@ -2490,6 +2675,10 @@ export function DrawingViewer({
       const { error } = await supabase
         .from('drawing_segments')
         .update({
+          x1: before.x1,
+          y1: before.y1,
+          x2: before.x2,
+          y2: before.y2,
           length_mm: before.length_mm,
           quantity: before.quantity,
           bar_type: before.bar_type,
@@ -2505,6 +2694,32 @@ export function DrawingViewer({
         setSegments((prev) => prev.map((s) => (s.id === before.id ? before : s)))
         setSelectedSegmentIds([before.id])
         setLastAction(null)
+      }
+    } else if (lastAction.type === 'move') {
+      const { before } = lastAction
+      const results = await Promise.all(
+        before.map((b) =>
+          supabase
+            .from('drawing_segments')
+            .update({
+              x1: b.x1,
+              y1: b.y1,
+              x2: b.x2,
+              y2: b.y2,
+            })
+            .eq('id', b.id),
+        ),
+      )
+      if (results.every((r) => !r.error)) {
+        setSegments((prev) =>
+          prev.map((seg) => {
+            const orig = before.find((b) => b.id === seg.id)
+            return orig ?? seg
+          }),
+        )
+        setSelectedSegmentIds(before.map((b) => b.id))
+        setLastAction(null)
+        void uploadCompositeThumbnail()
       }
     } else if (lastAction.type === 'split') {
       const { before, created } = lastAction
@@ -2862,7 +3077,11 @@ export function DrawingViewer({
                 ? 'crosshair'
                 : panning
                   ? 'grabbing'
-                  : 'default',
+                  : segmentDrag
+                    ? 'move'
+                    : tool === 'select'
+                      ? 'pointer'
+                      : 'default',
           }}
         >
           {!imgLoaded && fileType === 'pdf' ? (

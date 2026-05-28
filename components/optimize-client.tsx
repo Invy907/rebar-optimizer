@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput } from '@/lib/optimizer'
+import { CustomerDatePicker } from '@/components/customer-date-picker'
 import { OptimizationResultView } from '@/components/optimization-result-view'
 import { UnitShapeThumbnail } from '@/components/unit-client'
 import {
@@ -25,6 +26,8 @@ import {
   type UnitCountRoundingMode,
 } from '@/lib/unit-calculations'
 
+const DEFAULT_STOCK_LENGTH_MM = 6000
+
 export function OptimizeClient({
   projectId,
   segments,
@@ -41,7 +44,6 @@ export function OptimizeClient({
     segments.map((s) => [s.id, s.drawing_id]),
   )
 
-  const [stockLength, setStockLength] = useState(6000)
   const [pieceLengthAdjustmentMm, setPieceLengthAdjustmentMm] = useState(-30)
   const [result, setResult] = useState<OptimizationOutput | null>(null)
   const [barSummaryTable, setBarSummaryTable] = useState<BarSummaryRow[] | null>(null)
@@ -50,6 +52,7 @@ export function OptimizeClient({
   const [customerCompany, setCustomerCompany] = useState('')
   const [customerAddress, setCustomerAddress] = useState('')
   const [customerName, setCustomerName] = useState('')
+  const [customerDate, setCustomerDate] = useState('')
   const [focusSegmentId, setFocusSegmentId] = useState<string | null>(
     initialFocusSegmentId ?? null,
   )
@@ -79,10 +82,12 @@ export function OptimizeClient({
         company?: string
         address?: string
         name?: string
+        date?: string
       }
       setCustomerCompany(parsed.company ?? '')
       setCustomerAddress(parsed.address ?? '')
       setCustomerName(parsed.name ?? '')
+      setCustomerDate(parsed.date ?? '')
     } catch {
       // Ignore malformed local data and continue with empty fields.
     }
@@ -97,12 +102,19 @@ export function OptimizeClient({
           company: customerCompany,
           address: customerAddress,
           name: customerName,
+          date: customerDate,
         }),
       )
     } catch {
       // Ignore storage write errors so the form stays usable.
     }
-  }, [customerAddress, customerCompany, customerInfoStorageKey, customerName])
+  }, [
+    customerAddress,
+    customerCompany,
+    customerDate,
+    customerInfoStorageKey,
+    customerName,
+  ])
 
   function handleCalculate() {
     const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
@@ -112,7 +124,7 @@ export function OptimizeClient({
       const adjusted = baseLen + (pieceLengthAdjustmentMm || 0)
       if (!Number.isFinite(adjusted) || adjusted <= 0) {
         alert(
-          `部材長さ補正の結果、0mm以下になりました。\n長さ: ${baseLen}mm / 補正: ${pieceLengthAdjustmentMm}mm`,
+          `鉄筋長さ補正値の結果、0mm以下になりました。\n長さ: ${baseLen}mm / 補正: ${pieceLengthAdjustmentMm}mm`,
         )
         return
       }
@@ -135,7 +147,7 @@ export function OptimizeClient({
 
     setCalculating(true)
     queueMicrotask(() => {
-      const output = optimize(pieces, stockLength, {
+      const output = optimize(pieces, DEFAULT_STOCK_LENGTH_MM, {
         algorithm: 'best-fit',
       })
       setResult(output)
@@ -205,7 +217,7 @@ export function OptimizeClient({
 
       <section className="optimize-print-customer rounded-lg border border-border bg-white p-5">
         <h2 className="text-base font-semibold mb-3">顧客情報</h2>
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="text-sm">
             <span className="block text-xs font-medium tracking-wide text-muted/80">会社名</span>
             <input
@@ -230,6 +242,13 @@ export function OptimizeClient({
               className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary"
             />
           </label>
+          <label className="text-sm">
+            <span className="block text-xs font-medium tracking-wide text-muted/80">日付</span>
+            <CustomerDatePicker
+              value={customerDate}
+              onChange={setCustomerDate}
+            />
+          </label>
         </div>
       </section>
 
@@ -239,18 +258,7 @@ export function OptimizeClient({
         <div className="flex w-full flex-wrap items-end gap-4">
           <div>
             <label className="block text-sm text-muted mb-1">
-              元材長さ (mm)
-            </label>
-            <input
-              type="number"
-              value={stockLength}
-              onChange={(e) => setStockLength(parseInt(e.target.value) || 6000)}
-              className="w-40 rounded-lg border border-border px-3 py-2 text-sm font-mono outline-none focus:border-primary"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-muted mb-1">
-              部材長さ補正 (mm)
+              鉄筋長さ補正値 (mm)
             </label>
             <div className="flex items-center gap-3">
               <input
@@ -310,7 +318,7 @@ export function OptimizeClient({
 
           <OptimizationResultView
             result={result}
-            stockLengthMm={stockLength}
+            stockLengthMm={DEFAULT_STOCK_LENGTH_MM}
             projectId={projectId}
             segmentLabelById={segmentLabelById}
             segmentDrawingIdById={segmentDrawingIdById}
@@ -575,7 +583,7 @@ function BarSummarySection({
       <h3 className="text-base font-semibold mb-1">鉄筋種類別の必要本数</h3>
       {adjustmentMm !== 0 && (
         <p className="text-xs text-muted mb-3">
-          部材長さ補正: {adjustmentMm > 0 ? '+' : ''}
+          鉄筋長さ補正値: {adjustmentMm > 0 ? '+' : ''}
           {adjustmentMm}mm 適用済み
         </p>
       )}
