@@ -13,6 +13,7 @@ import {
   getSegmentBars,
   getSegmentColor,
   getSegmentEffectiveLengthMm,
+  getSegmentLabelPlacement,
   legacyFieldsFromBars,
   type SegmentBarItem,
   type SegmentColor,
@@ -55,6 +56,8 @@ export function SegmentPanel({
   onUpdate,
   onDelete,
   onSplit,
+  onRotateLabel,
+  onResetLabel,
   barTypes,
   projectId,
   canUndo,
@@ -72,6 +75,8 @@ export function SegmentPanel({
   onUpdate: (id: string, updates: Partial<DrawingSegment>) => void
   onDelete: (id: string) => void
   onSplit?: (id: string) => void
+  onRotateLabel?: (id: string) => void
+  onResetLabel?: (id: string) => void
   barTypes: string[]
   projectId: string
   canUndo?: boolean
@@ -113,6 +118,14 @@ export function SegmentPanel({
   const selectedNote = selected
     ? (decoded?.meta?.note ?? decoded?.legacyNote ?? '')
     : ''
+  const selectedLabelPlacement = selected
+    ? getSegmentLabelPlacement(selected.memo)
+    : null
+  const selectedLabelIsCustomized =
+    !!selectedLabelPlacement &&
+    (selectedLabelPlacement.x != null ||
+      selectedLabelPlacement.y != null ||
+      selectedLabelPlacement.rotationSteps !== 0)
   // 円番号(ユニット由来)で集計し、表示長さは線分に保存された実長を優先（マスタ変更で既存線が変わらない）
   const getSegmentSummaryGroup = (seg: DrawingSegment, color: SegmentColor) => {
     const linkedUnit =
@@ -340,11 +353,13 @@ export function SegmentPanel({
                         { barType: barTypes[0] ?? 'D10', quantity: 1 },
                       ]
                       const legacy = legacyFieldsFromBars(bars)
+                      const { meta, legacyNote } = decodeSegmentMeta(selected.memo)
                       const memo = encodeSegmentMeta({
                         v: 1,
                         color: 'red',
                         bars,
-                        note: decodeSegmentMeta(selected.memo).legacyNote ?? null,
+                        note: meta?.note ?? legacyNote ?? null,
+                        labelPlacement: meta?.labelPlacement ?? null,
                       })
                       onUpdate(selected.id, {
                         memo,
@@ -366,6 +381,37 @@ export function SegmentPanel({
                 削除
               </button>
             </div>
+          </div>
+          <div className="rounded-md border border-blue-200 bg-white/80 p-2">
+            <div className="mb-1.5 text-[11px] font-medium text-slate-700">
+              数値ラベル
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {onRotateLabel && (
+                <button
+                  type="button"
+                  onClick={() => onRotateLabel(selected.id)}
+                  className="rounded border border-border bg-white px-2 py-1 text-[11px] text-foreground hover:bg-slate-50"
+                  title="ショートカット: T"
+                >
+                  90°回転 (T)
+                </button>
+              )}
+              {onResetLabel && (
+                <button
+                  type="button"
+                  onClick={() => onResetLabel(selected.id)}
+                  disabled={!selectedLabelIsCustomized}
+                  className="rounded border border-border bg-white px-2 py-1 text-[11px] text-foreground hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  title="ショートカット: Shift+T"
+                >
+                  位置・角度を戻す
+                </button>
+              )}
+            </div>
+            <p className="mt-1.5 text-[10px] leading-snug text-muted">
+              図面上の数値をドラッグすると、線を動かさずに位置だけ変更できます。
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -396,6 +442,7 @@ export function SegmentPanel({
                       color: nextColor,
                       bars,
                       note,
+                      labelPlacement: meta?.labelPlacement ?? null,
                     })
                     onUpdate(selected.id, { memo, ...CLEAR_UNIT_LINK })
                   }}
@@ -435,6 +482,7 @@ export function SegmentPanel({
                       color: meta?.color ?? selectedColor,
                       bars: next,
                       note: meta?.note ?? legacyNote ?? null,
+                      labelPlacement: meta?.labelPlacement ?? null,
                     })
                     onUpdate(selected.id, {
                       memo,
@@ -465,6 +513,7 @@ export function SegmentPanel({
                             color: meta?.color ?? selectedColor,
                             bars,
                             note: meta?.note ?? legacyNote ?? null,
+                            labelPlacement: meta?.labelPlacement ?? null,
                           })
                           onUpdate(selected.id, {
                             memo,
@@ -499,6 +548,7 @@ export function SegmentPanel({
                             color: meta?.color ?? selectedColor,
                             bars,
                             note: meta?.note ?? legacyNote ?? null,
+                            labelPlacement: meta?.labelPlacement ?? null,
                           })
                           onUpdate(selected.id, {
                             memo,
@@ -521,6 +571,7 @@ export function SegmentPanel({
                             color: meta?.color ?? selectedColor,
                             bars: nextBars,
                             note: meta?.note ?? legacyNote ?? null,
+                            labelPlacement: meta?.labelPlacement ?? null,
                           })
                           onUpdate(selected.id, {
                             memo,
@@ -552,6 +603,7 @@ export function SegmentPanel({
                   color: meta?.color ?? selectedColor,
                   bars,
                   note: e.target.value || null,
+                  labelPlacement: meta?.labelPlacement ?? null,
                 })
                 onUpdate(selected.id, { memo })
               }}

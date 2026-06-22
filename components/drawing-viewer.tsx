@@ -15,12 +15,16 @@ import {
   getSegmentBars,
   getSegmentColor,
   getSegmentEffectiveLengthMm,
+  getSegmentLabelPlacement,
   getSegmentResolvedMarkNumber,
   getSegmentMarkNumberForCanvas,
   legacyFieldsFromBars,
   parseMarkFromUnitCode,
+  shiftSegmentLabelPlacementMemo,
+  updateSegmentLabelPlacementMemo,
   type SegmentBarItem,
   type SegmentColor,
+  type SegmentLabelPlacement,
 } from '@/lib/segment-meta'
 import {
   pushRecentUnitId,
@@ -270,6 +274,24 @@ type SegmentDragState = {
   snapshots: Record<string, DrawingSegment>
 }
 
+type SegmentLabelDragState = {
+  segmentId: string
+  origin: Point
+  startPlacement: SegmentLabelPlacement
+  snapshot: DrawingSegment
+}
+
+type SegmentLabelRenderInfo = {
+  kind: 'spacing' | 'length' | 'mark'
+  text: string
+  x: number
+  y: number
+  angle: number
+  fontPx: number
+  halfWidth: number
+  halfHeight: number
+}
+
 export function DrawingViewer({
   drawingId,
   projectId,
@@ -454,6 +476,9 @@ export function DrawingViewer({
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 })
   const [segmentDrag, setSegmentDrag] = useState<SegmentDragState | null>(null)
   const segmentDragMovedRef = useRef(false)
+  const [segmentLabelDrag, setSegmentLabelDrag] =
+    useState<SegmentLabelDragState | null>(null)
+  const segmentLabelDragMovedRef = useRef(false)
   const [printSummaryPos, setPrintSummaryPos] = useState<Point>({ x: 24, y: 24 })
   const [printSummaryScale, setPrintSummaryScale] = useState(1)
   const [printModalImageUrl, setPrintModalImageUrl] = useState<string | null>(null)
@@ -555,12 +580,16 @@ export function DrawingViewer({
         prev.map((seg) => {
           const start = drag.startPositions[seg.id]
           if (!start) return seg
+          const snapshot = drag.snapshots[seg.id]
           return {
             ...seg,
             x1: start.x1 + dx,
             y1: start.y1 + dy,
             x2: start.x2 + dx,
             y2: start.y2 + dy,
+            memo: snapshot
+              ? shiftSegmentLabelPlacementMemo(snapshot.memo, dx, dy)
+              : seg.memo,
           }
         }),
       )
@@ -595,6 +624,85 @@ export function DrawingViewer({
       window.removeEventListener('mouseup', handleUp)
     }
   }, [segmentDrag, offset.x, offset.y, scale, rotationSteps])
+
+  useEffect(() => {
+    if (!segmentLabelDrag) return
+
+    const drag = segmentLabelDrag
+    const dragThreshold = 2
+
+    function pointFromClient(clientX: number, clientY: number): Point {
+      const canvas = canvasRef.current
+      if (!canvas) return { x: 0, y: 0 }
+      const rect = canvas.getBoundingClientRect()
+      const xr = (clientX - rect.left - offset.x) / scale
+      const yr = (clientY - rect.top - offset.y) / scale
+      const img = imgRef.current
+      if (!img) return { x: xr, y: yr }
+      const w = img.width
+      const h = img.height
+      const steps = normalizeRotationSteps(rotationSteps)
+      if (steps === 0) return { x: xr, y: yr }
+      if (steps === 1) return { x: yr, y: h - xr }
+      if (steps === 2) return { x: w - xr, y: h - yr }
+      return { x: w - yr, y: xr }
+    }
+
+    function applyDelta(dx: number, dy: number) {
+      const nextPlacement: SegmentLabelPlacement = {
+        ...drag.startPlacement,
+        x: (drag.startPlacement.x ?? 0) + dx,
+        y: (drag.startPlacement.y ?? 0) + dy,
+      }
+      const memo = updateSegmentLabelPlacementMemo(
+        drag.snapshot.memo,
+        nextPlacement,
+      )
+      setSegments((prev) =>
+        prev.map((seg) =>
+          seg.id === drag.segmentId ? { ...seg, memo } : seg,
+        ),
+      )
+    }
+
+    function handleMove(ev: MouseEvent) {
+      const pt = pointFromClient(ev.clientX, ev.clientY)
+      const dx = pt.x - drag.origin.x
+      const dy = pt.y - drag.origin.y
+      if (
+        !segmentLabelDragMovedRef.current &&
+        Math.hypot(dx, dy) < dragThreshold / scale
+      ) {
+        return
+      }
+      segmentLabelDragMovedRef.current = true
+      applyDelta(dx, dy)
+    }
+
+    function handleUp(ev: MouseEvent) {
+      const pt = pointFromClient(ev.clientX, ev.clientY)
+      const dx = pt.x - drag.origin.x
+      const dy = pt.y - drag.origin.y
+      if (segmentLabelDragMovedRef.current) {
+        void commitSegmentLabelDrag(drag, dx, dy)
+      } else {
+        setSegments((prev) =>
+          prev.map((seg) =>
+            seg.id === drag.segmentId ? drag.snapshot : seg,
+          ),
+        )
+      }
+      segmentLabelDragMovedRef.current = false
+      setSegmentLabelDrag(null)
+    }
+
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleUp)
+    }
+  }, [segmentLabelDrag, offset.x, offset.y, scale, rotationSteps])
 
   const effectiveUnits = useMemo(() => {
     const base = serverUnits.length > 0 ? serverUnits : (clientUnits ?? [])
@@ -827,6 +935,88 @@ export function DrawingViewer({
     setActiveTemplateId(templateSummaries[0].id)
   }, [activeTemplateId, templateSummaries])
 
+  const getSegmentLabelRenderInfo = useCallback(
+    (seg: DrawingSegment): SegmentLabelRenderInfo => {
+      const placement = getSegmentLabelPlacement(seg.memo)
+      const midX = (seg.x1 + seg.x2) / 2
+      const midY = (seg.y1 + seg.y2) / 2
+      const s = normalizeRotationSteps(rotationSteps)
+      const counterAngleRad = (-s * Math.PI) / 2
+      const rotationOffset = placement.rotationSteps * (Math.PI / 2)
+      const isSpacing = seg.bar_type === 'SPACING' && seg.quantity === 0
+
+      if (isSpacing) {
+        const text = String(seg.length_mm)
+        const fontPx = 10
+        return {
+          kind: 'spacing',
+          text,
+          x: placement.x ?? midX,
+          y: placement.y ?? midY - 6 / scale,
+          angle: counterAngleRad + rotationOffset,
+          fontPx,
+          halfWidth: Math.max(10, text.length * fontPx * 0.36) / scale,
+          halfHeight: 8 / scale,
+        }
+      }
+
+      const circleNum = getSegmentMarkNumberForCanvas(seg, effectiveUnits)
+      if (circleNum != null) {
+        return {
+          kind: 'mark',
+          text: String(circleNum),
+          x: placement.x ?? midX,
+          y: placement.y ?? midY - 2 / scale,
+          angle: counterAngleRad + rotationOffset,
+          fontPx: 11,
+          halfWidth: 11 / scale,
+          halfHeight: 11 / scale,
+        }
+      }
+
+      const text = getSegmentEffectiveLengthMm(seg, effectiveUnits).toLocaleString('ja-JP')
+      const dx = seg.x2 - seg.x1
+      const dy = seg.y2 - seg.y1
+      const segAngle = Math.atan2(dy, dx)
+      const screenX = Math.cos(segAngle + s * Math.PI / 2)
+      const screenY = Math.sin(segAngle + s * Math.PI / 2)
+      const shouldFlip = screenX < 0 || (Math.abs(screenX) < 1e-9 && screenY < 0)
+      const baseAngle = shouldFlip ? segAngle + Math.PI : segAngle
+      const fontPx = text.replace(/,/g, '').length > 5 ? 10 : 12
+      return {
+        kind: 'length',
+        text,
+        x: placement.x ?? midX,
+        y: placement.y ?? midY,
+        angle: baseAngle + rotationOffset,
+        fontPx,
+        halfWidth: Math.max(12, text.length * fontPx * 0.36) / scale,
+        halfHeight: 9 / scale,
+      }
+    },
+    [effectiveUnits, rotationSteps, scale],
+  )
+
+  const isPointInsideSegmentLabel = useCallback(
+    (point: Point, seg: DrawingSegment): boolean => {
+      const info = getSegmentLabelRenderInfo(seg)
+      const dx = point.x - info.x
+      const dy = point.y - info.y
+      if (info.kind === 'mark') {
+        return Math.hypot(dx, dy) <= 13 / scale
+      }
+      const cos = Math.cos(info.angle)
+      const sin = Math.sin(info.angle)
+      const localX = dx * cos + dy * sin
+      const localY = -dx * sin + dy * cos
+      return (
+        Math.abs(localX) <= info.halfWidth + 5 / scale &&
+        Math.abs(localY) <= info.halfHeight + 4 / scale
+      )
+    },
+    [getSegmentLabelRenderInfo, scale],
+  )
+
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current
     const img = imgRef.current
@@ -898,86 +1088,74 @@ export function DrawingViewer({
         ctx.restore()
       }
 
-      const midX = (seg.x1 + seg.x2) / 2
-      const midY = (seg.y1 + seg.y2) / 2
       const baseFill = isSpacing
         ? isSelected
           ? '#0f766e'
           : '#16a34a'
         : getSegmentStrokeHex(segColor, isSelected)
-      ctx.fillStyle = baseFill
+      const stroke = getSegmentStrokeHex(segColor, false)
+      const labelInfo = getSegmentLabelRenderInfo(seg)
 
-      const s = ((rotationSteps % 4) + 4) % 4
-      const counterAngleRad = (-s * Math.PI) / 2 // テキストのみ回転を打ち消して画面基準で正立
+      if (labelInfo.kind === 'mark') {
+        const r = 9 / scale
+        ctx.beginPath()
+        ctx.arc(labelInfo.x, labelInfo.y, r, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
+        ctx.fill()
+        ctx.lineWidth = 2 / scale
+        ctx.strokeStyle = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
+        ctx.stroke()
 
-      if (isSpacing) {
         ctx.save()
-        ctx.translate(midX, midY - 6 / scale)
-        ctx.rotate(counterAngleRad)
-        ctx.font = `${10 / scale}px sans-serif`
-        ctx.fillText(`${seg.length_mm}`, 0, 0)
+        ctx.translate(labelInfo.x, labelInfo.y)
+        ctx.rotate(labelInfo.angle)
+        ctx.font = `bold ${labelInfo.fontPx / scale}px sans-serif`
+        ctx.fillStyle = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(labelInfo.text, 0, 0)
         ctx.restore()
       } else {
-        const circleNum = getSegmentMarkNumberForCanvas(seg, effectiveUnits)
-        const stroke = getSegmentStrokeHex(segColor, false)
-
-        if (circleNum == null) {
-          const displayLen = getSegmentEffectiveLengthMm(seg, effectiveUnits)
-          // 任意長さ・ユニット未割当: 円なし。線の中点に沿って線と平行な寸法ラベル
-          const dx = seg.x2 - seg.x1
-          const dy = seg.y2 - seg.y1
-          const segAngle = Math.atan2(dy, dx)
-          // 図面回転後の画面x方向成分: cos(segAngle + s*90°)
-          // これが負なら文字が右→左を向くため、π加算して向きを反転
-          const screenX = Math.cos(segAngle + s * Math.PI / 2)
-          const screenY = Math.sin(segAngle + s * Math.PI / 2)
-          const shouldFlip = screenX < 0 || (Math.abs(screenX) < 1e-9 && screenY < 0)
-          const drawAngle = shouldFlip ? segAngle + Math.PI : segAngle
-          const text = displayLen.toLocaleString('ja-JP')
-          const fontPx = text.replace(/,/g, '').length > 5 ? 10 : 12
-          ctx.save()
-          ctx.translate(midX, midY)
-          ctx.rotate(drawAngle)
-          ctx.textAlign = 'center'
-          ctx.textBaseline = 'middle'
-          ctx.font = `800 ${fontPx / scale}px sans-serif`
+        ctx.save()
+        ctx.translate(labelInfo.x, labelInfo.y)
+        ctx.rotate(labelInfo.angle)
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        if (labelInfo.kind === 'length') {
+          ctx.font = `800 ${labelInfo.fontPx / scale}px sans-serif`
           ctx.lineJoin = 'round'
           ctx.miterLimit = 2
           const fillCol = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
           ctx.lineWidth = 3 / scale
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)'
-          ctx.strokeText(text, 0, 0)
+          ctx.strokeText(labelInfo.text, 0, 0)
           ctx.fillStyle = fillCol
-          ctx.fillText(text, 0, 0)
-          ctx.restore()
-          ctx.textAlign = 'left'
-          ctx.textBaseline = 'alphabetic'
+          ctx.fillText(labelInfo.text, 0, 0)
         } else {
-          const r = 9 / scale
-          const yCenter = midY - 2 / scale
-
-          ctx.beginPath()
-          ctx.arc(midX, yCenter, r, 0, Math.PI * 2)
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
-          ctx.fill()
-          ctx.lineWidth = 2 / scale
-          ctx.strokeStyle = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
-          ctx.stroke()
-
-          ctx.save()
-          ctx.translate(midX, yCenter)
-          ctx.rotate(counterAngleRad)
-          ctx.font = `bold ${11 / scale}px sans-serif`
-          ctx.fillStyle = isSelected ? getSegmentStrokeHex(segColor, true) : stroke
-          ctx.textAlign = 'center'
-          ctx.textBaseline = 'middle'
-          ctx.fillText(String(circleNum), 0, 0)
-          ctx.restore()
-
-          ctx.textAlign = 'left'
-          ctx.textBaseline = 'alphabetic'
+          ctx.font = `${labelInfo.fontPx / scale}px sans-serif`
+          ctx.fillStyle = baseFill
+          ctx.fillText(labelInfo.text, 0, 0)
         }
+        ctx.restore()
       }
+
+      if (isSelected) {
+        ctx.save()
+        ctx.translate(labelInfo.x, labelInfo.y)
+        ctx.rotate(labelInfo.kind === 'mark' ? 0 : labelInfo.angle)
+        ctx.setLineDash([3 / scale, 2 / scale])
+        ctx.lineWidth = 1 / scale
+        ctx.strokeStyle = '#2563eb'
+        ctx.strokeRect(
+          -labelInfo.halfWidth,
+          -labelInfo.halfHeight,
+          labelInfo.halfWidth * 2,
+          labelInfo.halfHeight * 2,
+        )
+        ctx.restore()
+      }
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'alphabetic'
     })
 
     // 鉄筋線分の両端に、線に直交する短いキャップ（「I」形の耳）を描画
@@ -1036,6 +1214,7 @@ export function DrawingViewer({
     rotationSteps,
     effectiveUnits,
     unitById,
+    getSegmentLabelRenderInfo,
   ])
 
   useEffect(() => {
@@ -1190,6 +1369,21 @@ export function DrawingViewer({
         const u = list[0]
         if (!u) return
         setActiveByUnitId(u.id)
+      }
+
+      if (e.key === 't' || e.key === 'T') {
+        const selectedId =
+          selectedSegmentIds.length > 0
+            ? selectedSegmentIds[selectedSegmentIds.length - 1]
+            : null
+        if (!selectedId) return
+        e.preventDefault()
+        if (e.shiftKey) {
+          void resetSegmentLabel(selectedId)
+        } else {
+          void rotateSegmentLabel90(selectedId)
+        }
+        return
       }
 
       if (e.key === '1') {
@@ -1451,6 +1645,42 @@ export function DrawingViewer({
           return
         }
       }
+
+      const foundLabel = [...segments]
+        .reverse()
+        .find((seg) => isPointInsideSegmentLabel(pt, seg))
+      if (foundLabel) {
+        let nextIds: string[]
+        if (e.ctrlKey || e.metaKey) {
+          nextIds = selectedSegmentIds.includes(foundLabel.id)
+            ? selectedSegmentIds.filter((id) => id !== foundLabel.id)
+            : [...selectedSegmentIds, foundLabel.id]
+        } else {
+          nextIds = [foundLabel.id]
+        }
+        setSelectedSegmentIds(nextIds)
+        setSegmentDrag(null)
+
+        if (nextIds.includes(foundLabel.id)) {
+          const info = getSegmentLabelRenderInfo(foundLabel)
+          const placement = getSegmentLabelPlacement(foundLabel.memo)
+          segmentLabelDragMovedRef.current = false
+          setSegmentLabelDrag({
+            segmentId: foundLabel.id,
+            origin: pt,
+            startPlacement: {
+              ...placement,
+              x: info.x,
+              y: info.y,
+            },
+            snapshot: foundLabel,
+          })
+        } else {
+          setSegmentLabelDrag(null)
+        }
+        return
+      }
+
       const found = segments.find((seg) => {
         return distToSegment(pt, { x: seg.x1, y: seg.y1 }, { x: seg.x2, y: seg.y2 }) < clickRadius
       })
@@ -1496,7 +1726,7 @@ export function DrawingViewer({
       setOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y })
       return
     }
-    if (segmentDrag) {
+    if (segmentDrag || segmentLabelDrag) {
       return
     }
     if (tool === 'select' && splitArmedSegmentId) {
@@ -1547,7 +1777,7 @@ export function DrawingViewer({
       setPanning(false)
       return
     }
-    if (segmentDrag) {
+    if (segmentDrag || segmentLabelDrag) {
       return
     }
 
@@ -2383,6 +2613,61 @@ export function DrawingViewer({
     }
   }
 
+  async function rotateSegmentLabel90(id: string) {
+    const segment = segments.find((seg) => seg.id === id)
+    if (!segment) return
+    const placement = getSegmentLabelPlacement(segment.memo)
+    const memo = updateSegmentLabelPlacementMemo(segment.memo, {
+      ...placement,
+      rotationSteps: (placement.rotationSteps + 1) % 4,
+    })
+    await updateSegment(id, { memo })
+  }
+
+  async function resetSegmentLabel(id: string) {
+    const segment = segments.find((seg) => seg.id === id)
+    if (!segment) return
+    const memo = updateSegmentLabelPlacementMemo(segment.memo, null)
+    await updateSegment(id, { memo })
+  }
+
+  async function commitSegmentLabelDrag(
+    drag: SegmentLabelDragState,
+    dx: number,
+    dy: number,
+  ) {
+    const placement: SegmentLabelPlacement = {
+      ...drag.startPlacement,
+      x: Math.round(((drag.startPlacement.x ?? 0) + dx) * 100) / 100,
+      y: Math.round(((drag.startPlacement.y ?? 0) + dy) * 100) / 100,
+    }
+    const memo = updateSegmentLabelPlacementMemo(
+      drag.snapshot.memo,
+      placement,
+    )
+    const after: DrawingSegment = { ...drag.snapshot, memo }
+    const { error } = await supabase
+      .from('drawing_segments')
+      .update({ memo })
+      .eq('id', drag.segmentId)
+
+    if (error) {
+      setSegments((prev) =>
+        prev.map((seg) =>
+          seg.id === drag.segmentId ? drag.snapshot : seg,
+        ),
+      )
+      alert('数値ラベルの移動に失敗しました。')
+      return
+    }
+
+    setSegments((prev) =>
+      prev.map((seg) => (seg.id === drag.segmentId ? after : seg)),
+    )
+    setLastAction({ type: 'update', before: drag.snapshot, after })
+    void uploadCompositeThumbnail()
+  }
+
   async function commitSegmentDrag(drag: SegmentDragState, dx: number, dy: number) {
     const rdx = Math.round(dx)
     const rdy = Math.round(dy)
@@ -2391,7 +2676,11 @@ export function DrawingViewer({
         prev.map((seg) => {
           const start = drag.startPositions[seg.id]
           if (!start) return seg
-          return { ...seg, ...start }
+          return {
+            ...seg,
+            ...start,
+            memo: drag.snapshots[seg.id]?.memo ?? seg.memo,
+          }
         }),
       )
       return
@@ -2405,6 +2694,7 @@ export function DrawingViewer({
       y1: number
       x2: number
       y2: number
+      memo: string | null
     }[] = []
 
     for (const id of drag.ids) {
@@ -2425,10 +2715,18 @@ export function DrawingViewer({
         y1: start.y1 + rdy,
         x2: start.x2 + rdx,
         y2: start.y2 + rdy,
+        memo: shiftSegmentLabelPlacementMemo(seg.memo, rdx, rdy),
       }
       before.push(b)
       after.push(a)
-      patches.push({ id, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 })
+      patches.push({
+        id,
+        x1: a.x1,
+        y1: a.y1,
+        x2: a.x2,
+        y2: a.y2,
+        memo: a.memo,
+      })
     }
 
     if (patches.length === 0) return
@@ -2437,7 +2735,13 @@ export function DrawingViewer({
       patches.map((p) =>
         supabase
           .from('drawing_segments')
-          .update({ x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2 })
+          .update({
+            x1: p.x1,
+            y1: p.y1,
+            x2: p.x2,
+            y2: p.y2,
+            memo: p.memo,
+          })
           .eq('id', p.id),
       ),
     )
@@ -2492,6 +2796,7 @@ export function DrawingViewer({
         color: chosen.color,
         bars,
         note: meta?.note ?? legacyNote ?? null,
+        labelPlacement: meta?.labelPlacement ?? null,
       })
       await updateSegment(id, {
         memo,
@@ -2568,6 +2873,7 @@ export function DrawingViewer({
       unit_name: segment.unit_name ?? null,
       mark_number: segment.mark_number ?? null,
     }
+    const splitMemo = updateSegmentLabelPlacementMemo(segment.memo, null)
     const insertRows = [
       {
         drawing_id: drawingId,
@@ -2579,7 +2885,7 @@ export function DrawingViewer({
         quantity: segment.quantity,
         bar_type: segment.bar_type,
         label: labelA,
-        memo: segment.memo,
+        memo: splitMemo,
         ...unitFields,
       },
       {
@@ -2592,7 +2898,7 @@ export function DrawingViewer({
         quantity: segment.quantity,
         bar_type: segment.bar_type,
         label: labelB,
-        memo: segment.memo,
+        memo: splitMemo,
         ...unitFields,
       },
     ] as const
@@ -2706,6 +3012,7 @@ export function DrawingViewer({
               y1: b.y1,
               x2: b.x2,
               y2: b.y2,
+              memo: b.memo,
             })
             .eq('id', b.id),
         ),
@@ -3057,7 +3364,7 @@ export function DrawingViewer({
           <span className="text-xs text-muted ml-2">
             {splitArmedSegmentId
               ? '分割: 図面上の線をクリックして分割点を選択（Escでキャンセル）'
-              : 'Escキー: 描画中の線を取り消します。もう一度押すと選択モードに戻ります。／Dキー: 描画／Gキー: 間隔線／Sキー: 選択／Zキー: 選択した線を削除します。／Shiftキーを押しながら描画: 線を水平または垂直にまっすぐ描けます。'}
+              : 'Escキー: 描画中の線を取り消します。もう一度押すと選択モードに戻ります。／Dキー: 描画／Gキー: 間隔線／Sキー: 選択／Tキー: 数値を90°回転／Shift+T: 数値を元に戻す／Zキー: 選択した線を削除します。／Shiftキーを押しながら描画: 線を水平または垂直にまっすぐ描けます。'}
           </span>
           </div>
           {persistedActiveUnits.length === 0 ? (
@@ -3077,11 +3384,13 @@ export function DrawingViewer({
                 ? 'crosshair'
                 : panning
                   ? 'grabbing'
-                  : segmentDrag
-                    ? 'move'
-                    : tool === 'select'
-                      ? 'pointer'
-                      : 'default',
+                  : segmentLabelDrag
+                    ? 'grabbing'
+                    : segmentDrag
+                      ? 'move'
+                      : tool === 'select'
+                        ? 'pointer'
+                        : 'default',
           }}
         >
           {!imgLoaded && fileType === 'pdf' ? (
@@ -3114,6 +3423,8 @@ export function DrawingViewer({
         onBulkApplyTemplateColor={bulkApplyTemplateColorToSelection}
         onUpdate={updateSegment}
         onDelete={deleteSegment}
+        onRotateLabel={(id) => void rotateSegmentLabel90(id)}
+        onResetLabel={(id) => void resetSegmentLabel(id)}
         onSplit={(id) => {
           setTool('select')
           setSelectedSegmentIds([id])

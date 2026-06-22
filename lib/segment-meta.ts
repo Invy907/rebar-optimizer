@@ -13,11 +13,50 @@ export type SegmentBarItem = {
   quantity: number
 }
 
+export type SegmentLabelPlacement = {
+  x: number | null
+  y: number | null
+  /** 既定の向きから時計回りに 90° ずつ回転 */
+  rotationSteps: number
+}
+
 export type SegmentMetaV1 = {
   v: 1
   color: SegmentColor | null
   bars: SegmentBarItem[]
   note: string | null
+  labelPlacement?: SegmentLabelPlacement | null
+}
+
+const DEFAULT_LABEL_PLACEMENT: SegmentLabelPlacement = {
+  x: null,
+  y: null,
+  rotationSteps: 0,
+}
+
+function normalizeLabelRotationSteps(steps: unknown): number {
+  const n = Number(steps)
+  if (!Number.isFinite(n)) return 0
+  return ((Math.round(n) % 4) + 4) % 4
+}
+
+function normalizeLabelPlacement(value: unknown): SegmentLabelPlacement | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  const x = raw.x
+  const y = raw.y
+  const hasPosition =
+    typeof x === 'number' &&
+    Number.isFinite(x) &&
+    typeof y === 'number' &&
+    Number.isFinite(y)
+  const rotationSteps = normalizeLabelRotationSteps(raw.rotationSteps)
+  if (!hasPosition && rotationSteps === 0) return null
+  return {
+    x: hasPosition ? x : null,
+    y: hasPosition ? y : null,
+    rotationSteps,
+  }
 }
 
 function normalizeBars(bars: SegmentBarItem[]): SegmentBarItem[] {
@@ -45,6 +84,7 @@ export function decodeSegmentMeta(
     const colorRaw = r.color
     const barsRaw = r.bars
     const noteRaw = r.note
+    const labelPlacement = normalizeLabelPlacement(r.labelPlacement)
 
     const color: SegmentColor | null = isSegmentColor(colorRaw) ? colorRaw : null
 
@@ -70,6 +110,7 @@ export function decodeSegmentMeta(
         color,
         bars: normalizeBars(bars),
         note: note?.trim() ? note : null,
+        labelPlacement,
       },
       legacyNote: null,
     }
@@ -84,9 +125,54 @@ export function encodeSegmentMeta(meta: SegmentMetaV1): string | null {
     color: meta.color ?? null,
     bars: normalizeBars(meta.bars ?? []),
     note: meta.note?.trim() ? meta.note : null,
+    labelPlacement: normalizeLabelPlacement(meta.labelPlacement),
   }
-  if (!normalized.color && normalized.bars.length === 0 && !normalized.note) return null
+  if (
+    !normalized.color &&
+    normalized.bars.length === 0 &&
+    !normalized.note &&
+    !normalized.labelPlacement
+  ) {
+    return null
+  }
   return JSON.stringify(normalized)
+}
+
+export function getSegmentLabelPlacement(
+  memo: string | null,
+): SegmentLabelPlacement {
+  const { meta } = decodeSegmentMeta(memo)
+  return meta?.labelPlacement
+    ? { ...meta.labelPlacement }
+    : { ...DEFAULT_LABEL_PLACEMENT }
+}
+
+export function updateSegmentLabelPlacementMemo(
+  memo: string | null,
+  placement: SegmentLabelPlacement | null,
+): string | null {
+  const { meta, legacyNote } = decodeSegmentMeta(memo)
+  return encodeSegmentMeta({
+    v: 1,
+    color: meta?.color ?? null,
+    bars: meta?.bars ?? [],
+    note: meta?.note ?? (legacyNote?.trim() ? legacyNote : null),
+    labelPlacement: placement,
+  })
+}
+
+export function shiftSegmentLabelPlacementMemo(
+  memo: string | null,
+  dx: number,
+  dy: number,
+): string | null {
+  const placement = getSegmentLabelPlacement(memo)
+  if (placement.x == null || placement.y == null) return memo
+  return updateSegmentLabelPlacementMemo(memo, {
+    ...placement,
+    x: placement.x + dx,
+    y: placement.y + dy,
+  })
 }
 
 export function getSegmentMetaForRebar(seg: DrawingSegment): SegmentMetaV1 {
@@ -320,4 +406,3 @@ export function legacyFieldsFromBars(bars: SegmentBarItem[]): {
     quantity: normalized.reduce((s, b) => s + b.quantity, 0),
   }
 }
-
