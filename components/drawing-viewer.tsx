@@ -322,6 +322,7 @@ export function DrawingViewer({
   const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>(() =>
     initialSelectedSegmentId ? [initialSelectedSegmentId] : [],
   )
+  const selectedLabelSegmentIdRef = useRef<string | null>(null)
   const [unitPrefsTick, setUnitPrefsTick] = useState(0)
 
   const focusedSegmentId =
@@ -1262,6 +1263,13 @@ export function DrawingViewer({
   }, [focusedSegmentId, lastSplitMarker])
 
   useEffect(() => {
+    const selectedLabelId = selectedLabelSegmentIdRef.current
+    if (selectedLabelId && !selectedSegmentIds.includes(selectedLabelId)) {
+      selectedLabelSegmentIdRef.current = null
+    }
+  }, [selectedSegmentIds])
+
+  useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null
       const tag = t?.tagName?.toUpperCase()
@@ -1371,13 +1379,15 @@ export function DrawingViewer({
         setActiveByUnitId(u.id)
       }
 
-      if (e.key === 't' || e.key === 'T') {
+      if (e.code === 'KeyT' || e.key === 't' || e.key === 'T') {
         const selectedId =
-          selectedSegmentIds.length > 0
+          selectedLabelSegmentIdRef.current ??
+          (selectedSegmentIds.length > 0
             ? selectedSegmentIds[selectedSegmentIds.length - 1]
-            : null
+            : null)
         if (!selectedId) return
         e.preventDefault()
+        e.stopPropagation()
         if (e.shiftKey) {
           void resetSegmentLabel(selectedId)
         } else {
@@ -1659,6 +1669,9 @@ export function DrawingViewer({
           nextIds = [foundLabel.id]
         }
         setSelectedSegmentIds(nextIds)
+        selectedLabelSegmentIdRef.current = nextIds.includes(foundLabel.id)
+          ? foundLabel.id
+          : null
         setSegmentDrag(null)
 
         if (nextIds.includes(foundLabel.id)) {
@@ -1684,6 +1697,7 @@ export function DrawingViewer({
       const found = segments.find((seg) => {
         return distToSegment(pt, { x: seg.x1, y: seg.y1 }, { x: seg.x2, y: seg.y2 }) < clickRadius
       })
+      selectedLabelSegmentIdRef.current = null
 
       let nextIds: string[]
       if (e.ctrlKey || e.metaKey) {
@@ -2621,14 +2635,39 @@ export function DrawingViewer({
       ...placement,
       rotationSteps: (placement.rotationSteps + 1) % 4,
     })
-    await updateSegment(id, { memo })
+    await persistSegmentLabelMemo(segment, memo)
   }
 
   async function resetSegmentLabel(id: string) {
     const segment = segments.find((seg) => seg.id === id)
     if (!segment) return
     const memo = updateSegmentLabelPlacementMemo(segment.memo, null)
-    await updateSegment(id, { memo })
+    await persistSegmentLabelMemo(segment, memo)
+  }
+
+  async function persistSegmentLabelMemo(
+    before: DrawingSegment,
+    memo: string | null,
+  ) {
+    const after: DrawingSegment = { ...before, memo }
+    setSegments((prev) =>
+      prev.map((seg) => (seg.id === before.id ? after : seg)),
+    )
+
+    const { error } = await supabase
+      .from('drawing_segments')
+      .update({ memo })
+      .eq('id', before.id)
+
+    if (error) {
+      setSegments((prev) =>
+        prev.map((seg) => (seg.id === before.id ? before : seg)),
+      )
+      alert('数値ラベルの更新に失敗しました。')
+      return
+    }
+
+    setLastAction({ type: 'update', before, after })
   }
 
   async function commitSegmentLabelDrag(
