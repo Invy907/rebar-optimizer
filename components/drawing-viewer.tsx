@@ -2633,7 +2633,7 @@ export function DrawingViewer({
     const placement = getSegmentLabelPlacement(segment.memo)
     const memo = updateSegmentLabelPlacementMemo(segment.memo, {
       ...placement,
-      rotationSteps: (placement.rotationSteps + 1) % 4,
+      rotationSteps: (placement.rotationSteps + 3) % 4,
     })
     await persistSegmentLabelMemo(segment, memo)
   }
