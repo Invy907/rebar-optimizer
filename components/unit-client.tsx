@@ -4088,13 +4088,10 @@ export function UnitShapeThumbnail({
   const geoBounds = previewGeometry.bounds
   const xs = previewGeometry.points.map((p) => p.x)
   const ys = previewGeometry.points.map((p) => p.y)
-  const minX = Number.isFinite(geoBounds?.minX) ? geoBounds!.minX : Math.min(...xs, 0)
-  const minY = Number.isFinite(geoBounds?.minY) ? geoBounds!.minY : Math.min(...ys, 0)
-  const maxX = Number.isFinite(geoBounds?.maxX) ? geoBounds!.maxX : Math.max(...xs, 100)
-  const maxY = Number.isFinite(geoBounds?.maxY) ? geoBounds!.maxY : Math.max(...ys, 60)
-  const pad = large ? 56 : 24
-  const w = Math.max(110, maxX - minX + pad * 2)
-  const h = Math.max(66, maxY - minY + pad * 2)
+  const baseMinX = Number.isFinite(geoBounds?.minX) ? geoBounds!.minX : Math.min(...xs, 0)
+  const baseMinY = Number.isFinite(geoBounds?.minY) ? geoBounds!.minY : Math.min(...ys, 0)
+  const baseMaxX = Number.isFinite(geoBounds?.maxX) ? geoBounds!.maxX : Math.max(...xs, 100)
+  const baseMaxY = Number.isFinite(geoBounds?.maxY) ? geoBounds!.maxY : Math.max(...ys, 60)
   const byKey = Object.fromEntries(previewGeometry.points.map((p) => [p.key, p]))
   const stroke = getSegmentStrokeHex(normalizeSegmentColor(unit.color), false)
   const lineStyle = getUnitShapeLineStyle(unit)
@@ -4162,6 +4159,48 @@ export function UnitShapeThumbnail({
   const previewBarDiameters = Array.from(
     new Set((unit.bars ?? []).map((b) => String(b.diameter ?? '').trim().toUpperCase()).filter(Boolean)),
   )
+
+  // 実際に描画される全要素（形状・鉄筋・間隔線・寸法ラベル）を含めた範囲で viewBox を決める。
+  // 寸法ラベルは形状の外側に置かれるため、これを含めないと meet で見切れる。
+  let minX = baseMinX
+  let minY = baseMinY
+  let maxX = baseMaxX
+  let maxY = baseMaxY
+  const includePoint = (x: number, y: number) => {
+    if (Number.isFinite(x)) {
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+    }
+    if (Number.isFinite(y)) {
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+  }
+  const annotationFont = 18
+  for (const rb of previewRebars) {
+    includePoint(rb.x - rebarR, rb.y - rebarR)
+    includePoint(rb.x + rebarR, rb.y + rebarR)
+  }
+  for (const sp of previewSpacings) {
+    includePoint(sp.x1, sp.y1)
+    includePoint(sp.x2, sp.y2)
+    // ラベルは中央揃え: テキスト幅の半分を左右に見込む
+    const half = (String(sp.labelText ?? '').length * spacingFont) / 2 + spacingTickHalf
+    includePoint(sp.tx - half, sp.ty - spacingFont / 2)
+    includePoint(sp.tx + half, sp.ty + spacingFont / 2)
+  }
+  if (large) {
+    for (const an of previewRebarLayout.annotations) {
+      const t = String(an.text ?? '').trim()
+      if (!t || !Number.isFinite(an.x) || !Number.isFinite(an.y)) continue
+      // text-anchor=start: an.x から右方向へ伸びる
+      includePoint(an.x, an.y - annotationFont)
+      includePoint(an.x + t.length * annotationFont * 0.62, an.y + annotationFont * 0.3)
+    }
+  }
+  const pad = large ? 40 : 20
+  const w = Math.max(110, maxX - minX + pad * 2)
+  const h = Math.max(66, maxY - minY + pad * 2)
 
   return (
     <div className={large ? (containerClassName ?? 'relative h-80 w-full') : 'contents'}>
