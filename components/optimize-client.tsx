@@ -223,26 +223,6 @@ export function OptimizeClient({
         )}
       </section>
 
-      {/* 製作図リスト（新レイアウト・試験導入。既存の計算結果はそのまま残す） */}
-      <section className="optimize-print-manufacture rounded-lg border border-border bg-white p-5">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-base font-semibold">製作図リスト（新レイアウト）</h2>
-          <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 print:hidden">
-            試験導入
-          </span>
-        </div>
-        <ManufactureListView
-          segments={segments}
-          units={units}
-          adjustmentMm={pieceLengthAdjustmentMm}
-          customerCompany={customerCompany}
-          customerName={customerName}
-          customerAddress={customerAddress}
-          customerDate={customerDate}
-          customerArrival={customerArrival}
-        />
-      </section>
-
       <section className="optimize-print-customer rounded-lg border border-border bg-white p-5">
         <h2 className="text-base font-semibold mb-3">顧客情報</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -337,6 +317,28 @@ export function OptimizeClient({
             <p className="text-sm font-medium">切断最適化を計算しています...</p>
             <p className="text-xs">しばらくお待ちください</p>
           </div>
+        </section>
+      )}
+
+      {/* 製作図リスト（新レイアウト・試験導入。計算実行後に表示。既存の計算結果はそのまま残す） */}
+      {result && !calculating && (
+        <section className="optimize-print-manufacture rounded-lg border border-border bg-white p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-base font-semibold">製作図リスト（新レイアウト）</h2>
+            <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 print:hidden">
+              試験導入
+            </span>
+          </div>
+          <ManufactureListView
+            segments={segments}
+            units={units}
+            adjustmentMm={pieceLengthAdjustmentMm}
+            customerCompany={customerCompany}
+            customerName={customerName}
+            customerAddress={customerAddress}
+            customerDate={customerDate}
+            customerArrival={customerArrival}
+          />
         </section>
       )}
 
