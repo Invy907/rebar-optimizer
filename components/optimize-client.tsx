@@ -7,6 +7,7 @@ import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput } from '@/lib/optimizer'
 import { CustomerDatePicker } from '@/components/customer-date-picker'
 import { OptimizationResultView } from '@/components/optimization-result-view'
+import { ManufactureListView } from '@/components/manufacture-list-view'
 import { UnitShapeThumbnail } from '@/components/unit-client'
 import {
   getSegmentBars,
@@ -213,6 +214,25 @@ export function OptimizeClient({
             </p>
           </div>
         )}
+      </section>
+
+      {/* 製作図リスト（新レイアウト・試験導入。既存の計算結果はそのまま残す） */}
+      <section className="optimize-print-manufacture rounded-lg border border-border bg-white p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-base font-semibold">製作図リスト（新レイアウト）</h2>
+          <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 print:hidden">
+            試験導入
+          </span>
+        </div>
+        <ManufactureListView
+          segments={segments}
+          units={units}
+          adjustmentMm={pieceLengthAdjustmentMm}
+          customerCompany={customerCompany}
+          customerName={customerName}
+          customerAddress={customerAddress}
+          customerDate={customerDate}
+        />
       </section>
 
       <section className="optimize-print-customer rounded-lg border border-border bg-white p-5">
