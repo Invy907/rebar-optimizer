@@ -220,7 +220,7 @@ export function ManufactureListView({
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr>
-              <th className={`${headCell} w-64`}>製作図</th>
+              <th className={`${headCell} w-80`}>製作図</th>
               <th className={`${headCell} w-48`}>長さ 呼称(実寸)</th>
               <th className={`${headCell} w-20`}>数量</th>
             </tr>
@@ -234,12 +234,15 @@ export function ManufactureListView({
                       className={`${cell} p-2 text-center`}
                       rowSpan={g.rows.length}
                     >
-                      <div className="flex h-full min-h-[150px] flex-col items-center justify-center gap-1.5">
+                      <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-1.5">
                         {g.unit ? (
-                          <UnitShapeThumbnail
-                            unit={g.unit}
-                            thumbClassName="w-full flex-1 min-h-0"
-                          />
+                          <div className="w-full flex-1" style={{ minHeight: 220 }}>
+                            <UnitShapeThumbnail
+                              unit={g.unit}
+                              large
+                              containerClassName="relative h-full w-full"
+                            />
+                          </div>
                         ) : (
                           <span className="text-xs text-muted">
                             （形状なし）

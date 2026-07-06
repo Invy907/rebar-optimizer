@@ -4061,11 +4061,14 @@ export function UnitShapeThumbnail({
   unit,
   large = false,
   thumbClassName,
+  containerClassName,
 }: {
   unit: Unit
   large?: boolean
   /** small バリアントの svg サイズ上書き（既定 h-12 w-28）。例: "h-full w-full" */
   thumbClassName?: string
+  /** large バリアントの外側コンテナ上書き（既定 relative h-80 w-full）。高さを可変にしたい表示用 */
+  containerClassName?: string
 }) {
   const template = shapeTypeToDetailTemplate(unit.shape_type)
   const spec = normalizeDetailSpecForTemplate(
@@ -4161,7 +4164,7 @@ export function UnitShapeThumbnail({
   )
 
   return (
-    <div className={large ? 'relative h-80 w-full' : 'contents'}>
+    <div className={large ? (containerClassName ?? 'relative h-80 w-full') : 'contents'}>
       {large && pitchMm != null && (
         <div className="pointer-events-none absolute left-4 top-3 z-10 text-[14px] font-bold leading-none text-slate-800">
           @{pitchMm}

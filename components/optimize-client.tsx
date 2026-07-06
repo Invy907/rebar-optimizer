@@ -6,6 +6,7 @@ import type { DrawingSegment, Unit } from '@/lib/types/database'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput } from '@/lib/optimizer'
 import { CustomerDatePicker } from '@/components/customer-date-picker'
+import { CustomerDateTimePicker } from '@/components/customer-datetime-picker'
 import { OptimizationResultView } from '@/components/optimization-result-view'
 import { ManufactureListView } from '@/components/manufacture-list-view'
 import { UnitShapeThumbnail } from '@/components/unit-client'
@@ -259,11 +260,9 @@ export function OptimizeClient({
           </label>
           <label className="text-sm">
             <span className="block text-xs font-medium tracking-wide text-muted/80">到着日（時刻あり）</span>
-            <input
-              type="datetime-local"
+            <CustomerDateTimePicker
               value={customerArrival}
-              onChange={(e) => setCustomerArrival(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none focus:border-primary print:border-transparent print:bg-transparent print:px-0"
+              onChange={setCustomerArrival}
             />
           </label>
         </div>
