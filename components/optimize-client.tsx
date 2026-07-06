@@ -53,7 +53,10 @@ export function OptimizeClient({
   const [customerCompany, setCustomerCompany] = useState('')
   const [customerAddress, setCustomerAddress] = useState('')
   const [customerName, setCustomerName] = useState('')
+  /** 積み込み日（日付のみ, ISO YYYY-MM-DD） */
   const [customerDate, setCustomerDate] = useState('')
+  /** 到着日（日付＋時刻, datetime-local の YYYY-MM-DDTHH:mm） */
+  const [customerArrival, setCustomerArrival] = useState('')
   const [focusSegmentId, setFocusSegmentId] = useState<string | null>(
     initialFocusSegmentId ?? null,
   )
@@ -84,11 +87,13 @@ export function OptimizeClient({
         address?: string
         name?: string
         date?: string
+        arrival?: string
       }
       setCustomerCompany(parsed.company ?? '')
       setCustomerAddress(parsed.address ?? '')
       setCustomerName(parsed.name ?? '')
       setCustomerDate(parsed.date ?? '')
+      setCustomerArrival(parsed.arrival ?? '')
     } catch {
       // Ignore malformed local data and continue with empty fields.
     }
@@ -104,6 +109,7 @@ export function OptimizeClient({
           address: customerAddress,
           name: customerName,
           date: customerDate,
+          arrival: customerArrival,
         }),
       )
     } catch {
@@ -111,6 +117,7 @@ export function OptimizeClient({
     }
   }, [
     customerAddress,
+    customerArrival,
     customerCompany,
     customerDate,
     customerInfoStorageKey,
@@ -232,28 +239,13 @@ export function OptimizeClient({
           customerName={customerName}
           customerAddress={customerAddress}
           customerDate={customerDate}
+          customerArrival={customerArrival}
         />
       </section>
 
       <section className="optimize-print-customer rounded-lg border border-border bg-white p-5">
         <h2 className="text-base font-semibold mb-3">顧客情報</h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="text-sm">
-            <span className="block text-xs font-medium tracking-wide text-muted/80">会社名</span>
-            <input
-              value={customerCompany}
-              onChange={(e) => setCustomerCompany(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary"
-            />
-          </label>
-          <label className="text-sm">
-            <span className="block text-xs font-medium tracking-wide text-muted/80">住所</span>
-            <input
-              value={customerAddress}
-              onChange={(e) => setCustomerAddress(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary"
-            />
-          </label>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <label className="text-sm">
             <span className="block text-xs font-medium tracking-wide text-muted/80">顧客名</span>
             <input
@@ -263,10 +255,35 @@ export function OptimizeClient({
             />
           </label>
           <label className="text-sm">
-            <span className="block text-xs font-medium tracking-wide text-muted/80">日付</span>
+            <span className="block text-xs font-medium tracking-wide text-muted/80">会社名</span>
+            <input
+              value={customerCompany}
+              onChange={(e) => setCustomerCompany(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="block text-xs font-medium tracking-wide text-muted/80">現場住所</span>
+            <input
+              value={customerAddress}
+              onChange={(e) => setCustomerAddress(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="block text-xs font-medium tracking-wide text-muted/80">積み込み日</span>
             <CustomerDatePicker
               value={customerDate}
               onChange={setCustomerDate}
+            />
+          </label>
+          <label className="text-sm">
+            <span className="block text-xs font-medium tracking-wide text-muted/80">到着日（時刻あり）</span>
+            <input
+              type="datetime-local"
+              value={customerArrival}
+              onChange={(e) => setCustomerArrival(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none focus:border-primary print:border-transparent print:bg-transparent print:px-0"
             />
           </label>
         </div>

@@ -133,6 +133,13 @@ export function buildManufactureGroups(
     .sort((a, b) => compareSegmentColorOrder(a.color, b.color))
 }
 
+/** datetime-local (YYYY-MM-DDTHH:mm) を表示用 "YYYY/MM/DD HH:mm" に整形 */
+function formatArrivalDateTime(value: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value)
+  if (!m) return value
+  return `${m[1]}/${m[2]}/${m[3]} ${m[4]}:${m[5]}`
+}
+
 export function ManufactureListView({
   segments,
   units,
@@ -141,6 +148,7 @@ export function ManufactureListView({
   customerName,
   customerAddress,
   customerDate,
+  customerArrival,
 }: {
   segments: DrawingSegment[]
   units: Unit[]
@@ -149,6 +157,7 @@ export function ManufactureListView({
   customerName?: string
   customerAddress?: string
   customerDate?: string
+  customerArrival?: string
 }) {
   const groups = useMemo(
     () => buildManufactureGroups(segments, units, adjustmentMm),
@@ -159,7 +168,8 @@ export function ManufactureListView({
     !!customerCompany?.trim() ||
     !!customerName?.trim() ||
     !!customerAddress?.trim() ||
-    !!customerDate?.trim()
+    !!customerDate?.trim() ||
+    !!customerArrival?.trim()
 
   if (groups.length === 0) {
     return (
@@ -190,7 +200,12 @@ export function ManufactureListView({
             <span className="text-muted">{customerAddress.trim()}</span>
           )}
           {customerDate?.trim() && (
-            <span className="text-muted">搬入日: {customerDate.trim()}</span>
+            <span className="text-muted">積み込み日: {customerDate.trim()}</span>
+          )}
+          {customerArrival?.trim() && (
+            <span className="text-muted">
+              到着日: {formatArrivalDateTime(customerArrival.trim())}
+            </span>
           )}
           {!hasCustomer && (
             <span className="text-xs text-muted">
@@ -205,7 +220,7 @@ export function ManufactureListView({
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr>
-              <th className={`${headCell} w-40`}>製作図</th>
+              <th className={`${headCell} w-64`}>製作図</th>
               <th className={`${headCell} w-48`}>長さ 呼称(実寸)</th>
               <th className={`${headCell} w-20`}>数量</th>
             </tr>
@@ -216,18 +231,21 @@ export function ManufactureListView({
                 <tr key={r.key} className="break-inside-avoid">
                   {idx === 0 && (
                     <td
-                      className={`${cell} text-center`}
+                      className={`${cell} p-2 text-center`}
                       rowSpan={g.rows.length}
                     >
-                      <div className="flex flex-col items-center gap-1">
+                      <div className="flex h-full min-h-[150px] flex-col items-center justify-center gap-1.5">
                         {g.unit ? (
-                          <UnitShapeThumbnail unit={g.unit} />
+                          <UnitShapeThumbnail
+                            unit={g.unit}
+                            thumbClassName="w-full flex-1 min-h-0"
+                          />
                         ) : (
                           <span className="text-xs text-muted">
                             （形状なし）
                           </span>
                         )}
-                        <span className="text-[11px] font-semibold leading-tight text-slate-700">
+                        <span className="shrink-0 text-[11px] font-semibold leading-tight text-slate-700">
                           {g.unitName}
                         </span>
                       </div>

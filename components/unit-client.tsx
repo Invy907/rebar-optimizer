@@ -4057,7 +4057,16 @@ export function UnitVariantLengthList({ allUnits, unit }: { allUnits: Unit[]; un
   )
 }
 
-export function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?: boolean }) {
+export function UnitShapeThumbnail({
+  unit,
+  large = false,
+  thumbClassName,
+}: {
+  unit: Unit
+  large?: boolean
+  /** small バリアントの svg サイズ上書き（既定 h-12 w-28）。例: "h-full w-full" */
+  thumbClassName?: string
+}) {
   const template = shapeTypeToDetailTemplate(unit.shape_type)
   const spec = normalizeDetailSpecForTemplate(
     template,
@@ -4179,7 +4188,11 @@ export function UnitShapeThumbnail({ unit, large = false }: { unit: Unit; large?
       <svg
         viewBox={`${minX - pad} ${minY - pad} ${w} ${h}`}
         preserveAspectRatio="xMidYMid meet"
-        className={large ? 'h-full w-full rounded border border-border bg-white' : 'h-12 w-28 rounded border border-border bg-white'}
+        className={
+          large
+            ? 'h-full w-full rounded border border-border bg-white'
+            : `${thumbClassName ?? 'h-12 w-28'} rounded border border-border bg-white`
+        }
         aria-label="shape thumbnail"
       >
       {!large && pitchMm != null && (
