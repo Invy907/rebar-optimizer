@@ -4207,6 +4207,14 @@ export function UnitShapeThumbnail({
   const w = Math.max(110, maxX - minX + pad * 2)
   const h = Math.max(66, maxY - minY + pad * 2)
 
+  // 形状の折れ線の太さ。shapeOnly（小さいアイコン）は縮小で細く見えるため、
+  // 形状サイズに比例して太くしてはっきり見せる。
+  const segStrokeW = shapeOnly
+    ? Math.max(8, Math.max(maxX - minX, maxY - minY) * 0.06)
+    : large
+      ? lineStyle.strokeWidth
+      : Math.max(1.5, lineStyle.strokeWidth - 0.5)
+
   return (
     <div className={large ? (containerClassName ?? 'relative h-80 w-full') : 'contents'}>
       {large && pitchMm != null && (
@@ -4268,7 +4276,7 @@ export function UnitShapeThumbnail({
           <g key={`${seg.from}-${seg.to}-${i}`}>
             {seg.doubleLine === true ? (
               (() => {
-                const baseW = large ? lineStyle.strokeWidth : Math.max(1.5, lineStyle.strokeWidth - 0.5)
+                const baseW = segStrokeW
                 const w = large ? Math.max(1.2, baseW * 0.58) : Math.max(1.6, baseW * 0.72)
                 const off = large ? Math.max(2.0, baseW * 0.9) : Math.max(3.2, baseW * 1.9)
                 return (
@@ -4312,7 +4320,7 @@ export function UnitShapeThumbnail({
                 x2={p2.x}
                 y2={p2.y}
                 stroke={stroke}
-                strokeWidth={large ? lineStyle.strokeWidth : Math.max(1.5, lineStyle.strokeWidth - 0.5)}
+                strokeWidth={segStrokeW}
                 strokeLinecap="round"
               />
             )}
