@@ -8,7 +8,7 @@
 
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
 import { CustomerDatePicker } from '@/components/customer-date-picker'
 import { CustomerDateTimePicker } from '@/components/customer-datetime-picker'
@@ -20,11 +20,8 @@ import {
 } from '@/lib/segment-meta'
 import { getPitchBaseCount, getUnitPitchMm } from '@/lib/unit-calculations'
 
-/** 製作図（形状図）の高さ。小さくするほど 1 ページに多く並ぶ。ユーザーが調整可能 */
-const SHAPE_HEIGHT_KEY = 'manufacture:shapeHeight'
-const DEFAULT_SHAPE_HEIGHT = 140
-const MIN_SHAPE_HEIGHT = 80
-const MAX_SHAPE_HEIGHT = 260
+/** 製作図（形状図）の高さ(px) */
+const SHAPE_HEIGHT = 170
 import {
   compareSegmentColorOrder,
   getSegmentColorLabelJa,
@@ -185,24 +182,6 @@ export function ManufactureListView({
     [segments, units, adjustmentMm],
   )
 
-  const [shapeHeight, setShapeHeight] = useState<number>(() => {
-    if (typeof window === 'undefined') return DEFAULT_SHAPE_HEIGHT
-    const raw = window.localStorage.getItem(SHAPE_HEIGHT_KEY)
-    const n = raw ? Number.parseInt(raw, 10) : NaN
-    return Number.isFinite(n) && n >= MIN_SHAPE_HEIGHT && n <= MAX_SHAPE_HEIGHT
-      ? n
-      : DEFAULT_SHAPE_HEIGHT
-  })
-  const updateShapeHeight = (n: number) => {
-    const clamped = Math.max(MIN_SHAPE_HEIGHT, Math.min(MAX_SHAPE_HEIGHT, n))
-    setShapeHeight(clamped)
-    try {
-      window.localStorage.setItem(SHAPE_HEIGHT_KEY, String(clamped))
-    } catch {
-      // ignore
-    }
-  }
-
   const plainTextInputClass =
     'min-w-0 border-0 bg-transparent px-0 py-0 text-sm outline-none placeholder:text-muted/50 focus:underline focus:decoration-primary/40 print:border-transparent print:bg-transparent'
 
@@ -277,31 +256,6 @@ export function ManufactureListView({
         </div>
       </div>
 
-      {/* 形状サイズ調整（印刷はされない）。小さくすると 1 ページに多く並ぶ */}
-      <div className="flex items-center gap-2 print:hidden">
-        <span className="text-xs text-muted">形状サイズ</span>
-        <input
-          type="range"
-          min={MIN_SHAPE_HEIGHT}
-          max={MAX_SHAPE_HEIGHT}
-          step={10}
-          value={shapeHeight}
-          onChange={(e) => updateShapeHeight(Number.parseInt(e.target.value, 10))}
-          aria-label="製作図のサイズ"
-          className="w-40"
-        />
-        <span className="w-12 text-right text-xs tabular-nums text-muted">
-          {shapeHeight}px
-        </span>
-        <button
-          type="button"
-          onClick={() => updateShapeHeight(DEFAULT_SHAPE_HEIGHT)}
-          className="rounded border border-border px-2 py-0.5 text-[11px] text-muted hover:bg-muted/40"
-        >
-          既定
-        </button>
-      </div>
-
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">
           <thead>
@@ -323,7 +277,7 @@ export function ManufactureListView({
                     >
                       <div className="flex flex-col items-center justify-center gap-1.5">
                         {g.unit ? (
-                          <div className="w-full" style={{ height: shapeHeight }}>
+                          <div className="w-full" style={{ height: SHAPE_HEIGHT }}>
                             <UnitShapeThumbnail
                               unit={g.unit}
                               large

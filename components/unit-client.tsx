@@ -3379,9 +3379,9 @@ function DetailShapeEditor({
                 typeof sp.label_x === 'number' &&
                 typeof sp.label_y === 'number' &&
                 (() => {
-                  const spacingLabelFont = 35
+                  const spacingLabelFont = 53
                   const hitW = Math.max(46, txt.length * (spacingLabelFont * 0.62) + 18)
-                  const hitH = 44
+                  const hitH = 60
 
                   return (
                     <>
@@ -3522,9 +3522,9 @@ function DetailShapeEditor({
         {rebarLayout.annotations.map((an) => {
           const pe = mode === 'annotation' ? 'auto' : 'none'
           const isNumeric = parseSpacingMm(an.text) != null
-          const annotationFont = 23
+          const annotationFont = 35
           const hitW = Math.max(46, String(an.text).length * (annotationFont * 0.62) + 18)
-          const hitH = 44
+          const hitH = 60
 
           return (
             <g key={an.id}>
@@ -4157,7 +4157,7 @@ export function UnitShapeThumbnail({
     .filter((x): x is NonNullable<typeof x> => !!x)
   const rebarR = large ? 12 : 5.4
   const rebarStrokeW = large ? 2 : 1
-  const spacingFont = large ? 26 : 13
+  const spacingFont = large ? 39 : 20
   const spacingTickHalf = large ? 7 : 4.2
   const previewBarDiameters = Array.from(
     new Set((unit.bars ?? []).map((b) => String(b.diameter ?? '').trim().toUpperCase()).filter(Boolean)),
@@ -4179,7 +4179,7 @@ export function UnitShapeThumbnail({
       if (y > maxY) maxY = y
     }
   }
-  const annotationFont = 18
+  const annotationFont = 27
   if (!shapeOnly) {
     for (const rb of previewRebars) {
       includePoint(rb.x - rebarR, rb.y - rebarR)
@@ -4412,7 +4412,7 @@ export function UnitShapeThumbnail({
             key={`an-${an.id}`}
             x={an.x}
             y={an.y}
-            fontSize={18}
+            fontSize={27}
             fill="#0f172a"
             fontWeight={700}
           >
