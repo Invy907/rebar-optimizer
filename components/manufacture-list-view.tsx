@@ -201,8 +201,58 @@ export function ManufactureListView({
   return (
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-4">
-        <h2 className="text-base font-semibold shrink-0">製作図リスト</h2>
-        <div className="flex flex-col items-end gap-1.5 text-sm print:hidden">
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <h2 className="text-base font-semibold">製作図リスト</h2>
+          <div className="flex flex-wrap items-end gap-x-3 gap-y-1.5 text-sm print:hidden">
+            <label className="flex items-end gap-1">
+              <input
+                value={customerCompany}
+                onChange={(e) => onCustomerCompanyChange(e.target.value)}
+                placeholder="会社名"
+                aria-label="会社名"
+                className={`${inlineInputClass} w-36`}
+              />
+              <span className="shrink-0 font-semibold text-foreground">様</span>
+            </label>
+            <label className="flex items-end gap-1">
+              <input
+                value={customerName}
+                onChange={(e) => onCustomerNameChange(e.target.value)}
+                placeholder="顧客名"
+                aria-label="顧客名"
+                className={`${inlineInputClass} w-32`}
+              />
+              <span className="shrink-0 font-semibold text-foreground">様邸</span>
+            </label>
+            <label className="flex items-end gap-1">
+              <input
+                value={customerAddress}
+                onChange={(e) => onCustomerAddressChange(e.target.value)}
+                placeholder="現場住所"
+                aria-label="現場住所"
+                className={`${inlineInputClass} w-40`}
+              />
+            </label>
+          </div>
+          {hasCustomer && (
+            <div className="hidden flex-wrap items-end gap-x-4 gap-y-1 text-sm print:flex">
+              {customerCompany.trim() && (
+                <span className="font-semibold text-foreground">
+                  {customerCompany.trim()} 様
+                </span>
+              )}
+              {customerName.trim() && (
+                <span className="font-semibold text-foreground">
+                  {customerName.trim()} 様邸
+                </span>
+              )}
+              {customerAddress.trim() && (
+                <span className="text-foreground">{customerAddress.trim()}</span>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1.5 text-sm print:hidden">
           <label className="flex flex-col items-end gap-0.5">
             <span className="text-[10px] text-muted">積み込み日</span>
             <CustomerDatePicker
@@ -217,9 +267,10 @@ export function ManufactureListView({
               onChange={onCustomerArrivalChange}
             />
           </label>
+          <span className="text-xs text-muted">単位: mm</span>
         </div>
         {(customerDate.trim() || customerArrival.trim()) && (
-          <div className="hidden flex-col items-end gap-0.5 text-sm print:flex">
+          <div className="hidden shrink-0 flex-col items-end gap-0.5 text-sm print:flex">
             {customerDate.trim() && (
               <span className="text-muted">積み込み日: {customerDate.trim()}</span>
             )}
@@ -231,61 +282,6 @@ export function ManufactureListView({
           </div>
         )}
       </div>
-
-      {/* 顧客情報（製作図リスト上部で直接入力。顧客情報セクションと同期） */}
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div className="flex flex-1 flex-wrap items-end gap-x-4 gap-y-2 text-sm print:hidden">
-          <label className="flex min-w-[10rem] items-end gap-1">
-            <input
-              value={customerCompany}
-              onChange={(e) => onCustomerCompanyChange(e.target.value)}
-              placeholder="会社名"
-              aria-label="会社名"
-              className={`${inlineInputClass} w-36`}
-            />
-            <span className="shrink-0 font-semibold text-foreground">様</span>
-          </label>
-          <label className="flex min-w-[10rem] items-end gap-1">
-            <input
-              value={customerName}
-              onChange={(e) => onCustomerNameChange(e.target.value)}
-              placeholder="顧客名"
-              aria-label="顧客名"
-              className={`${inlineInputClass} w-32`}
-            />
-            <span className="shrink-0 font-semibold text-foreground">様邸</span>
-          </label>
-          <label className="flex min-w-[12rem] flex-1 items-end gap-1">
-            <input
-              value={customerAddress}
-              onChange={(e) => onCustomerAddressChange(e.target.value)}
-              placeholder="現場住所"
-              aria-label="現場住所"
-              className={`${inlineInputClass} w-full min-w-[8rem]`}
-            />
-          </label>
-        </div>
-        <span className="text-xs text-muted print:hidden">単位: mm</span>
-      </div>
-
-      {/* 印刷用: 入力値を表示形式で出力（顧客情報セクションと同内容） */}
-      {hasCustomer && (
-        <div className="hidden flex-wrap items-end gap-x-6 gap-y-1 text-sm print:flex">
-          {customerCompany.trim() && (
-            <span className="font-semibold text-foreground">
-              {customerCompany.trim()} 様
-            </span>
-          )}
-          {customerName.trim() && (
-            <span className="font-semibold text-foreground">
-              {customerName.trim()} 様邸
-            </span>
-          )}
-          {customerAddress.trim() && (
-            <span className="text-foreground">{customerAddress.trim()}</span>
-          )}
-        </div>
-      )}
 
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">
