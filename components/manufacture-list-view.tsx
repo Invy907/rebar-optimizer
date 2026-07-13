@@ -203,38 +203,38 @@ export function ManufactureListView({
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <h2 className="text-base font-semibold">製作図リスト</h2>
           <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
-            <label className="inline-flex min-w-0 max-w-full items-center gap-1">
+            <label className="inline-flex max-w-full items-center gap-1">
               <AutoWidthInput
                 value={customerCompany}
                 onChange={onCustomerCompanyChange}
                 placeholder="会社名"
                 ariaLabel="会社名"
                 minCh={8}
-                maxCh={28}
+                maxCh={48}
                 className={`${plainTextInputClass} font-semibold text-foreground`}
               />
               <span className="shrink-0 font-semibold text-foreground">様</span>
             </label>
-            <label className="inline-flex min-w-0 max-w-full items-center gap-1">
+            <label className="inline-flex max-w-full items-center gap-1">
               <AutoWidthInput
                 value={customerName}
                 onChange={onCustomerNameChange}
                 placeholder="顧客名"
                 ariaLabel="顧客名"
                 minCh={6}
-                maxCh={24}
+                maxCh={40}
                 className={`${plainTextInputClass} font-semibold text-foreground`}
               />
               <span className="shrink-0 font-semibold text-foreground">様邸</span>
             </label>
-            <label className="inline-flex min-w-0 max-w-full items-center gap-1">
+            <label className="inline-flex max-w-full items-center gap-1">
               <AutoWidthInput
                 value={customerAddress}
                 onChange={onCustomerAddressChange}
                 placeholder="現場住所"
                 ariaLabel="現場住所"
                 minCh={6}
-                maxCh={32}
+                maxCh={48}
                 className={`${plainTextInputClass} text-foreground`}
               />
             </label>
@@ -337,20 +337,19 @@ function AutoWidthInput({
   className: string
 }) {
   const mirrorText = value || placeholder
-  const widthCh = Math.min(Math.max(mirrorText.length, minCh), maxCh)
-  const sizingText =
-    mirrorText.length > maxCh ? mirrorText.slice(0, maxCh) : mirrorText
+  // 内容に合わせて幅を伸ばす（+1 はキャレット分）。maxCh は安全上限のみ。
+  const widthCh = Math.min(Math.max(mirrorText.length + 1, minCh), maxCh)
 
   return (
     <span
-      className="inline-grid min-w-0 shrink overflow-hidden"
-      style={{ width: `${widthCh}ch`, maxWidth: `${maxCh}ch` }}
+      className="inline-grid max-w-full"
+      style={{ width: `${widthCh}ch` }}
     >
       <span
         aria-hidden
-        className="invisible col-start-1 row-start-1 whitespace-nowrap px-0 py-0 text-sm"
+        className="invisible col-start-1 row-start-1 whitespace-pre px-0 py-0 text-sm"
       >
-        {sizingText}
+        {mirrorText}
       </span>
       <input
         type="text"
