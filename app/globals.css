@@ -56,6 +56,12 @@ button,
     gap: 14px !important;
   }
 
+  /* 入力データ・計算設定は印刷しない */
+  .optimize-print-input,
+  .optimize-print-settings {
+    display: none !important;
+  }
+
   .optimize-print-customer {
     order: 1 !important;
   }
@@ -64,16 +70,30 @@ button,
     order: 2 !important;
   }
 
-  .optimize-print-input {
+  .optimize-print-results {
     order: 3 !important;
   }
 
-  .optimize-print-settings {
-    order: 4 !important;
+  /* 顧客情報と製作図リストの間で改ページを作らず、同じページから続ける */
+  .optimize-print-customer {
+    break-inside: avoid;
+    break-after: avoid;
   }
 
-  .optimize-print-results {
-    order: 5 !important;
+  /* 製作図リストは長くなり得るのでセクション単位の改ページ回避はしない
+     （ここを avoid にすると丸ごと次ページへ送られ、顧客情報の後が空白になる） */
+  .optimize-print-manufacture {
+    break-inside: auto;
+  }
+
+  /* 表の行・結果セクションは途中で割れないように */
+  .optimize-print-manufacture tr {
+    break-inside: avoid;
+  }
+
+  .optimize-print-results section,
+  .optimize-print-results > div {
+    break-inside: avoid;
   }
 
   /* 製作図リストの表は罫線を明確に印刷する */
@@ -84,10 +104,5 @@ button,
   .optimize-print-manufacture td,
   .optimize-print-manufacture th {
     border-color: #64748b !important;
-  }
-
-  .optimize-print-root section,
-  .optimize-print-root > div {
-    break-inside: avoid;
   }
 }

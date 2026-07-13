@@ -185,9 +185,9 @@ export function ManufactureListView({
 
   return (
     <div className="space-y-3">
-      {/* 顧客情報ヘッダ（結果出力情報 / フィードバック #9） */}
+      {/* 顧客情報ヘッダ（画面用。印刷では上部の「顧客情報」欄と重複するため非表示） */}
       <div className="flex flex-wrap items-end justify-between gap-2">
-        <div className="flex flex-wrap items-end gap-x-6 gap-y-1 text-sm">
+        <div className="flex flex-wrap items-end gap-x-6 gap-y-1 text-sm print:hidden">
           {customerName?.trim() && (
             <span className="font-semibold text-foreground">
               {customerName.trim()} 様

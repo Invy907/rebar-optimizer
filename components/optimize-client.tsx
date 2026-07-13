@@ -232,7 +232,7 @@ export function OptimizeClient({
             <input
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary"
+              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary print:border-transparent print:bg-transparent print:px-0"
             />
           </label>
           <label className="text-sm">
@@ -240,7 +240,7 @@ export function OptimizeClient({
             <input
               value={customerCompany}
               onChange={(e) => setCustomerCompany(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary"
+              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary print:border-transparent print:bg-transparent print:px-0"
             />
           </label>
           <label className="text-sm">
@@ -248,7 +248,7 @@ export function OptimizeClient({
             <input
               value={customerAddress}
               onChange={(e) => setCustomerAddress(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary"
+              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary print:border-transparent print:bg-transparent print:px-0"
             />
           </label>
           <label className="text-sm">
