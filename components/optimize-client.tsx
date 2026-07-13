@@ -188,7 +188,7 @@ export function OptimizeClient({
 
   return (
     <div className="optimize-print-root space-y-6">
-      <section className="optimize-print-customer rounded-lg border border-border bg-white p-5">
+      <section className="optimize-print-customer rounded-lg border border-border bg-white p-5 print:hidden">
         <h2 className="text-base font-semibold mb-3">顧客情報</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <label className="text-sm">
@@ -266,7 +266,7 @@ export function OptimizeClient({
 
       {/* 結果 */}
       {result && !calculating && (
-        <section className="optimize-print-results space-y-4">
+        <section className="optimize-print-results space-y-4 print:hidden">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">計算結果</h2>
           </div>

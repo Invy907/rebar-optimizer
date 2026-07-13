@@ -205,32 +205,38 @@ export function ManufactureListView({
           <h2 className="text-base font-semibold">製作図リスト</h2>
           <div className="flex flex-wrap items-end gap-x-3 gap-y-1.5 text-sm print:hidden">
             <label className="flex items-end gap-1">
-              <input
+              <AutoWidthInput
                 value={customerCompany}
-                onChange={(e) => onCustomerCompanyChange(e.target.value)}
+                onChange={onCustomerCompanyChange}
                 placeholder="会社名"
-                aria-label="会社名"
-                className={`${inlineInputClass} w-36`}
+                ariaLabel="会社名"
+                minCh={8}
+                maxCh={28}
+                className={inlineInputClass}
               />
               <span className="shrink-0 font-semibold text-foreground">様</span>
             </label>
             <label className="flex items-end gap-1">
-              <input
+              <AutoWidthInput
                 value={customerName}
-                onChange={(e) => onCustomerNameChange(e.target.value)}
+                onChange={onCustomerNameChange}
                 placeholder="顧客名"
-                aria-label="顧客名"
-                className={`${inlineInputClass} w-32`}
+                ariaLabel="顧客名"
+                minCh={6}
+                maxCh={24}
+                className={inlineInputClass}
               />
               <span className="shrink-0 font-semibold text-foreground">様邸</span>
             </label>
             <label className="flex items-end gap-1">
-              <input
+              <AutoWidthInput
                 value={customerAddress}
-                onChange={(e) => onCustomerAddressChange(e.target.value)}
+                onChange={onCustomerAddressChange}
                 placeholder="現場住所"
-                aria-label="現場住所"
-                className={`${inlineInputClass} w-40`}
+                ariaLabel="現場住所"
+                minCh={6}
+                maxCh={32}
+                className={inlineInputClass}
               />
             </label>
           </div>
@@ -267,7 +273,6 @@ export function ManufactureListView({
               onChange={onCustomerArrivalChange}
             />
           </label>
-          <span className="text-xs text-muted">単位: mm</span>
         </div>
         {(customerDate.trim() || customerArrival.trim()) && (
           <div className="hidden shrink-0 flex-col items-end gap-0.5 text-sm print:flex">
@@ -339,5 +344,47 @@ export function ManufactureListView({
         </table>
       </div>
     </div>
+  )
+}
+
+function AutoWidthInput({
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+  minCh,
+  maxCh,
+  className,
+}: {
+  value: string
+  onChange: (value: string) => void
+  placeholder: string
+  ariaLabel: string
+  minCh: number
+  maxCh: number
+  className: string
+}) {
+  const mirrorText = value || placeholder
+
+  return (
+    <span
+      className="inline-grid max-w-full"
+      style={{ minWidth: `${minCh}ch`, maxWidth: `${maxCh}ch` }}
+    >
+      <span
+        aria-hidden
+        className="invisible col-start-1 row-start-1 whitespace-pre border border-transparent px-2 py-1 text-sm font-medium"
+      >
+        {mirrorText}
+      </span>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        className={`col-start-1 row-start-1 w-full min-w-0 ${className}`}
+      />
+    </span>
   )
 }
