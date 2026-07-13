@@ -80,6 +80,39 @@ button,
     break-after: avoid;
   }
 
+  /* 印刷: 顧客情報ボックスをコンパクトにして製作図リストの縦領域を広げる */
+  .optimize-print-root {
+    gap: 8px !important;
+  }
+
+  .optimize-print-customer {
+    padding: 8px 14px !important;
+  }
+
+  .optimize-print-customer h2 {
+    margin-bottom: 3px !important;
+    font-size: 13px !important;
+  }
+
+  .optimize-print-customer > div {
+    gap: 4px 12px !important;
+  }
+
+  .optimize-print-customer label {
+    font-size: 11px !important;
+  }
+
+  .optimize-print-customer label > span:first-child {
+    margin-bottom: 0 !important;
+  }
+
+  .optimize-print-customer input,
+  .optimize-print-customer button {
+    margin-top: 0 !important;
+    padding-top: 1px !important;
+    padding-bottom: 1px !important;
+  }
+
   /* 製作図リストは長くなり得るのでセクション単位の改ページ回避はしない
      （ここを avoid にすると丸ごと次ページへ送られ、顧客情報の後が空白になる） */
   .optimize-print-manufacture {
