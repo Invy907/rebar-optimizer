@@ -196,7 +196,7 @@ export function CustomerDateTimePicker({
           id={listboxId}
           role="dialog"
           aria-label="日時を選択"
-          className={`absolute top-[calc(100%+6px)] z-50 w-[min(100vw-2rem,320px)] rounded-lg border border-border bg-white p-3 shadow-lg shadow-slate-900/10 print:hidden ${plain ? 'right-0' : 'left-0'}`}
+          className={`absolute top-[calc(100%+6px)] z-50 rounded-lg border border-border bg-white p-3 shadow-lg shadow-slate-900/10 print:hidden ${plain ? 'right-0 w-[320px]' : 'left-0 w-[min(100vw-2rem,320px)]'}`}
         >
           <div className="mb-2 flex items-center justify-between gap-2">
             <button
