@@ -2,9 +2,13 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
-import Link from 'next/link'
+import {
+  DEFAULT_PIECE_LENGTH_ADJUSTMENT_MM,
+  pieceAdjustmentStorageKey,
+} from '@/lib/optimize-settings'
 import { UnitShapeThumbnail } from '@/components/unit-client'
 import {
   decodeSegmentMeta,
@@ -89,9 +93,67 @@ export function SegmentPanel({
   const persistedUnits = units.filter(
     (u) => u.is_active !== false && isPersistedUnitId(u.id),
   )
+  const router = useRouter()
   const [bulkTemplateId, setBulkTemplateId] = useState('')
   const [bulkColor, setBulkColor] = useState<SegmentColor>(activeTemplateColor)
   const [previewUnit, setPreviewUnit] = useState<Unit | null>(null)
+  const [pieceLengthAdjustmentMm, setPieceLengthAdjustmentMm] = useState(
+    DEFAULT_PIECE_LENGTH_ADJUSTMENT_MM,
+  )
+  const adjustmentStorageKey = useMemo(
+    () => pieceAdjustmentStorageKey(projectId),
+    [projectId],
+  )
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const raw = window.localStorage.getItem(adjustmentStorageKey)
+      if (raw == null) return
+      const parsed = Number.parseInt(raw, 10)
+      if (Number.isFinite(parsed)) setPieceLengthAdjustmentMm(parsed)
+    } catch {
+      // Ignore malformed local data.
+    }
+  }, [adjustmentStorageKey])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(
+        adjustmentStorageKey,
+        String(pieceLengthAdjustmentMm),
+      )
+    } catch {
+      // Ignore storage write errors.
+    }
+  }, [adjustmentStorageKey, pieceLengthAdjustmentMm])
+
+  function handleRunCalculation() {
+    const rebarSegs = segments.filter((s) => s.bar_type !== 'SPACING')
+    if (rebarSegs.length === 0) {
+      alert('計算対象の線分データがありません。先に図面上に線分を追加してください。')
+      return
+    }
+
+    for (const seg of rebarSegs) {
+      const baseLen = getSegmentEffectiveLengthMm(seg, units)
+      const adjusted = baseLen + (pieceLengthAdjustmentMm || 0)
+      if (!Number.isFinite(adjusted) || adjusted <= 0) {
+        alert(
+          `鉄筋長さ補正値の結果、0mm以下になりました。\n長さ: ${baseLen}mm / 補正: ${pieceLengthAdjustmentMm}mm`,
+        )
+        return
+      }
+    }
+
+    const params = new URLSearchParams({
+      run: '1',
+      adjustment: String(pieceLengthAdjustmentMm),
+    })
+    if (singleSelectedId) params.set('segmentId', singleSelectedId)
+    router.push(`/projects/${projectId}/optimize?${params.toString()}`)
+  }
   const resolvedBulkTemplateId =
     bulkTemplateId && templateOptions.some((t) => t.id === bulkTemplateId)
       ? bulkTemplateId
@@ -238,18 +300,6 @@ export function SegmentPanel({
             </button>
           )}
         </div>
-        {rebarSegments.length > 0 && (
-          <Link
-            href={
-              singleSelectedId
-                ? `/projects/${projectId}/optimize?segmentId=${singleSelectedId}`
-                : `/projects/${projectId}/optimize`
-            }
-            className="rounded bg-primary px-3 py-1 text-xs font-medium text-white hover:bg-primary-hover transition-colors"
-          >
-            切断計算
-          </Link>
-        )}
       </div>
 
       {/* 複数選択: 一括ユニット */}
@@ -701,25 +751,50 @@ export function SegmentPanel({
       )
       }
 
-      {/* Summary */}
+      {/* Summary + calculation */}
       {rebarSegments.length > 0 && (
-        <div className="border-t border-border px-4 py-3 text-xs text-muted space-y-1">
-          <div className="flex justify-between">
-            <span>線分の本数</span>
-            <span className="font-medium text-foreground">
-              {rebarSegments.length}本
-            </span>
+        <div className="border-t border-border px-4 py-3 space-y-3">
+          <div className="text-xs text-muted space-y-1">
+            <div className="flex justify-between">
+              <span>線分の本数</span>
+              <span className="font-medium text-foreground">
+                {rebarSegments.length}本
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span>部材本数の合計（数量の合計）</span>
+              <span className="font-medium text-foreground">
+                {rebarSegments.reduce(
+                  (sum, s) =>
+                    sum + getSegmentBars(s, units).reduce((ss, b) => ss + b.quantity, 0),
+                  0,
+                )}本
+              </span>
+            </div>
           </div>
-          <div className="flex justify-between">
-            <span>部材本数の合計（数量の合計）</span>
-            <span className="font-medium text-foreground">
-              {rebarSegments.reduce(
-                (sum, s) =>
-                  sum + getSegmentBars(s, units).reduce((ss, b) => ss + b.quantity, 0),
-                0,
-              )}本
-            </span>
+          <div>
+            <label className="block text-xs text-muted mb-1">
+              鉄筋長さ補正値 (mm)
+            </label>
+            <input
+              type="number"
+              value={pieceLengthAdjustmentMm}
+              onChange={(e) =>
+                setPieceLengthAdjustmentMm(Number.parseInt(e.target.value) || 0)
+              }
+              className="w-full rounded border border-border px-2 py-1.5 text-sm font-mono outline-none focus:border-primary"
+            />
+            <p className="mt-1 text-[10px] leading-snug text-muted">
+              マイナスで短く、プラスで長くします（例: -30）
+            </p>
           </div>
+          <button
+            type="button"
+            onClick={handleRunCalculation}
+            className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover transition-colors"
+          >
+            計算実行
+          </button>
         </div>
       )}
       {previewUnit && (

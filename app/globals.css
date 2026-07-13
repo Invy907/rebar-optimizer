@@ -56,12 +56,6 @@ button,
     gap: 14px !important;
   }
 
-  /* 入力データ・計算設定は印刷しない */
-  .optimize-print-input,
-  .optimize-print-settings {
-    display: none !important;
-  }
-
   .optimize-print-customer {
     order: 1 !important;
   }

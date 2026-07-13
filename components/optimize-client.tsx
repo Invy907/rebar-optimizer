@@ -1,7 +1,7 @@
 // components/optimize-client.tsx
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput } from '@/lib/optimizer'
@@ -9,20 +9,14 @@ import { CustomerDatePicker } from '@/components/customer-date-picker'
 import { CustomerDateTimePicker } from '@/components/customer-datetime-picker'
 import { OptimizationResultView } from '@/components/optimization-result-view'
 import { ManufactureListView } from '@/components/manufacture-list-view'
-import { UnitShapeThumbnail } from '@/components/unit-client'
+import {
+  DEFAULT_PIECE_LENGTH_ADJUSTMENT_MM,
+  pieceAdjustmentStorageKey,
+} from '@/lib/optimize-settings'
 import {
   getSegmentBars,
-  getSegmentColor,
   getSegmentEffectiveLengthMm,
-  getSegmentResolvedMarkNumber,
-  type SegmentColor,
 } from '@/lib/segment-meta'
-import {
-  compareSegmentColorOrder,
-  getSegmentColorLabelJa,
-  getSegmentStrokeHex,
-  normalizeSegmentColor,
-} from '@/lib/segment-colors'
 import {
   buildUnitCalculationRows,
   type UnitCountRoundingMode,
@@ -34,11 +28,15 @@ export function OptimizeClient({
   projectId,
   segments,
   initialFocusSegmentId,
+  initialPieceLengthAdjustmentMm = DEFAULT_PIECE_LENGTH_ADJUSTMENT_MM,
+  autoRun = false,
   units = [],
 }: {
   projectId: string
   segments: DrawingSegment[]
   initialFocusSegmentId?: string | null
+  initialPieceLengthAdjustmentMm?: number
+  autoRun?: boolean
   units?: Unit[]
 }) {
   const segmentLabelById = getSegmentLabelMap(segments)
@@ -46,7 +44,7 @@ export function OptimizeClient({
     segments.map((s) => [s.id, s.drawing_id]),
   )
 
-  const [pieceLengthAdjustmentMm, setPieceLengthAdjustmentMm] = useState(-30)
+  const [pieceLengthAdjustmentMm] = useState(initialPieceLengthAdjustmentMm)
   const [result, setResult] = useState<OptimizationOutput | null>(null)
   const [barSummaryTable, setBarSummaryTable] = useState<BarSummaryRow[] | null>(null)
   // 取引先ルール確認前: 例（18.2->18, 13.65->14）と同じ挙動になるよう round 固定
@@ -62,12 +60,13 @@ export function OptimizeClient({
     initialFocusSegmentId ?? null,
   )
   const [calculating, setCalculating] = useState(false)
-  const [previewUnit, setPreviewUnit] = useState<Unit | null>(null)
+  const autoRunStartedRef = useRef(false)
 
-  const circleInputSummaryGroups = useMemo(
-    () => buildCircleInputSummaryGroups(segments, units),
-    [segments, units],
+  const adjustmentStorageKey = useMemo(
+    () => pieceAdjustmentStorageKey(projectId),
+    [projectId],
   )
+
   const unitCalculationRows = useMemo(
     () => buildUnitCalculationRows(segments, units, unitCountRoundingMode),
     [segments, unitCountRoundingMode, units],
@@ -125,6 +124,26 @@ export function OptimizeClient({
     customerName,
   ])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(
+        adjustmentStorageKey,
+        String(pieceLengthAdjustmentMm),
+      )
+    } catch {
+      // Ignore storage write errors.
+    }
+  }, [adjustmentStorageKey, pieceLengthAdjustmentMm])
+
+  useEffect(() => {
+    if (!autoRun || autoRunStartedRef.current) return
+    autoRunStartedRef.current = true
+    setCalculating(true)
+    handleCalculate()
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount when autoRun
+  }, [autoRun])
+
   function handleCalculate() {
     const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
     const pieces: PieceInput[] = []
@@ -132,6 +151,7 @@ export function OptimizeClient({
       const baseLen = getSegmentEffectiveLengthMm(seg, units)
       const adjusted = baseLen + (pieceLengthAdjustmentMm || 0)
       if (!Number.isFinite(adjusted) || adjusted <= 0) {
+        setCalculating(false)
         alert(
           `鉄筋長さ補正値の結果、0mm以下になりました。\n長さ: ${baseLen}mm / 補正: ${pieceLengthAdjustmentMm}mm`,
         )
@@ -150,6 +170,7 @@ export function OptimizeClient({
     }
 
     if (pieces.length === 0) {
+      setCalculating(false)
       alert('計算対象の線分データがありません。先に図面上に線分を追加してください。')
       return
     }
@@ -167,63 +188,6 @@ export function OptimizeClient({
 
   return (
     <div className="optimize-print-root space-y-6">
-      {/* 入力サマリ */}
-      {previewUnit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-border px-5 py-4">
-              <h3 className="text-base font-semibold text-foreground">
-                {previewUnit.name}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setPreviewUnit(null)}
-                className="text-sm text-muted hover:text-foreground"
-              >
-                閉じる
-              </button>
-            </div>
-            <div className="p-5">
-              <UnitShapeThumbnail unit={previewUnit} large />
-            </div>
-            <div className="flex justify-end border-t border-border px-5 py-4">
-              <button
-                type="button"
-                onClick={() => setPreviewUnit(null)}
-                className="rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
-              >
-                閉じる
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <section className="optimize-print-input rounded-lg border border-border bg-white p-5">
-        <h2 className="text-base font-semibold mb-3">入力データ</h2>
-        {segments.filter((s) => s.bar_type !== 'SPACING').length === 0 ? (
-          <p className="text-sm text-muted">線分データがありません。</p>
-        ) : (
-          <div className="space-y-4">
-            <CircleInputSummary
-              groups={circleInputSummaryGroups}
-              onPreviewUnit={setPreviewUnit}
-            />
-            <p className="text-sm text-muted">
-              合計{' '}
-              {segments
-                .filter((seg) => seg.bar_type !== 'SPACING')
-                .reduce(
-                  (s, seg) =>
-                    s + getSegmentBars(seg, units).reduce((ss, b) => ss + b.quantity, 0),
-                  0,
-                )}{' '}
-              本の部材
-            </p>
-          </div>
-        )}
-      </section>
-
       <section className="optimize-print-customer rounded-lg border border-border bg-white p-5">
         <h2 className="text-base font-semibold mb-3">顧客情報</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -265,46 +229,6 @@ export function OptimizeClient({
               onChange={setCustomerArrival}
             />
           </label>
-        </div>
-      </section>
-
-      {/* 計算設定 */}
-      <section className="optimize-print-settings rounded-lg border border-border bg-white p-5">
-        <h2 className="text-base font-semibold mb-3">計算設定</h2>
-        <div className="flex w-full flex-wrap items-end gap-4">
-          <div>
-            <label className="block text-sm text-muted mb-1">
-              鉄筋長さ補正値 (mm)
-            </label>
-            <div className="flex items-center gap-3">
-              <input
-                type="number"
-                value={pieceLengthAdjustmentMm}
-                onChange={(e) =>
-                  setPieceLengthAdjustmentMm(parseInt(e.target.value) || 0)
-                }
-                className="w-40 rounded-lg border border-border px-3 py-2 text-sm font-mono outline-none focus:border-primary"
-              />
-              <span className="text-[11px] text-muted whitespace-nowrap">
-                マイナスで短く、プラスで長くします（例: -30）
-              </span>
-            </div>
-          </div>
-          {/* ピッチ計算の端数処理は一旦 round 固定 */}
-          <button
-            onClick={handleCalculate}
-            disabled={segments.length === 0 || calculating}
-            className="ml-auto flex min-w-[140px] items-center justify-center gap-2 rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50 print:hidden"
-          >
-            {calculating ? (
-              <>
-                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" aria-hidden />
-                計算中...
-              </>
-            ) : (
-              '計算を実行'
-            )}
-          </button>
         </div>
       </section>
 
@@ -416,184 +340,6 @@ function buildBarSummaryTable(pieces: PieceInput[]): BarSummaryRow[] {
   }
   rows.sort((a, b) => b.lengthMm - a.lengthMm)
   return rows
-}
-
-interface CircleSummaryLine {
-  lengthMm: number
-  color: SegmentColor
-  /** ユニット由来のマーク。任意入力のみの線分は null（円番号は表示しない） */
-  markNo: number | null
-  count: number
-}
-
-interface CircleInputSummaryGroup {
-  key: string
-  name: string
-  color: SegmentColor
-  /** 例: D10×1, D13×4（同一色・同一構成の線分をまとめる） */
-  barsSummary: string
-  unit: Unit | null
-  lines: CircleSummaryLine[]
-}
-
-const CIRCLED_NUMS = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
-
-function circledNumberForSummary(n: number): string {
-  const chars = [...CIRCLED_NUMS]
-  return n >= 1 && n <= chars.length ? chars[n - 1]! : `(${n})`
-}
-
-function isPersistedUnitId(id: string): boolean {
-  return !id.startsWith('mock-') && !id.startsWith('local-')
-}
-
-function getSegmentSummaryGroup(
-  seg: DrawingSegment,
-  color: SegmentColor,
-  units?: Unit[] | null,
-): { key: string; name: string; unit: Unit | null } {
-  const linkedUnit =
-    seg.unit_id != null ? units?.find((u) => u.id === seg.unit_id) ?? null : null
-  const sameColorUnit =
-    units?.find(
-      (u) =>
-        u.is_active !== false &&
-        isPersistedUnitId(u.id) &&
-        normalizeSegmentColor(u.color) === color,
-    ) ?? null
-  const name =
-    linkedUnit?.name?.trim() ||
-    seg.unit_name?.trim() ||
-    sameColorUnit?.name?.trim() ||
-    getSegmentColorLabelJa(color)
-
-  return {
-    key: `color:${color}`,
-    name,
-    unit: linkedUnit ?? sameColorUnit ?? null,
-  }
-}
-
-function buildCircleInputSummaryGroups(
-  segments: DrawingSegment[],
-  units?: Unit[] | null,
-): CircleInputSummaryGroup[] {
-  const rebarSegments = segments.filter((s) => s.bar_type !== 'SPACING')
-  type AccRow = CircleSummaryLine & {
-    groupKey: string
-    groupName: string
-    groupUnit: Unit | null
-  }
-  const countsByKey = new Map<string, AccRow>()
-
-  for (const seg of rebarSegments) {
-    const color = getSegmentColor(seg, units)
-    const lengthMm = getSegmentEffectiveLengthMm(seg, units)
-    const markNo = getSegmentResolvedMarkNumber(seg, units)
-    const group = getSegmentSummaryGroup(seg, color, units)
-    const key = `${group.key}|${lengthMm}|${markNo ?? 'none'}`
-    const cur =
-      countsByKey.get(key) ??
-      ({
-        lengthMm,
-        color,
-        markNo,
-        groupKey: group.key,
-        groupName: group.name,
-        groupUnit: group.unit,
-        count: 0,
-      } satisfies AccRow)
-    cur.count++
-    countsByKey.set(key, cur)
-  }
-
-  const flat = Array.from(countsByKey.values())
-  flat.sort((a, b) => {
-    const byColor = compareSegmentColorOrder(a.color, b.color)
-    if (byColor !== 0) return byColor
-    if (b.lengthMm !== a.lengthMm) return b.lengthMm - a.lengthMm
-    const aM = a.markNo ?? Number.MAX_SAFE_INTEGER
-    const bM = b.markNo ?? Number.MAX_SAFE_INTEGER
-    return aM - bM
-  })
-
-  const groupKeyOrder: string[] = []
-  const groupMap = new Map<string, CircleInputSummaryGroup>()
-  for (const r of flat) {
-    const gk = r.groupKey
-    if (!groupMap.has(gk)) {
-      groupKeyOrder.push(gk)
-      groupMap.set(gk, {
-        key: gk,
-        name: r.groupName || '使用したユニット名',
-        color: r.color,
-        barsSummary: r.groupName || '使用したユニット名',
-        unit: r.groupUnit,
-        lines: [],
-      })
-    }
-    const g = groupMap.get(gk)!
-    g.lines.push({
-      lengthMm: r.lengthMm,
-      color: r.color,
-      markNo: r.markNo,
-      count: r.count,
-    })
-  }
-
-  return groupKeyOrder.map((k) => groupMap.get(k)!)
-}
-
-function CircleInputSummary({
-  groups,
-  onPreviewUnit,
-}: {
-  groups: CircleInputSummaryGroup[]
-  onPreviewUnit: (unit: Unit) => void
-}) {
-  if (groups.length === 0) return null
-  return (
-    <div className="space-y-3 rounded-md border border-border bg-muted/30 px-3 py-3">
-      <p className="text-xs font-medium text-muted">種類別サマリ（色・配筋・長さごとの本数）</p>
-      <div className="space-y-3">
-        {groups.map((g) => {
-          const hex = getSegmentStrokeHex(g.color, false)
-          const barsLabel =
-            g.barsSummary && g.barsSummary !== '-' ? g.barsSummary : '（鉄筋未設定）'
-          return (
-            <div key={`${g.color}::${g.barsSummary}`} className="space-y-1">
-              <button
-                type="button"
-                onClick={() => {
-                  if (g.unit) onPreviewUnit(g.unit)
-                }}
-                className="text-left text-sm font-semibold leading-snug text-muted underline-offset-2 hover:text-foreground hover:underline disabled:no-underline"
-                disabled={!g.unit}
-              >
-                {barsLabel}
-              </button>
-              <ul className="space-y-1 pl-0">
-                {g.lines.map((r) => {
-                  const markPrefix =
-                    r.markNo != null ? circledNumberForSummary(r.markNo) : ''
-                  return (
-                    <li
-                      key={`${r.lengthMm}|${r.color}|${r.markNo ?? 'none'}`}
-                      className="font-mono text-[16px] font-semibold leading-snug tabular-nums"
-                      style={{ color: hex }}
-                    >
-                      {markPrefix}
-                      {r.lengthMm.toLocaleString('ja-JP')} × {r.count}
-                    </li>
-                  )
-                })}
-              </ul>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
 }
 
 function BarSummarySection({
