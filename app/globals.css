@@ -79,5 +79,7 @@ button,
   .optimize-print-manufacture td,
   .optimize-print-manufacture th {
     border-color: #64748b !important;
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
   }
 }

@@ -8,7 +8,7 @@
 
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
 import { CustomerDatePicker } from '@/components/customer-date-picker'
 import { CustomerDateTimePicker } from '@/components/customer-datetime-picker'
@@ -18,6 +18,13 @@ import {
   getSegmentEffectiveLengthMm,
   resolveLinkedUnit,
 } from '@/lib/segment-meta'
+import { getPitchBaseCount, getUnitPitchMm } from '@/lib/unit-calculations'
+
+/** 製作図（形状図）の高さ。小さくするほど 1 ページに多く並ぶ。ユーザーが調整可能 */
+const SHAPE_HEIGHT_KEY = 'manufacture:shapeHeight'
+const DEFAULT_SHAPE_HEIGHT = 140
+const MIN_SHAPE_HEIGHT = 80
+const MAX_SHAPE_HEIGHT = 260
 import {
   compareSegmentColorOrder,
   getSegmentColorLabelJa,
@@ -34,6 +41,8 @@ type ManufactureRow = {
   actualMm: number
   /** 数量（この長さの部材本数） */
   qty: number
+  /** タテ筋本数 = round(round(呼称/100)*100 / ピッチ)。ピッチ未設定は null */
+  tateCount: number | null
 }
 
 type ManufactureGroup = {
@@ -42,6 +51,8 @@ type ManufactureGroup = {
   unitName: string
   color: SegmentColor
   colorHex: string
+  /** ユニットのピッチ(mm)。タテ筋本数の計算に使う */
+  pitchMm: number | null
   rows: ManufactureRow[]
 }
 
@@ -105,6 +116,7 @@ export function buildManufactureGroups(
             getSegmentColorLabelJa(color),
           color,
           colorHex: getSegmentStrokeHex(color, false),
+          pitchMm: getUnitPitchMm(unit),
           rows: [],
         },
         byLength: new Map(),
@@ -116,11 +128,15 @@ export function buildManufactureGroups(
     if (existing) {
       existing.qty += 1
     } else {
+      const pitch = acc.group.pitchMm
       acc.byLength.set(nominalMm, {
         key: `${groupKey}:${nominalMm}`,
         nominalMm,
         actualMm: nominalMm + (adjustmentMm || 0),
         qty: 1,
+        // 4095 → 4100(100mm丸め) → 4100 ÷ 200(ピッチ) = 20.5 → 21(四捨五入)
+        tateCount:
+          pitch != null && pitch > 0 ? getPitchBaseCount(nominalMm, pitch) : null,
       })
     }
   }
@@ -168,6 +184,24 @@ export function ManufactureListView({
     () => buildManufactureGroups(segments, units, adjustmentMm),
     [segments, units, adjustmentMm],
   )
+
+  const [shapeHeight, setShapeHeight] = useState<number>(() => {
+    if (typeof window === 'undefined') return DEFAULT_SHAPE_HEIGHT
+    const raw = window.localStorage.getItem(SHAPE_HEIGHT_KEY)
+    const n = raw ? Number.parseInt(raw, 10) : NaN
+    return Number.isFinite(n) && n >= MIN_SHAPE_HEIGHT && n <= MAX_SHAPE_HEIGHT
+      ? n
+      : DEFAULT_SHAPE_HEIGHT
+  })
+  const updateShapeHeight = (n: number) => {
+    const clamped = Math.max(MIN_SHAPE_HEIGHT, Math.min(MAX_SHAPE_HEIGHT, n))
+    setShapeHeight(clamped)
+    try {
+      window.localStorage.setItem(SHAPE_HEIGHT_KEY, String(clamped))
+    } catch {
+      // ignore
+    }
+  }
 
   const plainTextInputClass =
     'min-w-0 border-0 bg-transparent px-0 py-0 text-sm outline-none placeholder:text-muted/50 focus:underline focus:decoration-primary/40 print:border-transparent print:bg-transparent'
@@ -243,6 +277,31 @@ export function ManufactureListView({
         </div>
       </div>
 
+      {/* 形状サイズ調整（印刷はされない）。小さくすると 1 ページに多く並ぶ */}
+      <div className="flex items-center gap-2 print:hidden">
+        <span className="text-xs text-muted">形状サイズ</span>
+        <input
+          type="range"
+          min={MIN_SHAPE_HEIGHT}
+          max={MAX_SHAPE_HEIGHT}
+          step={10}
+          value={shapeHeight}
+          onChange={(e) => updateShapeHeight(Number.parseInt(e.target.value, 10))}
+          aria-label="製作図のサイズ"
+          className="w-40"
+        />
+        <span className="w-12 text-right text-xs tabular-nums text-muted">
+          {shapeHeight}px
+        </span>
+        <button
+          type="button"
+          onClick={() => updateShapeHeight(DEFAULT_SHAPE_HEIGHT)}
+          className="rounded border border-border px-2 py-0.5 text-[11px] text-muted hover:bg-muted/40"
+        >
+          既定
+        </button>
+      </div>
+
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">
           <thead>
@@ -250,6 +309,7 @@ export function ManufactureListView({
               <th className={`${headCell} w-96`}>製作図</th>
               <th className={`${headCell} w-48`}>長さ 呼称(実寸)</th>
               <th className={`${headCell} w-20`}>数量</th>
+              <th className={`${headCell} w-24`}>タテ筋</th>
             </tr>
           </thead>
           <tbody>
@@ -263,7 +323,7 @@ export function ManufactureListView({
                     >
                       <div className="flex flex-col items-center justify-center gap-1.5">
                         {g.unit ? (
-                          <div className="w-full" style={{ height: 230 }}>
+                          <div className="w-full" style={{ height: shapeHeight }}>
                             <UnitShapeThumbnail
                               unit={g.unit}
                               large
@@ -291,6 +351,9 @@ export function ManufactureListView({
                   </td>
                   <td className={`${cell} text-center font-mono tabular-nums`}>
                     {r.qty}
+                  </td>
+                  <td className={`${cell} text-center font-mono tabular-nums`}>
+                    {r.tateCount ?? '-'}
                   </td>
                 </tr>
               )),

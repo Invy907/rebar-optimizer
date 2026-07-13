@@ -240,6 +240,7 @@ export function OptimizeClient({
             focusSegmentId={focusSegmentId ?? undefined}
             unitCalculationRows={unitCalculationRows}
             roundingMode={unitCountRoundingMode}
+            units={units}
           />
         </section>
       )}

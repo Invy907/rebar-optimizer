@@ -4062,6 +4062,7 @@ export function UnitShapeThumbnail({
   large = false,
   thumbClassName,
   containerClassName,
+  shapeOnly = false,
 }: {
   unit: Unit
   large?: boolean
@@ -4069,6 +4070,8 @@ export function UnitShapeThumbnail({
   thumbClassName?: string
   /** large バリアントの外側コンテナ上書き（既定 relative h-80 w-full）。高さを可変にしたい表示用 */
   containerClassName?: string
+  /** 形状の折れ線のみを描く（鉄筋・間隔線・ピッチ・寸法ラベルを省く）。小さいアイコン用 */
+  shapeOnly?: boolean
 }) {
   const template = shapeTypeToDetailTemplate(unit.shape_type)
   const spec = normalizeDetailSpecForTemplate(
@@ -4177,19 +4180,21 @@ export function UnitShapeThumbnail({
     }
   }
   const annotationFont = 18
-  for (const rb of previewRebars) {
-    includePoint(rb.x - rebarR, rb.y - rebarR)
-    includePoint(rb.x + rebarR, rb.y + rebarR)
+  if (!shapeOnly) {
+    for (const rb of previewRebars) {
+      includePoint(rb.x - rebarR, rb.y - rebarR)
+      includePoint(rb.x + rebarR, rb.y + rebarR)
+    }
+    for (const sp of previewSpacings) {
+      includePoint(sp.x1, sp.y1)
+      includePoint(sp.x2, sp.y2)
+      // ラベルは中央揃え: テキスト幅の半分を左右に見込む
+      const half = (String(sp.labelText ?? '').length * spacingFont) / 2 + spacingTickHalf
+      includePoint(sp.tx - half, sp.ty - spacingFont / 2)
+      includePoint(sp.tx + half, sp.ty + spacingFont / 2)
+    }
   }
-  for (const sp of previewSpacings) {
-    includePoint(sp.x1, sp.y1)
-    includePoint(sp.x2, sp.y2)
-    // ラベルは中央揃え: テキスト幅の半分を左右に見込む
-    const half = (String(sp.labelText ?? '').length * spacingFont) / 2 + spacingTickHalf
-    includePoint(sp.tx - half, sp.ty - spacingFont / 2)
-    includePoint(sp.tx + half, sp.ty + spacingFont / 2)
-  }
-  if (large) {
+  if (large && !shapeOnly) {
     for (const an of previewRebarLayout.annotations) {
       const t = String(an.text ?? '').trim()
       if (!t || !Number.isFinite(an.x) || !Number.isFinite(an.y)) continue
@@ -4237,7 +4242,7 @@ export function UnitShapeThumbnail({
         }
         aria-label="shape thumbnail"
       >
-      {!large && pitchMm != null && (
+      {!large && !shapeOnly && pitchMm != null && (
         <text
           x={minX - pad + w - (large ? 1 : 2)}
           y={minY - pad + (large ? 18 : 44)}
@@ -4314,7 +4319,7 @@ export function UnitShapeThumbnail({
           </g>
         )
       })}
-      {previewSpacings.map((sp) => {
+      {!shapeOnly && previewSpacings.map((sp) => {
         const dx = sp.x2 - sp.x1
         const dy = sp.y2 - sp.y1
         const segLen = Math.hypot(dx, dy) || 1
@@ -4365,7 +4370,7 @@ export function UnitShapeThumbnail({
           </g>
         )
       })}
-      {previewRebars.map((rb) => {
+      {!shapeOnly && previewRebars.map((rb) => {
         const token = rebarDiameterVisualToken(rb.diameter)
         const radius = rebarR * token.radiusScale
         const showDiamLabel = large && !rebarDiameterUsesCanvasSymbolOnly(rb.diameter)
