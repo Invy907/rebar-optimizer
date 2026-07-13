@@ -56,14 +56,35 @@ function monthLabelJa(year: number, month: number): string {
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
 const MINUTES = Array.from({ length: 60 }, (_, i) => i)
 
+const PLAIN_TRIGGER_CLASS =
+  'group inline-flex cursor-pointer items-center gap-1 whitespace-nowrap rounded-md border border-dashed border-slate-300 bg-slate-50/80 px-2 py-1 text-sm text-muted shadow-sm outline-none transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/25 print:border-transparent print:bg-transparent print:px-0 print:shadow-none'
+
+function PlainCalendarIcon() {
+  return (
+    <svg
+      className="h-3.5 w-3.5 shrink-0 text-muted/70 transition-colors group-hover:text-primary print:hidden"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden
+    >
+      <rect x="3" y="4" width="14" height="13" rx="1.5" />
+      <path d="M3 8h14M7 2v3M13 2v3" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function CustomerDateTimePicker({
   value,
   onChange,
   plain = false,
+  labelPrefix,
 }: {
   value: string
   onChange: (value: string) => void
   plain?: boolean
+  labelPrefix?: string
 }) {
   const listboxId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -151,13 +172,17 @@ export function CustomerDateTimePicker({
   const selectedIso = parsed.date
     ? toIsoDate(parsed.date.y, parsed.date.m, parsed.date.d)
     : ''
-  const displayText = value
+  const dateTimeValueText = value
     ? plain
       ? formatPlainDateTime(value)
       : formatJa(value)
     : plain
       ? '—'
       : '日時を選択'
+
+  const ariaLabel = labelPrefix
+    ? `${labelPrefix}${dateTimeValueText}`
+    : dateTimeValueText
 
   return (
     <div ref={rootRef} className={plain ? 'relative' : 'relative mt-1'}>
@@ -166,28 +191,45 @@ export function CustomerDateTimePicker({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={listboxId}
+        aria-label={plain && labelPrefix ? ariaLabel : undefined}
         onClick={() => setOpen((v) => !v)}
         className={
           plain
-            ? 'inline-flex border-0 bg-transparent p-0 text-sm font-normal text-muted outline-none hover:text-foreground print:border-transparent print:bg-transparent'
+            ? PLAIN_TRIGGER_CLASS
             : 'flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-white px-3 py-2 text-left text-sm font-medium text-foreground outline-none hover:border-primary/40 focus:border-primary print:border-transparent print:bg-transparent print:px-0'
         }
       >
-        <span className={value || plain ? 'text-inherit' : 'text-muted/70'}>
-          {displayText}
-        </span>
-        {!plain && (
-        <svg
-          className="h-4 w-4 shrink-0 text-muted/80 print:hidden"
-          viewBox="0 0 20 20"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          aria-hidden
-        >
-          <rect x="3" y="4" width="14" height="13" rx="1.5" />
-          <path d="M3 8h14M7 2v3M13 2v3" strokeLinecap="round" />
-        </svg>
+        {plain && labelPrefix ? (
+          <>
+            <span>{labelPrefix}</span>
+            <span
+              className={
+                value ? 'font-medium tabular-nums text-foreground' : 'text-muted/70'
+              }
+            >
+              {dateTimeValueText}
+            </span>
+            <PlainCalendarIcon />
+          </>
+        ) : (
+          <>
+            <span className={value || plain ? 'text-inherit' : 'text-muted/70'}>
+              {dateTimeValueText}
+            </span>
+            {!plain && (
+              <svg
+                className="h-4 w-4 shrink-0 text-muted/80 print:hidden"
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden
+              >
+                <rect x="3" y="4" width="14" height="13" rx="1.5" />
+                <path d="M3 8h14M7 2v3M13 2v3" strokeLinecap="round" />
+              </svg>
+            )}
+          </>
         )}
       </button>
 

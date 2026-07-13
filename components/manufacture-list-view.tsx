@@ -227,23 +227,19 @@ export function ManufactureListView({
             </label>
           </div>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-0.5 text-sm text-muted">
-          <div className="inline-flex items-center gap-1 whitespace-nowrap">
-            <span>積み込み日:</span>
-            <CustomerDatePicker
-              plain
-              value={customerDate}
-              onChange={onCustomerDateChange}
-            />
-          </div>
-          <div className="inline-flex items-center gap-1 whitespace-nowrap">
-            <span>到着日:</span>
-            <CustomerDateTimePicker
-              plain
-              value={customerArrival}
-              onChange={onCustomerArrivalChange}
-            />
-          </div>
+        <div className="flex shrink-0 flex-col items-end gap-1 text-sm">
+          <CustomerDatePicker
+            plain
+            labelPrefix="積み込み日:"
+            value={customerDate}
+            onChange={onCustomerDateChange}
+          />
+          <CustomerDateTimePicker
+            plain
+            labelPrefix="到着日:"
+            value={customerArrival}
+            onChange={onCustomerArrivalChange}
+          />
         </div>
       </div>
 
