@@ -20,7 +20,7 @@ import {
 } from '@/lib/segment-meta'
 import { getPitchBaseCount, getUnitPitchMm } from '@/lib/unit-calculations'
 
-/** 製作図（形状図）の最小高さ(px)。行が多くセルが高い場合はこれ以上に伸びてセルを埋める */
+/** 製作図（形状図）の高さ(px) */
 const SHAPE_HEIGHT = 170
 import {
   compareSegmentColorOrder,
@@ -275,15 +275,9 @@ export function ManufactureListView({
                       className={`${cell} p-2 text-center`}
                       rowSpan={g.rows.length}
                     >
-                      <div
-                        className="flex h-full flex-col items-center justify-center gap-1.5"
-                        style={{ minHeight: SHAPE_HEIGHT + 24 }}
-                      >
+                      <div className="flex flex-col items-center justify-center gap-1.5">
                         {g.unit ? (
-                          <div
-                            className="w-full flex-1"
-                            style={{ minHeight: SHAPE_HEIGHT }}
-                          >
+                          <div className="w-full" style={{ height: SHAPE_HEIGHT }}>
                             <UnitShapeThumbnail
                               unit={g.unit}
                               large
