@@ -104,14 +104,14 @@ export function OptimizationResultView({
       <div className="rounded-lg border border-border bg-white p-4">
         <h3 className="mb-3 text-sm font-semibold">フック付</h3>
         {unitSummaries.length > 0 ? (
-          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+          <div className="flex flex-col gap-3">
             {unitSummaries.map((s) => (
               <div
                 key={s.key}
                 className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm leading-snug"
               >
                 <div className="font-medium text-foreground">{s.unitName}</div>
-                <div className="mt-1 flex items-center gap-1.5 font-mono text-base font-semibold tabular-nums">
+                <div className="mt-1 flex flex-col items-start gap-1 font-mono text-base font-semibold tabular-nums">
                   <input
                     type="text"
                     inputMode="numeric"
@@ -144,8 +144,7 @@ export function OptimizationResultView({
                     }}
                     className="w-[5.5rem] rounded border border-border bg-white px-1.5 py-0.5 text-base font-semibold outline-none focus:border-primary print:border-transparent print:bg-transparent print:p-0"
                   />
-                  <span className="text-muted">×</span>
-                  <span>{s.totalCount.toLocaleString('ja-JP')}</span>
+                  <span>× {s.totalCount.toLocaleString('ja-JP')}</span>
                 </div>
               </div>
             ))}
