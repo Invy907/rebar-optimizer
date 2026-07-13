@@ -10,6 +10,8 @@
 
 import { useMemo } from 'react'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
+import { CustomerDatePicker } from '@/components/customer-date-picker'
+import { CustomerDateTimePicker } from '@/components/customer-datetime-picker'
 import { UnitShapeThumbnail } from '@/components/unit-client'
 import {
   getSegmentColor,
@@ -145,19 +147,29 @@ export function ManufactureListView({
   units,
   adjustmentMm,
   customerCompany,
+  onCustomerCompanyChange,
   customerName,
+  onCustomerNameChange,
   customerAddress,
+  onCustomerAddressChange,
   customerDate,
+  onCustomerDateChange,
   customerArrival,
+  onCustomerArrivalChange,
 }: {
   segments: DrawingSegment[]
   units: Unit[]
   adjustmentMm: number
-  customerCompany?: string
-  customerName?: string
-  customerAddress?: string
-  customerDate?: string
-  customerArrival?: string
+  customerCompany: string
+  onCustomerCompanyChange: (value: string) => void
+  customerName: string
+  onCustomerNameChange: (value: string) => void
+  customerAddress: string
+  onCustomerAddressChange: (value: string) => void
+  customerDate: string
+  onCustomerDateChange: (value: string) => void
+  customerArrival: string
+  onCustomerArrivalChange: (value: string) => void
 }) {
   const groups = useMemo(
     () => buildManufactureGroups(segments, units, adjustmentMm),
@@ -165,11 +177,14 @@ export function ManufactureListView({
   )
 
   const hasCustomer =
-    !!customerCompany?.trim() ||
-    !!customerName?.trim() ||
-    !!customerAddress?.trim() ||
-    !!customerDate?.trim() ||
-    !!customerArrival?.trim()
+    !!customerCompany.trim() ||
+    !!customerName.trim() ||
+    !!customerAddress.trim() ||
+    !!customerDate.trim() ||
+    !!customerArrival.trim()
+
+  const inlineInputClass =
+    'min-w-0 rounded border border-border bg-white px-2 py-1 text-sm font-medium text-foreground outline-none focus:border-primary print:border-transparent print:bg-transparent print:px-0'
 
   if (groups.length === 0) {
     return (
@@ -185,36 +200,92 @@ export function ManufactureListView({
 
   return (
     <div className="space-y-3">
-      {/* 顧客情報ヘッダ（画面用。印刷では上部の「顧客情報」欄と重複するため非表示） */}
+      <div className="flex items-start justify-between gap-4">
+        <h2 className="text-base font-semibold shrink-0">製作図リスト</h2>
+        <div className="flex flex-col items-end gap-1.5 text-sm print:hidden">
+          <label className="flex flex-col items-end gap-0.5">
+            <span className="text-[10px] text-muted">積み込み日</span>
+            <CustomerDatePicker
+              value={customerDate}
+              onChange={onCustomerDateChange}
+            />
+          </label>
+          <label className="flex flex-col items-end gap-0.5">
+            <span className="text-[10px] text-muted">到着日</span>
+            <CustomerDateTimePicker
+              value={customerArrival}
+              onChange={onCustomerArrivalChange}
+            />
+          </label>
+        </div>
+        {(customerDate.trim() || customerArrival.trim()) && (
+          <div className="hidden flex-col items-end gap-0.5 text-sm print:flex">
+            {customerDate.trim() && (
+              <span className="text-muted">積み込み日: {customerDate.trim()}</span>
+            )}
+            {customerArrival.trim() && (
+              <span className="text-muted">
+                到着日: {formatArrivalDateTime(customerArrival.trim())}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 顧客情報（製作図リスト上部で直接入力。顧客情報セクションと同期） */}
       <div className="flex flex-wrap items-end justify-between gap-2">
-        <div className="flex flex-wrap items-end gap-x-6 gap-y-1 text-sm print:hidden">
-          {customerName?.trim() && (
+        <div className="flex flex-1 flex-wrap items-end gap-x-4 gap-y-2 text-sm print:hidden">
+          <label className="flex min-w-[10rem] items-end gap-1">
+            <input
+              value={customerCompany}
+              onChange={(e) => onCustomerCompanyChange(e.target.value)}
+              placeholder="会社名"
+              aria-label="会社名"
+              className={`${inlineInputClass} w-36`}
+            />
+            <span className="shrink-0 font-semibold text-foreground">様</span>
+          </label>
+          <label className="flex min-w-[10rem] items-end gap-1">
+            <input
+              value={customerName}
+              onChange={(e) => onCustomerNameChange(e.target.value)}
+              placeholder="顧客名"
+              aria-label="顧客名"
+              className={`${inlineInputClass} w-32`}
+            />
+            <span className="shrink-0 font-semibold text-foreground">様邸</span>
+          </label>
+          <label className="flex min-w-[12rem] flex-1 items-end gap-1">
+            <input
+              value={customerAddress}
+              onChange={(e) => onCustomerAddressChange(e.target.value)}
+              placeholder="現場住所"
+              aria-label="現場住所"
+              className={`${inlineInputClass} w-full min-w-[8rem]`}
+            />
+          </label>
+        </div>
+        <span className="text-xs text-muted print:hidden">単位: mm</span>
+      </div>
+
+      {/* 印刷用: 入力値を表示形式で出力（顧客情報セクションと同内容） */}
+      {hasCustomer && (
+        <div className="hidden flex-wrap items-end gap-x-6 gap-y-1 text-sm print:flex">
+          {customerCompany.trim() && (
             <span className="font-semibold text-foreground">
-              {customerName.trim()} 様
+              {customerCompany.trim()} 様
             </span>
           )}
-          {customerCompany?.trim() && (
-            <span className="text-foreground">{customerCompany.trim()}</span>
-          )}
-          {customerAddress?.trim() && (
-            <span className="text-muted">{customerAddress.trim()}</span>
-          )}
-          {customerDate?.trim() && (
-            <span className="text-muted">積み込み日: {customerDate.trim()}</span>
-          )}
-          {customerArrival?.trim() && (
-            <span className="text-muted">
-              到着日: {formatArrivalDateTime(customerArrival.trim())}
+          {customerName.trim() && (
+            <span className="font-semibold text-foreground">
+              {customerName.trim()} 様邸
             </span>
           )}
-          {!hasCustomer && (
-            <span className="text-xs text-muted">
-              （顧客情報は「顧客情報」欄で入力すると上部に表示されます）
-            </span>
+          {customerAddress.trim() && (
+            <span className="text-foreground">{customerAddress.trim()}</span>
           )}
         </div>
-        <span className="text-xs text-muted">単位: mm</span>
-      </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">

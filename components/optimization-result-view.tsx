@@ -34,6 +34,7 @@ export function OptimizationResultView({
 }) {
   void stockLengthMm
   void projectId
+  void result
   void segmentLabelById
   void segmentDrawingIdById
   void focusSegmentId
@@ -86,44 +87,6 @@ export function OptimizationResultView({
     }
     return 'ユニット別集計の対象が見つかりませんでした。'
   }, [unitSummaries, unitCalculationRows])
-
-  const handleExportCsv = useCallback(() => {
-    const escapeCsvField = (value: string): string => {
-      const needsQuote = /[",\n\r]/.test(value)
-      const escaped = value.replace(/"/g, '""')
-      return needsQuote ? `"${escaped}"` : escaped
-    }
-
-    const lines: string[] = []
-    lines.push(['item', 'value'].join(','))
-    lines.push(['total_stock_count', String(result.totalStockCount)].map(escapeCsvField).join(','))
-    lines.push(['total_waste_mm', String(result.totalWasteMm)].map(escapeCsvField).join(','))
-    lines.push(['waste_ratio', String(result.wasteRatio)].map(escapeCsvField).join(','))
-    lines.push('')
-    lines.push(['bar_type', 'stock_count', 'total_used_mm', 'total_waste_mm', 'waste_ratio'].join(','))
-    Object.entries(result.byBarType).forEach(([barType, row]) => {
-      lines.push(
-        [
-          barType,
-          String(row.stockCount),
-          String(row.totalUsed),
-          String(row.totalWaste),
-          String(row.wasteRatio),
-        ]
-          .map(escapeCsvField)
-          .join(','),
-      )
-    })
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'rebar_optimization.csv'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  }, [result])
 
   const handlePrint = useCallback(() => {
     const originalTitle = document.title
@@ -193,13 +156,6 @@ export function OptimizationResultView({
       </div>
 
       <div className="flex justify-end gap-2 print:hidden">
-        <button
-          type="button"
-          onClick={handleExportCsv}
-          className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:bg-gray-50"
-        >
-          CSV出力
-        </button>
         <button
           type="button"
           onClick={handlePrint}

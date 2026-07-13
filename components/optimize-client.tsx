@@ -246,21 +246,20 @@ export function OptimizeClient({
       {/* 製作図リスト（新レイアウト・試験導入。計算実行後に表示。既存の計算結果はそのまま残す） */}
       {result && !calculating && (
         <section className="optimize-print-manufacture rounded-lg border border-border bg-white p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold">製作図リスト</h2>
-            <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 print:hidden">
-              試験導入
-            </span>
-          </div>
           <ManufactureListView
             segments={segments}
             units={units}
             adjustmentMm={pieceLengthAdjustmentMm}
             customerCompany={customerCompany}
+            onCustomerCompanyChange={setCustomerCompany}
             customerName={customerName}
+            onCustomerNameChange={setCustomerName}
             customerAddress={customerAddress}
+            onCustomerAddressChange={setCustomerAddress}
             customerDate={customerDate}
+            onCustomerDateChange={setCustomerDate}
             customerArrival={customerArrival}
+            onCustomerArrivalChange={setCustomerArrival}
           />
         </section>
       )}
