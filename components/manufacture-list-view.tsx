@@ -135,13 +135,6 @@ export function buildManufactureGroups(
     .sort((a, b) => compareSegmentColorOrder(a.color, b.color))
 }
 
-/** datetime-local (YYYY-MM-DDTHH:mm) を表示用 "YYYY/MM/DD HH:mm" に整形 */
-function formatArrivalDateTime(value: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value)
-  if (!m) return value
-  return `${m[1]}/${m[2]}/${m[3]} ${m[4]}:${m[5]}`
-}
-
 export function ManufactureListView({
   segments,
   units,
@@ -176,15 +169,8 @@ export function ManufactureListView({
     [segments, units, adjustmentMm],
   )
 
-  const hasCustomer =
-    !!customerCompany.trim() ||
-    !!customerName.trim() ||
-    !!customerAddress.trim() ||
-    !!customerDate.trim() ||
-    !!customerArrival.trim()
-
-  const inlineInputClass =
-    'min-w-0 rounded border border-border bg-white px-2 py-1 text-sm font-medium text-foreground outline-none focus:border-primary print:border-transparent print:bg-transparent print:px-0'
+  const plainTextInputClass =
+    'min-w-0 border-0 bg-transparent px-0 py-0 text-sm outline-none placeholder:text-muted/50 focus:underline focus:decoration-primary/40 print:border-transparent print:bg-transparent'
 
   if (groups.length === 0) {
     return (
@@ -203,8 +189,8 @@ export function ManufactureListView({
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <h2 className="text-base font-semibold">製作図リスト</h2>
-          <div className="flex flex-wrap items-end gap-x-3 gap-y-1.5 text-sm print:hidden">
-            <label className="flex items-end gap-1">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+            <label className="inline-flex items-center gap-1">
               <AutoWidthInput
                 value={customerCompany}
                 onChange={onCustomerCompanyChange}
@@ -212,11 +198,11 @@ export function ManufactureListView({
                 ariaLabel="会社名"
                 minCh={8}
                 maxCh={28}
-                className={inlineInputClass}
+                className={`${plainTextInputClass} font-semibold text-foreground`}
               />
               <span className="shrink-0 font-semibold text-foreground">様</span>
             </label>
-            <label className="flex items-end gap-1">
+            <label className="inline-flex items-center gap-1">
               <AutoWidthInput
                 value={customerName}
                 onChange={onCustomerNameChange}
@@ -224,11 +210,11 @@ export function ManufactureListView({
                 ariaLabel="顧客名"
                 minCh={6}
                 maxCh={24}
-                className={inlineInputClass}
+                className={`${plainTextInputClass} font-semibold text-foreground`}
               />
               <span className="shrink-0 font-semibold text-foreground">様邸</span>
             </label>
-            <label className="flex items-end gap-1">
+            <label className="inline-flex items-center gap-1">
               <AutoWidthInput
                 value={customerAddress}
                 onChange={onCustomerAddressChange}
@@ -236,56 +222,29 @@ export function ManufactureListView({
                 ariaLabel="現場住所"
                 minCh={6}
                 maxCh={32}
-                className={inlineInputClass}
+                className={`${plainTextInputClass} text-foreground`}
               />
             </label>
           </div>
-          {hasCustomer && (
-            <div className="hidden flex-wrap items-end gap-x-4 gap-y-1 text-sm print:flex">
-              {customerCompany.trim() && (
-                <span className="font-semibold text-foreground">
-                  {customerCompany.trim()} 様
-                </span>
-              )}
-              {customerName.trim() && (
-                <span className="font-semibold text-foreground">
-                  {customerName.trim()} 様邸
-                </span>
-              )}
-              {customerAddress.trim() && (
-                <span className="text-foreground">{customerAddress.trim()}</span>
-              )}
-            </div>
-          )}
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1.5 text-sm print:hidden">
-          <label className="flex flex-col items-end gap-0.5">
-            <span className="text-[10px] text-muted">積み込み日</span>
+        <div className="flex shrink-0 flex-col items-end gap-0.5 text-sm text-muted">
+          <div className="inline-flex items-center gap-1 whitespace-nowrap">
+            <span>積み込み日:</span>
             <CustomerDatePicker
+              plain
               value={customerDate}
               onChange={onCustomerDateChange}
             />
-          </label>
-          <label className="flex flex-col items-end gap-0.5">
-            <span className="text-[10px] text-muted">到着日</span>
+          </div>
+          <div className="inline-flex items-center gap-1 whitespace-nowrap">
+            <span>到着日:</span>
             <CustomerDateTimePicker
+              plain
               value={customerArrival}
               onChange={onCustomerArrivalChange}
             />
-          </label>
-        </div>
-        {(customerDate.trim() || customerArrival.trim()) && (
-          <div className="hidden shrink-0 flex-col items-end gap-0.5 text-sm print:flex">
-            {customerDate.trim() && (
-              <span className="text-muted">積み込み日: {customerDate.trim()}</span>
-            )}
-            {customerArrival.trim() && (
-              <span className="text-muted">
-                到着日: {formatArrivalDateTime(customerArrival.trim())}
-              </span>
-            )}
           </div>
-        )}
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -373,7 +332,7 @@ function AutoWidthInput({
     >
       <span
         aria-hidden
-        className="invisible col-start-1 row-start-1 whitespace-pre border border-transparent px-2 py-1 text-sm font-medium"
+        className="invisible col-start-1 row-start-1 whitespace-pre px-0 py-0 text-sm"
       >
         {mirrorText}
       </span>

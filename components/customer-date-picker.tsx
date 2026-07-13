@@ -36,9 +36,11 @@ function monthLabelJa(year: number, month: number): string {
 export function CustomerDatePicker({
   value,
   onChange,
+  plain = false,
 }: {
   value: string
   onChange: (iso: string) => void
+  plain?: boolean
 }) {
   const listboxId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -102,19 +104,32 @@ export function CustomerDatePicker({
     setViewMonth(m)
   }
 
-  const displayText = value ? formatJa(value) : '日付を選択'
+  const displayText = value
+    ? plain
+      ? value
+      : formatJa(value)
+    : plain
+      ? '—'
+      : '日付を選択'
 
   return (
-    <div ref={rootRef} className="relative mt-1">
+    <div ref={rootRef} className={plain ? 'relative' : 'relative mt-1'}>
       <button
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={listboxId}
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-white px-3 py-2 text-left text-sm font-medium text-foreground outline-none hover:border-primary/40 focus:border-primary print:border-transparent print:bg-transparent print:px-0"
+        className={
+          plain
+            ? 'inline-flex border-0 bg-transparent p-0 text-sm font-normal text-muted outline-none hover:text-foreground print:border-transparent print:bg-transparent'
+            : 'flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-white px-3 py-2 text-left text-sm font-medium text-foreground outline-none hover:border-primary/40 focus:border-primary print:border-transparent print:bg-transparent print:px-0'
+        }
       >
-        <span className={value ? 'text-foreground' : 'text-muted/70'}>{displayText}</span>
+        <span className={value || plain ? 'text-inherit' : 'text-muted/70'}>
+          {displayText}
+        </span>
+        {!plain && (
         <svg
           className="h-4 w-4 shrink-0 text-muted/80 print:hidden"
           viewBox="0 0 20 20"
@@ -126,6 +141,7 @@ export function CustomerDatePicker({
           <rect x="3" y="4" width="14" height="13" rx="1.5" />
           <path d="M3 8h14M7 2v3M13 2v3" strokeLinecap="round" />
         </svg>
+        )}
       </button>
 
       {open && (
@@ -133,7 +149,7 @@ export function CustomerDatePicker({
           id={listboxId}
           role="dialog"
           aria-label="日付を選択"
-          className="absolute left-0 top-[calc(100%+6px)] z-50 w-[min(100%,280px)] rounded-lg border border-border bg-white p-3 shadow-lg shadow-slate-900/10 print:hidden"
+          className={`absolute top-[calc(100%+6px)] z-50 w-[min(100%,280px)] rounded-lg border border-border bg-white p-3 shadow-lg shadow-slate-900/10 print:hidden ${plain ? 'right-0' : 'left-0'}`}
         >
           <div className="mb-2 flex items-center justify-between gap-2">
             <button
