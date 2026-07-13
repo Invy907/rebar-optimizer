@@ -271,10 +271,6 @@ export function ManufactureListView({
           </tbody>
         </table>
       </div>
-
-      <p className="text-[11px] leading-relaxed text-muted print:hidden">
-        ※ 呼称 = 図面上の長さ、実寸 = 呼称 + 鉄筋長さ補正値。数量は同一長さの部材本数。
-      </p>
     </div>
   )
 }

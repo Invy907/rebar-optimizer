@@ -247,7 +247,7 @@ export function OptimizeClient({
       {result && !calculating && (
         <section className="optimize-print-manufacture rounded-lg border border-border bg-white p-5">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold">製作図リスト（新レイアウト）</h2>
+            <h2 className="text-base font-semibold">製作図リスト</h2>
             <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 print:hidden">
               試験導入
             </span>
