@@ -5,8 +5,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput } from '@/lib/optimizer'
-import { CustomerDatePicker } from '@/components/customer-date-picker'
-import { CustomerDateTimePicker } from '@/components/customer-datetime-picker'
 import { OptimizationResultView } from '@/components/optimization-result-view'
 import { ManufactureListView } from '@/components/manufacture-list-view'
 import {
@@ -188,50 +186,6 @@ export function OptimizeClient({
 
   return (
     <div className="optimize-print-root space-y-6">
-      <section className="optimize-print-customer rounded-lg border border-border bg-white p-5 print:hidden">
-        <h2 className="text-base font-semibold mb-3">顧客情報</h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <label className="text-sm">
-            <span className="block text-xs font-medium tracking-wide text-muted/80">顧客名</span>
-            <input
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary print:border-transparent print:bg-transparent print:px-0"
-            />
-          </label>
-          <label className="text-sm">
-            <span className="block text-xs font-medium tracking-wide text-muted/80">会社名</span>
-            <input
-              value={customerCompany}
-              onChange={(e) => setCustomerCompany(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary print:border-transparent print:bg-transparent print:px-0"
-            />
-          </label>
-          <label className="text-sm">
-            <span className="block text-xs font-medium tracking-wide text-muted/80">現場住所</span>
-            <input
-              value={customerAddress}
-              onChange={(e) => setCustomerAddress(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground outline-none placeholder:text-muted/60 focus:border-primary print:border-transparent print:bg-transparent print:px-0"
-            />
-          </label>
-          <label className="text-sm">
-            <span className="block text-xs font-medium tracking-wide text-muted/80">積み込み日</span>
-            <CustomerDatePicker
-              value={customerDate}
-              onChange={setCustomerDate}
-            />
-          </label>
-          <label className="text-sm">
-            <span className="block text-xs font-medium tracking-wide text-muted/80">到着日（時刻あり）</span>
-            <CustomerDateTimePicker
-              value={customerArrival}
-              onChange={setCustomerArrival}
-            />
-          </label>
-        </div>
-      </section>
-
       {/* 計算中表示 */}
       {calculating && (
         <section className="rounded-lg border border-border bg-white p-8 text-center">
