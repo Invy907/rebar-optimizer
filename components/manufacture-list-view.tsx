@@ -394,6 +394,7 @@ function AutoWidthInput({
       </span>
       <input
         type="text"
+        size={1}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
