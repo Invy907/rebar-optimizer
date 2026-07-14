@@ -36,7 +36,8 @@ button,
 
 @media print {
   @page {
-    margin: 10mm;
+    /* 上下余白を詰めて 1 ページに製作図 7 個を収める（左右は従来どおり） */
+    margin: 6mm 10mm;
   }
 
   body {
@@ -58,6 +59,8 @@ button,
 
   .optimize-print-manufacture {
     order: 1 !important;
+    /* セクションの余白を詰めて表を上に寄せる（従来 p-5 = 20px を縮小） */
+    padding: 4px 10px !important;
   }
 
   /* 製作図リストは長くなり得るのでセクション単位の改ページ回避はしない

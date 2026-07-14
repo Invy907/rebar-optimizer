@@ -207,7 +207,7 @@ export function ManufactureListView({
     'border border-slate-400 px-1 font-mono text-[12px] leading-none tabular-nums'
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 print:space-y-1">
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <h2 className="text-base font-semibold">製作図リスト</h2>
@@ -249,7 +249,7 @@ export function ManufactureListView({
             </label>
           </div>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1 text-sm">
+        <div className="flex shrink-0 flex-col items-end gap-1 text-sm print:gap-0 print:leading-tight">
           <CustomerDatePicker
             plain
             labelPrefix="積み込み日:"

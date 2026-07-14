@@ -3643,24 +3643,52 @@ function DetailShapeEditor({
                 </p>
                 <div className="flex flex-wrap gap-3">
                   {(() => {
+                    const targetIds =
+                      selectedRebarIds.length > 0
+                        ? selectedRebarIds
+                        : selectedRebar
+                          ? [selectedRebar.id]
+                          : []
+                    const hasSelection = targetIds.length > 0
                     const activeDiameter = selectedRebar?.diameter ?? 'D13'
+                    const applyDiameter = (d: string) => {
+                      if (!hasSelection) return
+                      const idSet = new Set(targetIds)
+                      const next = rebarLayout.rebars.map((r) =>
+                        idSet.has(r.id) ? { ...r, diameter: d } : r,
+                      )
+                      onRebarLayoutChange(
+                        normalizeRebarLayout({ ...rebarLayout, rebars: next }),
+                      )
+                    }
                     return (['D10', 'D13', 'D16', 'D19'] as const).map((d) => {
                       const token = rebarDiameterVisualToken(d)
                       const r = 10 * token.radiusScale
-                      const isActive = d === activeDiameter
+                      const isActive = hasSelection && d === activeDiameter
                       return (
-                        <div key={d} className="flex flex-col items-center gap-1">
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => applyDiameter(d)}
+                          disabled={!hasSelection}
+                          title={
+                            hasSelection
+                              ? `径を ${d} に変更`
+                              : '鉄筋を選択してから押してください'
+                          }
+                          className="flex flex-col items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
                           <svg
                             width={40}
                             height={40}
                             viewBox="-20 -20 40 40"
-                            className={`rounded bg-white ${isActive ? 'border-2 border-primary ring-1 ring-primary' : 'border border-slate-200'}`}
+                            className={`rounded bg-white ${isActive ? 'border-2 border-primary ring-1 ring-primary' : 'border border-slate-200'} ${hasSelection ? 'hover:border-primary/60' : ''}`}
                             aria-hidden
                           >
                             <RebarSymbol x={0} y={0} token={token} radius={r} strokeWidth={1.9} />
                           </svg>
                           <span className={`font-mono text-[10px] font-semibold ${isActive ? 'text-primary' : 'text-slate-700'}`}>{d}</span>
-                        </div>
+                        </button>
                       )
                     })
                   })()}
