@@ -78,14 +78,14 @@ button,
   .optimize-print-results > div:first-child {
     flex-basis: 100% !important;
   }
-  /* 表カードは内容幅に縮める（右に余白を作らない） */
+  /* 表カードとフック付でページ横幅を半分ずつ使う（50/50） */
   .optimize-print-results > .print-bar-summary {
-    flex: 0 0 auto !important;
-    width: fit-content !important;
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: 0 !important;
   }
-  /* フック付は表カードの右側の余白を埋める */
   .optimize-print-results > div:last-child {
-    flex: 1 1 280px !important;
+    flex: 1 1 0 !important;
     min-width: 0 !important;
   }
 
