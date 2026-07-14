@@ -20,8 +20,16 @@ import {
 } from '@/lib/segment-meta'
 import { getPitchBaseCount, getUnitPitchMm } from '@/lib/unit-calculations'
 
-/** 製作図（形状図）の高さ(px) */
-const SHAPE_HEIGHT = 170
+/** 1 データ行の高さ(px)。全行を均一にし、約 42 行/ページを目安に収める */
+const ROW_HEIGHT = 22
+/** 1 製作図あたりの最小行数。データ行が少ない場合は空行で埋めて形状の高さを確保
+ *  （7 製作図 × 6 行 = 42 行 / ページ。行の多い製作図があるページは製作図が 7 未満になる） */
+const MIN_ROWS_PER_BLOCK = 6
+/** 列幅(px)。データ列は詰める */
+const COL_SHAPE = 250
+const COL_LEN = 118
+const COL_QTY = 46
+const COL_TATE = 54
 import {
   compareSegmentColorOrder,
   getSegmentColorLabelJa,
@@ -193,9 +201,10 @@ export function ManufactureListView({
     )
   }
 
-  const cell = 'border border-slate-400 px-2 py-1.5 align-middle'
   const headCell =
-    'border border-slate-400 px-2 py-1.5 text-center text-xs font-semibold bg-slate-50'
+    'border border-slate-400 px-1 py-1 text-center text-xs font-semibold bg-slate-50'
+  const dataCell =
+    'border border-slate-400 px-1 font-mono text-[12px] leading-none tabular-nums'
 
   return (
     <div className="space-y-3">
@@ -257,62 +266,94 @@ export function ManufactureListView({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-sm">
+        <table className="border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
+          <colgroup>
+            <col style={{ width: COL_SHAPE }} />
+            <col style={{ width: COL_LEN }} />
+            <col style={{ width: COL_QTY }} />
+            <col style={{ width: COL_TATE }} />
+          </colgroup>
           <thead>
             <tr>
-              <th className={`${headCell} w-96`}>製作図</th>
-              <th className={`${headCell} w-48`}>長さ 呼称(実寸)</th>
-              <th className={`${headCell} w-20`}>数量</th>
-              <th className={`${headCell} w-24`}>タテ筋</th>
+              <th className={headCell}>製作図</th>
+              <th className={headCell}>長さ 呼称(実寸)</th>
+              <th className={headCell}>数量</th>
+              <th className={headCell}>タテ筋</th>
             </tr>
           </thead>
-          <tbody>
-            {groups.map((g) =>
-              g.rows.map((r, idx) => (
-                <tr key={r.key} className="break-inside-avoid">
-                  {idx === 0 && (
-                    <td
-                      className={`${cell} p-2 text-center`}
-                      rowSpan={g.rows.length}
-                    >
-                      <div className="flex flex-col items-center justify-center gap-1.5">
-                        {g.unit ? (
-                          <div className="w-full" style={{ height: SHAPE_HEIGHT }}>
-                            <UnitShapeThumbnail
-                              unit={g.unit}
-                              large
-                              containerClassName="relative h-full w-full"
-                            />
+          {groups.map((g) => {
+            const rowSlots = Math.max(g.rows.length, MIN_ROWS_PER_BLOCK)
+            const shapeCellHeight = rowSlots * ROW_HEIGHT
+            return (
+              <tbody key={g.key} className="break-inside-avoid">
+                {Array.from({ length: rowSlots }, (_, idx) => {
+                  const r = g.rows[idx] ?? null
+                  return (
+                    <tr key={`${g.key}:${idx}`}>
+                      {idx === 0 && (
+                        <td
+                          className="border border-slate-400 p-0 text-center align-middle"
+                          rowSpan={rowSlots}
+                        >
+                          <div
+                            className="flex flex-col items-center justify-center gap-0.5 px-1"
+                            style={{ height: shapeCellHeight }}
+                          >
+                            {g.unit ? (
+                              <div className="min-h-0 w-full flex-1">
+                                <UnitShapeThumbnail
+                                  unit={g.unit}
+                                  large
+                                  containerClassName="relative h-full w-full"
+                                />
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted">
+                                （形状なし）
+                              </span>
+                            )}
+                            <span className="shrink-0 text-[11px] font-semibold leading-none text-slate-700">
+                              {g.unitName}
+                            </span>
                           </div>
-                        ) : (
-                          <span className="text-xs text-muted">
-                            （形状なし）
-                          </span>
-                        )}
-                        <span className="shrink-0 text-[11px] font-semibold leading-tight text-slate-700">
-                          {g.unitName}
-                        </span>
-                      </div>
-                    </td>
-                  )}
-                  <td className={`${cell} text-right font-mono tabular-nums`}>
-                    <span className="font-semibold" style={{ color: g.colorHex }}>
-                      {r.nominalMm.toLocaleString('ja-JP')}
-                    </span>
-                    <span className="text-muted">
-                      ({r.actualMm.toLocaleString('ja-JP')})
-                    </span>
-                  </td>
-                  <td className={`${cell} text-center font-mono tabular-nums`}>
-                    {r.qty}
-                  </td>
-                  <td className={`${cell} text-center font-mono tabular-nums`}>
-                    {r.tateCount ?? '-'}
-                  </td>
-                </tr>
-              )),
-            )}
-          </tbody>
+                        </td>
+                      )}
+                      <td
+                        className={`${dataCell} text-right`}
+                        style={{ height: ROW_HEIGHT }}
+                      >
+                        {r ? (
+                          <>
+                            <span
+                              className="font-semibold"
+                              style={{ color: g.colorHex }}
+                            >
+                              {r.nominalMm.toLocaleString('ja-JP')}
+                            </span>
+                            <span className="text-muted">
+                              ({r.actualMm.toLocaleString('ja-JP')})
+                            </span>
+                          </>
+                        ) : null}
+                      </td>
+                      <td
+                        className={`${dataCell} text-center`}
+                        style={{ height: ROW_HEIGHT }}
+                      >
+                        {r ? r.qty : null}
+                      </td>
+                      <td
+                        className={`${dataCell} text-center`}
+                        style={{ height: ROW_HEIGHT }}
+                      >
+                        {r ? r.tateCount ?? '-' : null}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            )
+          })}
         </table>
       </div>
     </div>
