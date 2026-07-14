@@ -25,8 +25,8 @@ const ROW_HEIGHT = 22
 /** 1 製作図あたりの最小行数。データ行が少ない場合は空行で埋めて形状の高さを確保
  *  （7 製作図 × 6 行 = 42 行 / ページ。行の多い製作図があるページは製作図が 7 未満になる） */
 const MIN_ROWS_PER_BLOCK = 6
-/** 列幅(px)。データ列は詰める */
-const COL_SHAPE = 250
+/** 列幅(px)。データ列だけ詰める（製作図は広いまま） */
+const COL_SHAPE = 384
 const COL_LEN = 118
 const COL_QTY = 46
 const COL_TATE = 54
