@@ -102,7 +102,6 @@ button,
   .print-hook-summary .hook-card .mt-1 {
     margin-top: 1px !important;
   }
-}
 
   /* 製作図リストは長くなり得るのでセクション単位の改ページ回避はしない
      （ここを avoid にすると丸ごと次ページへ送られ、顧客情報の後が空白になる） */
