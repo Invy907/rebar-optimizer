@@ -220,7 +220,7 @@ export function OptimizeClient({
 
       {/* 結果 */}
       {result && !calculating && (
-        <section className="optimize-print-results space-y-4 print:hidden">
+        <section className="optimize-print-results space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">計算結果</h2>
           </div>

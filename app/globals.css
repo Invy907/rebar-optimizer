@@ -63,6 +63,12 @@ button,
     padding: 4px 10px !important;
   }
 
+  /* 計算結果は製作図リストの後、次ページから印刷する */
+  .optimize-print-results {
+    order: 2 !important;
+    break-before: page;
+  }
+
   /* 製作図リストは長くなり得るのでセクション単位の改ページ回避はしない
      （ここを avoid にすると丸ごと次ページへ送られ、顧客情報の後が空白になる） */
   .optimize-print-manufacture {
