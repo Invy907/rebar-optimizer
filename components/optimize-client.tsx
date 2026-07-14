@@ -317,7 +317,7 @@ function BarSummarySection({
   }
 
   return (
-    <div className="rounded-lg border-2 border-primary bg-white p-5">
+    <div className="print-bar-summary rounded-lg border-2 border-primary bg-white p-5">
       <h3 className="text-base font-semibold mb-1">鉄筋種類別の必要本数</h3>
       {adjustmentMm !== 0 && (
         <p className="text-xs text-muted mb-3">

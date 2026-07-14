@@ -67,7 +67,42 @@ button,
   .optimize-print-results {
     order: 2 !important;
     break-before: page;
+    gap: 8px !important;
   }
+
+  /* 「鉄筋種類別の必要本数」と「フック付」を 1 ページに収めるため、
+     余白・行の高さ・文字を詰め、各ボックスはページ途中で割らない。 */
+  .print-bar-summary,
+  .print-hook-summary {
+    padding: 8px 10px !important;
+    break-inside: avoid;
+  }
+
+  /* 表は内容幅に合わせる（ページ全幅に間延びさせない） */
+  .print-bar-summary table {
+    width: auto !important;
+    font-size: 11px !important;
+  }
+  .print-bar-summary th,
+  .print-bar-summary td {
+    padding-top: 1px !important;
+    padding-bottom: 1px !important;
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+  .print-bar-summary th:first-child,
+  .print-bar-summary td:first-child {
+    padding-left: 0 !important;
+  }
+
+  /* フック付の各カードを薄く詰める */
+  .print-hook-summary .hook-card {
+    padding: 2px 6px !important;
+  }
+  .print-hook-summary .hook-card .mt-1 {
+    margin-top: 1px !important;
+  }
+}
 
   /* 製作図リストは長くなり得るのでセクション単位の改ページ回避はしない
      （ここを avoid にすると丸ごと次ページへ送られ、顧客情報の後が空白になる） */

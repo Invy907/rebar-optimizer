@@ -112,14 +112,14 @@ export function OptimizationResultView({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-border bg-white p-4">
+      <div className="print-hook-summary rounded-lg border border-border bg-white p-4">
         <h3 className="mb-3 text-sm font-semibold">フック付</h3>
         {unitSummaries.length > 0 ? (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 print:gap-1">
             {unitSummaries.map((s) => (
               <div
                 key={s.key}
-                className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm leading-snug"
+                className="hook-card rounded-md border border-border bg-muted/30 px-3 py-2 text-sm leading-snug"
               >
                 <div className="font-medium text-foreground">{s.unitName}</div>
                 <div className="mt-1 flex items-center gap-2">
@@ -129,7 +129,7 @@ export function OptimizationResultView({
                       <UnitShapeThumbnail
                         unit={u}
                         shapeOnly
-                        thumbClassName="h-9 w-14 shrink-0"
+                        thumbClassName="h-9 w-14 shrink-0 print:h-6 print:w-10"
                       />
                     ) : null
                   })()}
