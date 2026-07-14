@@ -63,11 +63,30 @@ button,
     padding: 4px 10px !important;
   }
 
-  /* 計算結果は製作図リストの後、次ページから印刷する */
+  /* 計算結果は製作図リストの後、次ページから印刷する。
+     見出しを上段に、その下は「表カード（左）＋フック付（右）」の 2 段組にして
+     表の右側の余白を活用する。 */
   .optimize-print-results {
     order: 2 !important;
     break-before: page;
-    gap: 8px !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+  /* 見出し（計算結果）は上段いっぱいに */
+  .optimize-print-results > div:first-child {
+    flex-basis: 100% !important;
+  }
+  /* 表カードは内容幅に縮める（右に余白を作らない） */
+  .optimize-print-results > .print-bar-summary {
+    flex: 0 0 auto !important;
+    width: fit-content !important;
+  }
+  /* フック付は表カードの右側の余白を埋める */
+  .optimize-print-results > div:last-child {
+    flex: 1 1 280px !important;
+    min-width: 0 !important;
   }
 
   /* 「鉄筋種類別の必要本数」と「フック付」を 1 ページに収めるため、
