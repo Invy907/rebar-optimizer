@@ -383,7 +383,7 @@ function AutoWidthInput({
 
   return (
     <span
-      className="inline-grid max-w-full"
+      className="auto-width-field inline-grid max-w-full"
       style={{ width: `${widthCh}ch` }}
     >
       <span

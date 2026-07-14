@@ -85,4 +85,10 @@ button,
     padding-top: 0 !important;
     padding-bottom: 0 !important;
   }
+
+  /* 会社名・顧客名の入力欄は最小幅を解除し、内容にぴったり合わせる。
+     これで印刷時に「様」「様邸」がテキストのすぐ後ろに来る（余白が空かない）。 */
+  .auto-width-field {
+    width: auto !important;
+  }
 }
