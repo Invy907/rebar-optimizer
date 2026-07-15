@@ -64,19 +64,24 @@ button,
   }
 
   /* 計算結果は製作図リストの後、次ページから印刷する。
-     フック付は表カードの下に縦積み。 */
+     フック付は表カードの下に縦積み。
+     セクション自体を中身の幅（＝表カード）に縮め、左寄せする。
+     その上で両カードを width:100% にすると、幅が揃い右端も揃う。 */
   .optimize-print-results {
     order: 2 !important;
     break-before: page;
+    width: fit-content !important;
+    align-self: flex-start !important;
   }
 
   /* 「鉄筋種類別の必要本数」と「フック付」を 1 ページに収めるため、
      余白・行の高さ・文字を詰め、各ボックスはページ途中で割らない。
-     各カードは中身の幅ぴったりに縮め、右側に余白を作らない。 */
+     両カードは同じ幅（セクション幅）にして右端を揃える。 */
   .print-bar-summary,
   .print-hook-summary {
     padding: 8px 10px !important;
-    width: fit-content !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
     break-inside: avoid;
   }
 
