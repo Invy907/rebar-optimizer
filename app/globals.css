@@ -104,6 +104,13 @@ button,
   .print-hook-summary .hook-card .mt-1 {
     margin-top: 1px !important;
   }
+  /* 長さ入力欄は編集用に固定幅(5.5rem)だが、印刷では内容幅に詰めて
+     右寄せし、「×」を数字のすぐ後ろに置く。 */
+  .print-hook-summary .hook-card input {
+    width: 3.6rem !important;
+    text-align: right !important;
+    padding: 0 !important;
+  }
 
   /* 製作図リストは長くなり得るのでセクション単位の改ページ回避はしない
      （ここを avoid にすると丸ごと次ページへ送られ、顧客情報の後が空白になる） */
