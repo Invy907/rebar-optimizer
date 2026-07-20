@@ -4189,7 +4189,12 @@ export function UnitShapeThumbnail({
   const spacingTickHalf = large ? 7 : 4.2
   const previewBarDiameters = Array.from(
     new Set((unit.bars ?? []).map((b) => String(b.diameter ?? '').trim().toUpperCase()).filter(Boolean)),
-  )
+  ).sort((a, b) => {
+    const na = Number.parseInt(a.replace(/^D/i, ''), 10)
+    const nb = Number.parseInt(b.replace(/^D/i, ''), 10)
+    if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return nb - na
+    return a.localeCompare(b)
+  })
 
   // 実際に描画される全要素（形状・鉄筋・間隔線・寸法ラベル）を含めた範囲で viewBox を決める。
   // 寸法ラベルは形状の外側に置かれるため、これを含めないと meet で見切れる。
