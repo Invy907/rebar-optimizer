@@ -261,7 +261,7 @@ function compareBarTypeDesc(a: string, b: string): number {
   }
   const an = parse(a)
   const bn = parse(b)
-  if (an != null && bn != null && an !== bn) return bn - an
+  if (an != null && bn != null && an !== bn) return an - bn
   if (an != null && bn == null) return -1
   if (an == null && bn != null) return 1
   return a.localeCompare(b)
