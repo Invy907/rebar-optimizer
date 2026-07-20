@@ -4251,7 +4251,7 @@ export function UnitShapeThumbnail({
   return (
     <div className={large ? (containerClassName ?? 'relative h-80 w-full') : 'contents'}>
       {large && pitchMm != null && (
-        <div className="pointer-events-none absolute left-4 top-3 z-10 text-[14px] font-bold leading-none text-slate-800">
+        <div className="pointer-events-none absolute left-4 top-3 z-10 text-[18px] font-bold leading-none text-slate-800">
           @{pitchMm}
         </div>
       )}
@@ -4453,7 +4453,7 @@ export function UnitShapeThumbnail({
             key={`an-${an.id}`}
             x={an.x}
             y={an.y}
-            fontSize={36}
+            fontSize={48}
             fill="#0f172a"
             fontWeight={700}
           >

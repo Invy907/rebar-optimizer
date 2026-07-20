@@ -21,7 +21,7 @@ import {
 import { getPitchBaseCount, getUnitPitchMm } from '@/lib/unit-calculations'
 
 /** 1 データ行の高さ(px)。全行を均一にし、約 42 行/ページを目安に収める */
-const ROW_HEIGHT = 22
+const ROW_HEIGHT = 24
 /** 1 製作図あたりの最小行数。データ行が少ない場合は空行で埋めて形状の高さを確保
  *  （7 製作図 × 6 行 = 42 行 / ページ。行の多い製作図があるページは製作図が 7 未満になる） */
 const MIN_ROWS_PER_BLOCK = 6
@@ -202,9 +202,9 @@ export function ManufactureListView({
   }
 
   const headCell =
-    'border border-slate-400 px-1 py-1 text-center text-xs font-semibold bg-slate-50'
+    'border border-slate-400 px-1 py-1 text-center text-sm font-semibold bg-slate-50'
   const dataCell =
-    'border border-slate-400 px-1 font-mono text-[12px] leading-none tabular-nums'
+    'border border-slate-400 px-1 font-mono text-[15px] leading-none tabular-nums'
 
   return (
     <div className="space-y-3 print:space-y-1">
