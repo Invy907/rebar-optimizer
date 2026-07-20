@@ -88,7 +88,7 @@ button,
   /* 表は内容幅に合わせる（ページ全幅に間延びさせない） */
   .print-bar-summary table {
     width: auto !important;
-    font-size: 11px !important;
+    font-size: 14px !important;
   }
   .print-bar-summary th,
   .print-bar-summary td {

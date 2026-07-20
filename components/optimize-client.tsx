@@ -326,7 +326,7 @@ function BarSummarySection({
         </p>
       )}
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-lg">
           <thead>
             <tr className="border-b-2 border-border text-left">
               <th className="pb-2 pr-4 font-semibold">長さ (mm)</th>
