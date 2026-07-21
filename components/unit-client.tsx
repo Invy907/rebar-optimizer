@@ -823,18 +823,6 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     setOpenShapeEditorOnModal(false)
   }, [modalOpen, openShapeEditorOnModal])
 
-  useEffect(() => {
-    if (!modalOpen) return
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        closeModal()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [modalOpen])
-
   function updateShapeType(nextShape: ExtendedShapeType) {
     setDraft((p) => {
       const nextTemplate = shapeTypeToDetailTemplate(nextShape)
