@@ -4456,12 +4456,13 @@ export function UnitShapeThumbnail({
         if (!Number.isFinite(an.x) || !Number.isFinite(an.y)) return null
         const t = String(an.text ?? '').trim()
         if (!t) return null
+        const isNumericLabel = parseSpacingMm(t) != null
         return (
           <text
             key={`an-${an.id}`}
             x={an.x}
             y={an.y}
-            fontSize={48}
+            fontSize={isNumericLabel ? 48 : 66}
             fill="#0f172a"
             fontWeight={700}
           >
