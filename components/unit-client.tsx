@@ -4028,6 +4028,19 @@ function DetailShapeEditor({
                   placeholder="例: 300 / 柱"
                 />
               </label>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAnnotationInput((prev) =>
+                      prev ? { ...prev, value: '柱', error: null } : prev,
+                    )
+                  }
+                  className="rounded-md border border-border px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-gray-50"
+                >
+                  柱
+                </button>
+              </div>
               {annotationInput.error ? (
                 <p className="mt-2 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
                   {annotationInput.error}
