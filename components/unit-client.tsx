@@ -4053,7 +4053,7 @@ function DetailShapeEditor({
               </button>
               <button
                 type="button"
-                onClick={submitAnnotationInput}
+                onClick={() => submitAnnotationInput()}
                 className="rounded-md bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:bg-primary-hover"
               >
                 追加
