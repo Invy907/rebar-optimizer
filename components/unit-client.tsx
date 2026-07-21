@@ -2330,9 +2330,9 @@ function DetailShapeEditor({
     setAnnotationInput({ x, y, value: String(spacingMmDraft || ''), error: null })
   }
 
-  function submitAnnotationInput() {
+  function submitAnnotationInput(overrideValue?: string) {
     if (!annotationInput) return
-    const raw = annotationInput.value.trim()
+    const raw = (overrideValue ?? annotationInput.value).trim()
     if (raw === '') {
       setAnnotationInput((prev) => (prev ? { ...prev, error: '寸法値を入力してください。' } : prev))
       return
@@ -4031,11 +4031,7 @@ function DetailShapeEditor({
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <button
                   type="button"
-                  onClick={() =>
-                    setAnnotationInput((prev) =>
-                      prev ? { ...prev, value: '柱', error: null } : prev,
-                    )
-                  }
+                  onClick={() => submitAnnotationInput('柱')}
                   className="rounded-md border border-border px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-gray-50"
                 >
                   柱
