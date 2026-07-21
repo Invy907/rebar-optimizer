@@ -3568,6 +3568,7 @@ function DetailShapeEditor({
                   if (mode !== 'annotation') return
                   beginObjectPointer(e)
                   selectAnnotation(an.id)
+                  if (!isNumeric) setDragAnnotationId(an.id)
                 }}
               >
                 {an.text}
