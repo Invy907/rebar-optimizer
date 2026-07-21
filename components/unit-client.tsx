@@ -3523,7 +3523,7 @@ function DetailShapeEditor({
         {rebarLayout.annotations.map((an) => {
           const pe = mode === 'annotation' ? 'auto' : 'none'
           const isNumeric = parseSpacingMm(an.text) != null
-          const annotationFont = 46
+          const annotationFont = isNumeric ? 46 : 64
           const hitW = Math.max(46, String(an.text).length * (annotationFont * 0.62) + 18)
           const hitH = 62
 
@@ -4463,7 +4463,7 @@ export function UnitShapeThumbnail({
             key={`an-${an.id}`}
             x={an.x}
             y={an.y}
-            fontSize={isNumericLabel ? 48 : 66}
+            fontSize={isNumericLabel ? 48 : 74}
             fill="#0f172a"
             fontWeight={700}
           >
