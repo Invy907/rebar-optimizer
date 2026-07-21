@@ -2337,14 +2337,15 @@ function DetailShapeEditor({
       setAnnotationInput((prev) => (prev ? { ...prev, error: '寸法値を入力してください。' } : prev))
       return
     }
+    // 数値（mm）だけでなく「柱」などの文字ラベルも許可する。
+    // 正の整数の場合のみピッチ下書きを更新し、それ以外は入力文字をそのまま表示する。
     const mm = Number.parseInt(raw, 10)
-    if (!Number.isFinite(mm) || mm <= 0) {
-      setAnnotationInput((prev) => (prev ? { ...prev, error: '正の数値（mm）を入力してください。' } : prev))
-      return
+    const isNumeric = /^\d+$/.test(raw) && Number.isFinite(mm) && mm > 0
+    if (isNumeric) {
+      setSpacingMmDraft(mm)
     }
-    setSpacingMmDraft(mm)
     const id = nextId('an')
-    const text = `${mm}`
+    const text = isNumeric ? `${mm}` : raw
     onRebarLayoutChange(
       normalizeRebarLayout({
         ...rebarLayout,
@@ -3994,16 +3995,14 @@ function DetailShapeEditor({
             <div className="border-b border-border px-5 py-4">
               <h3 className="text-sm font-semibold text-foreground">寸法値</h3>
               <p className="mt-1 text-xs text-muted">
-                図形に表示する寸法値を mm で入力してください。
+                図形に表示する寸法値（mm）または「柱」などの文字を入力してください。
               </p>
             </div>
             <div className="px-5 py-4">
               <label className="block text-xs font-medium text-muted">
-                寸法値（mm）
+                寸法値（mm または文字）
                 <input
-                  type="number"
-                  min={1}
-                  inputMode="numeric"
+                  type="text"
                   value={annotationInput.value}
                   onChange={(e) =>
                     setAnnotationInput((prev) =>
@@ -4026,7 +4025,7 @@ function DetailShapeEditor({
                       ? 'border-red-300 bg-red-50 focus:border-red-500'
                       : 'border-border bg-white focus:border-primary'
                   }`}
-                  placeholder="例: 300"
+                  placeholder="例: 300 / 柱"
                 />
               </label>
               {annotationInput.error ? (
