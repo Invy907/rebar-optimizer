@@ -60,7 +60,17 @@ button,
   .optimize-print-manufacture {
     order: 1 !important;
     /* セクションの余白を詰めて表を上に寄せる（従来 p-5 = 20px を縮小） */
-    padding: 4px 10px !important;
+    padding: 0 10px 4px !important;
+  }
+
+  /* 顧客情報・到着日ヘッダーを上に詰めて、表を 1 行分でも上へ寄せる。
+     これで 6 行 × 7 製作図 が 1 ページに収まりやすくなる。 */
+  .manufacture-list-header {
+    margin-top: 0 !important;
+    line-height: 1.15 !important;
+  }
+  .manufacture-list-header h2 {
+    margin-bottom: 1px !important;
   }
 
   /* 計算結果は製作図リストの後、次ページから印刷する。
