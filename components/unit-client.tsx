@@ -3524,8 +3524,8 @@ function DetailShapeEditor({
           const pe = mode === 'annotation' ? 'auto' : 'none'
           const isNumeric = parseSpacingMm(an.text) != null
           const annotationFont = isNumeric ? 46 : 64
-          const hitW = Math.max(46, String(an.text).length * (annotationFont * 0.62) + 18)
-          const hitH = 62
+          const hitW = Math.max(34, String(an.text).length * (annotationFont * 0.5) + 8)
+          const hitH = 44
 
           return (
             <g key={an.id}>
