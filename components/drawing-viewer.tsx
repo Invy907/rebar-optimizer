@@ -1838,7 +1838,7 @@ export function DrawingViewer({
     setCurrentPoint(null)
   }
 
-  function getWheelZoomFactor(e: React.WheelEvent): number {
+  function getWheelZoomFactor(e: Pick<WheelEvent, 'deltaY' | 'deltaMode' | 'ctrlKey'>): number {
     // macOS trackpad pinch is sent as ctrl+wheel
     if (e.ctrlKey) {
       return Math.exp(-e.deltaY * 0.004)
@@ -1851,24 +1851,37 @@ export function DrawingViewer({
     return Math.exp(-e.deltaY * 0.002)
   }
 
-  function handleWheel(e: React.WheelEvent) {
-    e.preventDefault()
-    const factor = getWheelZoomFactor(e)
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const rect = canvas.getBoundingClientRect()
-    const mx = e.clientX - rect.left
-    const my = e.clientY - rect.top
+  const handleWheelNative = useCallback(
+    (e: WheelEvent) => {
+      if (!imgLoaded) return
+      e.preventDefault()
+      e.stopPropagation()
 
-    setScale((prev) => {
-      const newScale = Math.max(0.1, Math.min(10, prev * factor))
-      setOffset((o) => ({
-        x: mx - (mx - o.x) * (newScale / prev),
-        y: my - (my - o.y) * (newScale / prev),
-      }))
-      return newScale
-    })
-  }
+      const factor = getWheelZoomFactor(e)
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const rect = canvas.getBoundingClientRect()
+      const mx = e.clientX - rect.left
+      const my = e.clientY - rect.top
+
+      setScale((prev) => {
+        const newScale = Math.max(0.1, Math.min(10, prev * factor))
+        setOffset((o) => ({
+          x: mx - (mx - o.x) * (newScale / prev),
+          y: my - (my - o.y) * (newScale / prev),
+        }))
+        return newScale
+      })
+    },
+    [imgLoaded],
+  )
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    container.addEventListener('wheel', handleWheelNative, { passive: false })
+    return () => container.removeEventListener('wheel', handleWheelNative)
+  }, [handleWheelNative])
 
   function openNewSegmentForm(
     kind: 'rebar' | 'spacing',
@@ -3429,7 +3442,7 @@ export function DrawingViewer({
         </div>
         <div
           ref={containerRef}
-          className="relative flex-1 rounded-lg border border-border bg-gray-50 overflow-hidden"
+          className="relative flex-1 rounded-lg border border-border bg-gray-50 overflow-hidden overscroll-none"
           style={{
             cursor:
               tool === 'draw' || tool === 'spacing'
@@ -3455,8 +3468,7 @@ export function DrawingViewer({
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
-            onWheel={handleWheel}
-            className="block w-full h-full"
+            className="block w-full h-full touch-none"
             style={{ display: imgLoaded ? 'block' : 'none' }}
           />
         </div>
