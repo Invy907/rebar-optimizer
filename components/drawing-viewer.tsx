@@ -1838,9 +1838,22 @@ export function DrawingViewer({
     setCurrentPoint(null)
   }
 
+  function getWheelZoomFactor(e: React.WheelEvent): number {
+    // macOS trackpad pinch is sent as ctrl+wheel
+    if (e.ctrlKey) {
+      return Math.exp(-e.deltaY * 0.004)
+    }
+    // Discrete mouse wheel notch (line mode or large pixel delta)
+    if (e.deltaMode === 1 || Math.abs(e.deltaY) >= 50) {
+      return e.deltaY < 0 ? 1.1 : 0.9
+    }
+    // Trackpad two-finger scroll in pixel mode
+    return Math.exp(-e.deltaY * 0.002)
+  }
+
   function handleWheel(e: React.WheelEvent) {
     e.preventDefault()
-    const factor = e.deltaY < 0 ? 1.1 : 0.9
+    const factor = getWheelZoomFactor(e)
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
