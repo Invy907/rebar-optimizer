@@ -641,15 +641,15 @@ export function SegmentPanel({
         </div>
       )}
 
-      {/* Segment list (rebar only) */}
-      <div className="flex-1 overflow-y-auto">
-        {rebarSegments.length === 0 ? (
-          <div className="p-4 text-center text-sm text-muted">
-            「線を描く」ツールで<br />
-            図面上に線分を追加してください。
-          </div>
-        ) : (
-          <div>
+      {/* Segment list (rebar only) — hidden while editing to avoid a squeezed scroll area */}
+      {!selected && (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {rebarSegments.length === 0 ? (
+            <div className="p-4 text-center text-sm text-muted">
+              「線を描く」ツールで<br />
+              図面上に線分を追加してください。
+            </div>
+          ) : (
             <div className="px-4 py-3 space-y-4">
               {circleGroups.map((group) => (
                 <div key={group.key} className="space-y-1">
@@ -682,9 +682,9 @@ export function SegmentPanel({
                 </div>
               ))}
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {/* Spacing marks list */}
       {spacingSegments.length > 0 && (
