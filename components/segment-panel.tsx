@@ -177,9 +177,6 @@ export function SegmentPanel({
     ? getSegmentBars(selected, units)
     : []
   const decoded = selected ? decodeSegmentMeta(selected.memo) : null
-  const selectedNote = selected
-    ? (decoded?.meta?.note ?? decoded?.legacyNote ?? '')
-    : ''
   const selectedLabelPlacement = selected
     ? getSegmentLabelPlacement(selected.memo)
     : null
@@ -641,27 +638,6 @@ export function SegmentPanel({
               </div>
             </div>
           )}
-          <div>
-            <label className="block text-xs text-muted mb-0.5">メモ</label>
-            <textarea
-              value={selectedNote}
-              onChange={(e) => {
-                const { meta } = decodeSegmentMeta(selected.memo)
-                const bars = getSegmentBars(selected, units)
-                const memo = encodeSegmentMeta({
-                  v: 1,
-                  color: meta?.color ?? selectedColor,
-                  bars,
-                  note: e.target.value || null,
-                  labelPlacement: meta?.labelPlacement ?? null,
-                })
-                onUpdate(selected.id, { memo })
-              }}
-              placeholder="任意"
-              rows={2}
-              className="w-full resize-y rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
-            />
-          </div>
         </div>
       )}
 
