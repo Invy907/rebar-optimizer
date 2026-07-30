@@ -5,6 +5,16 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 
+function translateLoginError(message: string): string {
+  const messages: Record<string, string> = {
+    'Invalid login credentials': 'メールアドレスまたはパスワードが正しくありません。',
+    'Email not confirmed': 'メールアドレスの確認が完了していません。',
+    'Too many requests': 'リクエストが多すぎます。しばらくしてから再度お試しください。',
+  }
+
+  return messages[message] ?? message
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -25,7 +35,7 @@ export default function LoginPage() {
     })
 
     if (error) {
-      setError(error.message)
+      setError(translateLoginError(error.message))
       setLoading(false)
       return
     }
