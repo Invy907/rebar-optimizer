@@ -34,6 +34,79 @@ button,
   cursor: pointer;
 }
 
+/* --- Global loading indicator --- */
+
+@keyframes app-loading-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes app-loading-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes app-loading-bar {
+  0% {
+    transform: translateX(-100%) scaleX(0.35);
+  }
+  50% {
+    transform: translateX(0) scaleX(0.75);
+  }
+  100% {
+    transform: translateX(100%) scaleX(0.35);
+  }
+}
+
+@keyframes app-loading-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+/* Delay the backdrop so quick navigations never flash a dimmed screen. */
+.app-loading-backdrop {
+  animation: app-loading-fade-in 220ms ease-out 140ms both;
+}
+
+.app-loading-card {
+  animation: app-loading-card-in 320ms cubic-bezier(0.16, 1, 0.3, 1) 140ms both;
+}
+
+.app-loading-bar {
+  animation: app-loading-bar 1.15s ease-in-out infinite;
+}
+
+.app-loading-dot {
+  animation: app-loading-dot 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-loading-backdrop,
+  .app-loading-card,
+  .app-loading-bar,
+  .app-loading-dot {
+    animation: none;
+  }
+}
+
 @media print {
   @page {
     /* 上下余白を詰めて 1 ページに製作図 7 個を収める（左右は従来どおり） */
