@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { startGlobalLoading } from '@/lib/global-loading'
 import { useRouter } from 'next/navigation'
 
 export function CreateProjectButton() {
@@ -30,6 +31,7 @@ export function CreateProjectButton() {
       setName('')
       setDescription('')
       setOpen(false)
+      startGlobalLoading()
       router.push(`/projects/${data.id}`)
     }
     setLoading(false)

@@ -1,6 +1,7 @@
 'use client'
 
 import { createClient } from '@/lib/supabase/client'
+import { startGlobalLoading } from '@/lib/global-loading'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -114,6 +115,7 @@ export function DashboardNav({ userEmail }: { userEmail: string }) {
 
   async function handleLogout() {
     await supabase.auth.signOut()
+    startGlobalLoading()
     router.push('/login')
     router.refresh()
   }

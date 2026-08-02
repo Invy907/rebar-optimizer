@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { startGlobalLoading } from '@/lib/global-loading'
 import { useRouter } from 'next/navigation'
 
 const ACCEPTED_TYPES = ['application/pdf', 'image/png', 'image/jpeg']
@@ -84,6 +85,7 @@ export function DrawingUpload({ projectId }: { projectId: string }) {
     }
 
     setUploading(false)
+    startGlobalLoading()
     router.push(`/projects/${projectId}/drawings/${createdDrawing.id}`)
   }
 

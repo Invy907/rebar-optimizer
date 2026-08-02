@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { startGlobalLoading } from '@/lib/global-loading'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 
@@ -40,6 +41,7 @@ export default function LoginPage() {
       return
     }
 
+    startGlobalLoading()
     router.push('/projects')
     router.refresh()
   }

@@ -1,6 +1,7 @@
 'use client'
 
 import { createClient } from '@/lib/supabase/client'
+import { startGlobalLoading } from '@/lib/global-loading'
 import { useRouter } from 'next/navigation'
 
 export function DeleteProjectButton({
@@ -28,6 +29,7 @@ export function DeleteProjectButton({
       .eq('id', projectId)
 
     if (!error) {
+      startGlobalLoading()
       router.push('/projects')
       router.refresh()
     }

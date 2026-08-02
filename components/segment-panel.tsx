@@ -9,6 +9,7 @@ import {
   DEFAULT_PIECE_LENGTH_ADJUSTMENT_MM,
   pieceAdjustmentStorageKey,
 } from '@/lib/optimize-settings'
+import { startGlobalLoading } from '@/lib/global-loading'
 import { UnitShapeThumbnail } from '@/components/unit-client'
 import {
   decodeSegmentMeta,
@@ -152,6 +153,7 @@ export function SegmentPanel({
       adjustment: String(pieceLengthAdjustmentMm),
     })
     if (singleSelectedId) params.set('segmentId', singleSelectedId)
+    startGlobalLoading()
     router.push(`/projects/${projectId}/optimize?${params.toString()}`)
   }
   const resolvedBulkTemplateId =

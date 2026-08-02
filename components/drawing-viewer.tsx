@@ -4,6 +4,7 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { startGlobalLoading } from '@/lib/global-loading'
 import { useRouter } from 'next/navigation'
 import type { DrawingSegment } from '@/lib/types/database'
 import type { Unit } from '@/lib/types/database'
@@ -2001,6 +2002,7 @@ export function DrawingViewer({
           `Variant が見つかりません。\nTemplate: ${resolved.createSuggestion.templateId}\nColor: ${resolved.createSuggestion.color}\nLength: ${resolved.createSuggestion.lengthMm}mm\n\n/units で新規 Variant を作成しますか？`,
         )
         if (goCreate) {
+          startGlobalLoading()
           router.push(
             `/units?templateId=${encodeURIComponent(resolved.createSuggestion.templateId)}&color=${encodeURIComponent(resolved.createSuggestion.color)}&length_mm=${resolved.createSuggestion.lengthMm}`,
           )
