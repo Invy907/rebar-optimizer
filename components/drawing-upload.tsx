@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { startGlobalLoading } from '@/lib/global-loading'
+import { loadPdfDocument } from '@/lib/pdfjs'
 import { useRouter } from 'next/navigation'
 
 const ACCEPTED_TYPES = ['application/pdf', 'image/png', 'image/jpeg']
@@ -94,11 +95,8 @@ export function DrawingUpload({ projectId }: { projectId: string }) {
     projectId: string,
     filePath: string,
   ) {
-    const pdfjs = await import('pdfjs-dist')
-    pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
-
     const arrayBuffer = await file.arrayBuffer()
-    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise
+    const pdf = await loadPdfDocument(arrayBuffer)
     const page = await pdf.getPage(1)
     const viewport = page.getViewport({ scale: 0.5 })
 

@@ -5,6 +5,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { startGlobalLoading } from '@/lib/global-loading'
+import { loadPdfDocument } from '@/lib/pdfjs'
 import { useRouter } from 'next/navigation'
 import type { DrawingSegment } from '@/lib/types/database'
 import type { Unit } from '@/lib/types/database'
@@ -1502,12 +1503,10 @@ export function DrawingViewer({
       let cancelled = false
       async function loadPdf() {
         try {
-          const pdfjs = await import('pdfjs-dist')
-          pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
           const res = await fetch(imageUrl)
           const data = await res.arrayBuffer()
           if (cancelled) return
-          const doc = await pdfjs.getDocument({ data }).promise
+          const doc = await loadPdfDocument(data)
           const page = await doc.getPage(1)
           const viewport = page.getViewport({ scale: 2 })
           const off = document.createElement('canvas')
