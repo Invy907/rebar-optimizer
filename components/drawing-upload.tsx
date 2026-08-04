@@ -29,7 +29,7 @@ export function DrawingUpload({ projectId }: { projectId: string }) {
     }
 
     if ((count ?? 0) > 0) {
-      alert('このプロジェクトにはすでに図面が登録されています。')
+      alert('この現場にはすでに図面が登録されています。')
       return
     }
 

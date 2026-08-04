@@ -17,7 +17,7 @@ export function DeleteProjectButton({
   async function handleDelete() {
     if (
       !confirm(
-        'このプロジェクトを本当に削除しますか？\n関連する図面とデータはすべて削除されます。',
+        'この現場を本当に削除しますか？\n関連する図面とデータはすべて削除されます。',
       )
     ) {
       return

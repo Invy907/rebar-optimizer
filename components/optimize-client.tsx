@@ -307,13 +307,11 @@ function BarSummarySection({
     new Set(rows.flatMap((r) => Object.keys(r.byBarType))),
   ).sort(compareBarTypeDesc)
   const totals: Record<string, number> = {}
-  let grandTotal = 0
   for (const bt of allBarTypes) totals[bt] = 0
   for (const row of rows) {
     for (const bt of allBarTypes) {
       totals[bt] += row.byBarType[bt] ?? 0
     }
-    grandTotal += row.total
   }
 
   return (
@@ -335,7 +333,6 @@ function BarSummarySection({
                   {bt}
                 </th>
               ))}
-              <th className="pb-2 pl-3 font-semibold text-center">合計</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -352,9 +349,6 @@ function BarSummarySection({
                     {row.byBarType[bt] || '-'}
                   </td>
                 ))}
-                <td className="py-2 pl-3 text-center font-mono font-medium">
-                  {row.total}
-                </td>
               </tr>
             ))}
           </tbody>
@@ -366,7 +360,6 @@ function BarSummarySection({
                   {totals[bt]}
                 </td>
               ))}
-              <td className="pt-2 pl-3 text-center font-mono">{grandTotal}</td>
             </tr>
           </tfoot>
         </table>

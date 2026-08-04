@@ -23,7 +23,7 @@ export function DrawingHeader({
           href="/projects"
           className="text-sm text-muted hover:text-foreground transition-colors shrink-0"
         >
-          &larr; プロジェクト一覧に戻る
+          &larr; 現場一覧に戻る
         </Link>
         <span className="text-sm text-muted shrink-0">/</span>
         <div className="min-w-0">
@@ -40,7 +40,7 @@ export function DrawingHeader({
       {editing && (
         <DeleteProjectButton
           projectId={projectId}
-          label="プロジェクト削除"
+          label="現場削除"
         />
       )}
     </div>

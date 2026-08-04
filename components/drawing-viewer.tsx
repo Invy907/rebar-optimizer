@@ -473,6 +473,11 @@ export function DrawingViewer({
   const containerRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const [imgLoaded, setImgLoaded] = useState(false)
+  /** 図面エリアを画面全体に広げる（A3 比率は維持したまま拡大） */
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  /** A3 横（1.4142:1）の枠。枠に収まる最大サイズを実測して canvas に反映する */
+  const a3FrameRef = useRef<HTMLDivElement>(null)
+  const [a3BoxSize, setA3BoxSize] = useState<{ w: number; h: number } | null>(null)
   const [scale, setScale] = useState(1)
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 })
   const [panning, setPanning] = useState(false)
@@ -485,6 +490,10 @@ export function DrawingViewer({
   const [printSummaryPos, setPrintSummaryPos] = useState<Point>({ x: 24, y: 24 })
   const [printSummaryScale, setPrintSummaryScale] = useState(1)
   const [printModalImageUrl, setPrintModalImageUrl] = useState<string | null>(null)
+  /** 印刷用画像の実サイズ（図面部分だけを切り出すため canvas とは異なる） */
+  const [printImageSize, setPrintImageSize] = useState<{ w: number; h: number } | null>(
+    null,
+  )
   const [summaryDragging, setSummaryDragging] = useState(false)
   const summaryDragRef = useRef<Point | null>(null)
   const summaryBoxRef = useRef<HTMLDivElement>(null)
@@ -1281,6 +1290,17 @@ export function DrawingViewer({
         tag === 'SELECT' ||
         t?.isContentEditable
 
+      /**
+       * ショートカットの判定。
+       * 日本語/韓国語入力(IME)がオンだと e.key が「ㅇ」「あ」等になり文字比較が効かないため、
+       * 物理キー(e.code)を優先して判定する。
+       */
+      const isKey = (letter: string) =>
+        e.code === `Key${letter.toUpperCase()}` ||
+        e.key.toLowerCase() === letter.toLowerCase()
+      const isDigit = (digit: string) =>
+        e.code === `Digit${digit}` || e.code === `Numpad${digit}` || e.key === digit
+
       if (e.key === 'Escape') {
         if (lengthPresetDrawModalRef.current) {
           setLengthPresetDrawModal(null)
@@ -1381,44 +1401,27 @@ export function DrawingViewer({
         setActiveByUnitId(u.id)
       }
 
-      if (e.code === 'KeyT' || e.key === 't' || e.key === 'T') {
-        const selectedId =
-          selectedLabelSegmentIdRef.current ??
-          (selectedSegmentIds.length > 0
-            ? selectedSegmentIds[selectedSegmentIds.length - 1]
-            : null)
-        if (!selectedId) return
-        e.preventDefault()
-        e.stopPropagation()
-        if (e.shiftKey) {
-          void resetSegmentLabel(selectedId)
-        } else {
-          void rotateSegmentLabel90(selectedId)
-        }
-        return
-      }
-
-      if (e.key === '1') {
+      if (isDigit('1')) {
         e.preventDefault()
         setUnitByCode('red-1')
         return
       }
-      if (e.key === '2') {
+      if (isDigit('2')) {
         e.preventDefault()
         setUnitByCode('red-2')
         return
       }
-      if (e.key === '4') {
+      if (isDigit('4')) {
         e.preventDefault()
         setUnitByCode('blue-4')
         return
       }
-      if (e.key === 'r' || e.key === 'R') {
+      if (isKey('r')) {
         e.preventDefault()
         setUnitByColor('red')
         return
       }
-      if (e.key === 'b' || e.key === 'B') {
+      if (isKey('b')) {
         e.preventDefault()
         setUnitByColor('blue')
         return
@@ -1449,27 +1452,33 @@ export function DrawingViewer({
         return
       }
 
-      if (e.key === 'd' || e.key === 'D') {
+      if (isKey('f')) {
+        e.preventDefault()
+        pendingFitRef.current = true
+        setIsFullscreen((prev) => !prev)
+        return
+      }
+      if (isKey('d')) {
         e.preventDefault()
         setTool('draw')
         return
       }
-      if (e.key === 'g' || e.key === 'G') {
+      if (isKey('g')) {
         e.preventDefault()
         setTool('spacing')
         return
       }
-      if (e.key === 's' || e.key === 'S') {
+      if (isKey('s')) {
         e.preventDefault()
         setTool('select')
         return
       }
-      if ((e.key === 'z' || e.key === 'Z') && selectedSegmentIds.length > 0) {
+      if (isKey('z') && selectedSegmentIds.length > 0) {
         e.preventDefault()
         void Promise.all(selectedSegmentIds.map((id) => deleteSegment(id)))
         return
       }
-      if (e.key === 'c' || e.key === 'C') {
+      if (isKey('c')) {
         e.preventDefault()
         const rebarSorted = [...segments]
           .filter((s) => !(s.bar_type === 'SPACING' && s.quantity === 0))
@@ -1508,6 +1517,8 @@ export function DrawingViewer({
           if (cancelled) return
           const doc = await loadPdfDocument(data)
           const page = await doc.getPage(1)
+          // 重要: 線分の座標はこのラスタ画像のピクセル座標で保存されるため、
+          // scale は 2 固定から変更しないこと（変えると既存の線分が全てずれる）。
           const viewport = page.getViewport({ scale: 2 })
           const off = document.createElement('canvas')
           off.width = viewport.width
@@ -1531,18 +1542,7 @@ export function DrawingViewer({
               const savedSteps = readSavedRotationSteps()
               const stepsToUse = savedSteps ?? defaultSteps
               setRotationSteps(stepsToUse)
-              setOffset({ x: 0, y: 0 })
-              const { w: rotW, h: rotH } = getRotatedDims(
-                img.width,
-                img.height,
-                stepsToUse,
-              )
-              const fitScale = Math.min(
-                container.clientWidth / rotW,
-                container.clientHeight / rotH,
-                1,
-              )
-              setScale(fitScale)
+              applyFitView(container.clientWidth, container.clientHeight, stepsToUse)
             }
             setImgLoaded(true)
           }
@@ -1568,32 +1568,106 @@ export function DrawingViewer({
         const savedSteps = readSavedRotationSteps()
         const stepsToUse = savedSteps ?? defaultSteps
         setRotationSteps(stepsToUse)
-        setOffset({ x: 0, y: 0 })
-        const { w: rotW, h: rotH } = getRotatedDims(img.width, img.height, stepsToUse)
-        const fitScale = Math.min(
-          container.clientWidth / rotW,
-          container.clientHeight / rotH,
-          1,
-        )
-        setScale(fitScale)
+        applyFitView(container.clientWidth, container.clientHeight, stepsToUse)
       }
       setImgLoaded(true)
     }
     img.src = imageUrl
   }, [imageUrl, fileType])
 
+  /** 図面（ページ全体）を A3 枠に収まる最大サイズで中央に表示する */
+  const applyFitView = useCallback((boxW: number, boxH: number, steps: number) => {
+    const img = imgRef.current
+    if (!img || !(boxW > 0) || !(boxH > 0)) return
+    const { w: rotW, h: rotH } = getRotatedDims(img.width, img.height, steps)
+    const nextScale = computeFitScale(boxW, boxH, rotW, rotH)
+    setScale(nextScale)
+    setOffset({
+      x: (boxW - rotW * nextScale) / 2,
+      y: (boxH - rotH * nextScale) / 2,
+    })
+  }, [])
+
+  // A3 横比率（1.4142:1）で枠に収まる最大サイズを計算する。
+  // cqh 等の CSS だけでは flex 由来の高さを解決できないため JS で実測する。
+  useEffect(() => {
+    const frame = a3FrameRef.current
+    if (!frame) return
+    const A3_RATIO = 1.4142
+
+    function measure() {
+      const el = a3FrameRef.current
+      if (!el) return
+      const fw = el.clientWidth
+      const fh = el.clientHeight
+      if (fw <= 0 || fh <= 0) return
+      const w = Math.floor(Math.min(fw, fh * A3_RATIO))
+      const h = Math.floor(w / A3_RATIO)
+      setA3BoxSize((prev) => (prev && prev.w === w && prev.h === h ? prev : { w, h }))
+    }
+
+    measure()
+    const observer =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => measure()) : null
+    observer?.observe(frame)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [isFullscreen])
+
+  /**
+   * 全画面の切り替え時は「全体」を押した状態（枠に合わせた表示）で始める。
+   * 枠サイズは切り替え直後ではなく ResizeObserver の計測後に確定するため、
+   * a3BoxSize が落ち着くまで（最後の更新から 300ms）フィットを追従させる。
+   */
+  const pendingFitRef = useRef(false)
+  useEffect(() => {
+    if (!pendingFitRef.current) return
+    if (!imgLoaded || !a3BoxSize) return
+    applyFitView(a3BoxSize.w, a3BoxSize.h, rotationSteps)
+    const timer = setTimeout(() => {
+      pendingFitRef.current = false
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [isFullscreen, a3BoxSize, imgLoaded, rotationSteps, applyFitView])
+
+  /** 全画面の切り替え（切り替え後に自動で枠に合わせる） */
+  const toggleFullscreen = useCallback(() => {
+    pendingFitRef.current = true
+    setIsFullscreen((prev) => !prev)
+  }, [])
+
   useEffect(() => {
     function handleResize() {
       const canvas = canvasRef.current
       const container = containerRef.current
       if (canvas && container) {
-        canvas.width = container.clientWidth
-        canvas.height = container.clientHeight
+        const w = container.clientWidth
+        const h = container.clientHeight
+        if (w <= 0 || h <= 0) return
+        if (canvas.width === w && canvas.height === h) return
+        canvas.width = w
+        canvas.height = h
         drawCanvas()
       }
     }
     window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+
+    // 全画面の切り替えや A3 枠のリサイズは window resize が発生しないため、
+    // コンテナ自体のサイズ変化を監視して canvas を追従させる。
+    const container = containerRef.current
+    const observer =
+      typeof ResizeObserver !== 'undefined' && container
+        ? new ResizeObserver(() => handleResize())
+        : null
+    if (observer && container) observer.observe(container)
+
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      observer?.disconnect()
+    }
   }, [drawCanvas])
 
   function clientPointToCanvas(clientX: number, clientY: number): Point {
@@ -3122,11 +3196,32 @@ export function DrawingViewer({
     const img = imgRef.current
     const container = containerRef.current
     if (!img || !container) return
-    const { w: rotW, h: rotH } = getRotatedDims(img.width, img.height, nextSteps)
-    const fitScale = Math.min(container.clientWidth / rotW, container.clientHeight / rotH, 1)
     setRotationSteps(nextSteps)
-    setScale(fitScale)
-    setOffset({ x: 0, y: 0 })
+    applyFitView(container.clientWidth, container.clientHeight, nextSteps)
+  }
+
+  /** 現在の枠に合わせて図面を再フィットする（ズームの「画面に合わせる」） */
+  function fitToBox() {
+    const container = containerRef.current
+    if (!container) return
+    applyFitView(container.clientWidth, container.clientHeight, rotationSteps)
+  }
+
+  function zoomByFactor(factor: number) {
+    const container = containerRef.current
+    setScale((prev) => {
+      const next = Math.max(0.1, Math.min(10, prev * factor))
+      // 枠の中心を基準に拡大縮小する
+      if (container) {
+        const cx = container.clientWidth / 2
+        const cy = container.clientHeight / 2
+        setOffset((o) => ({
+          x: cx - (cx - o.x) * (next / prev),
+          y: cy - (cy - o.y) * (next / prev),
+        }))
+      }
+      return next
+    })
   }
 
   function rotateRight90() {
@@ -3218,7 +3313,35 @@ export function DrawingViewer({
 
   function openPrintPreview() {
     const canvas = canvasRef.current
+    const img = imgRef.current
     if (!canvas || !imgLoaded) return
+
+    // 図面部分だけを切り出す処理（用紙に合わせる用）。いまは既定動作に戻しているため無効。
+    // 有効化すると印刷画像の座標系が変わるため、要約ボックスの位置を再調整する必要がある。
+    const CROP_TO_DRAWING = false
+    if (CROP_TO_DRAWING && img) {
+      const { w: rotW, h: rotH } = getRotatedDims(img.width, img.height, rotationSteps)
+      const x0 = Math.max(0, Math.floor(offset.x))
+      const y0 = Math.max(0, Math.floor(offset.y))
+      const x1 = Math.min(canvas.width, Math.ceil(offset.x + rotW * scale))
+      const y1 = Math.min(canvas.height, Math.ceil(offset.y + rotH * scale))
+      const w = x1 - x0
+      const h = y1 - y0
+      if (w > 8 && h > 8) {
+        const cropped = document.createElement('canvas')
+        cropped.width = w
+        cropped.height = h
+        const cctx = cropped.getContext('2d')
+        if (cctx) {
+          cctx.drawImage(canvas, x0, y0, w, h, 0, 0, w, h)
+          setPrintImageSize({ w, h })
+          setPrintModalImageUrl(cropped.toDataURL('image/png'))
+          return
+        }
+      }
+    }
+
+    setPrintImageSize({ w: canvas.width, h: canvas.height })
     setPrintModalImageUrl(canvas.toDataURL('image/png'))
   }
 
@@ -3228,9 +3351,13 @@ export function DrawingViewer({
     const dataUrl = printModalImageUrl
     if (!canvas || !preview || !dataUrl) return
 
+    // 印刷用画像（図面部分の切り出し）の実サイズを基準にする
+    const printImgW = printImageSize?.w ?? canvas.width
+    const printImgH = printImageSize?.h ?? canvas.height
+
     const rect = preview.getBoundingClientRect()
-    const scaleX = rect.width > 0 ? canvas.width / rect.width : 1
-    const scaleY = rect.height > 0 ? canvas.height / rect.height : 1
+    const scaleX = rect.width > 0 ? printImgW / rect.width : 1
+    const scaleY = rect.height > 0 ? printImgH / rect.height : 1
     const summaryLeft = Math.round(printSummaryPos.x * scaleX)
     const summaryTop = Math.round(printSummaryPos.y * scaleY)
     const summaryScale = Math.max(0.7, Math.min(1.8, printSummaryScale))
@@ -3251,6 +3378,17 @@ export function DrawingViewer({
             .join('')}</div>`
         : ''
 
+    // A3 横（420×297mm）に「用紙に合わせる」相当でぴったり収める。
+    // ブラウザの印刷ダイアログの倍率は JS から変更できないため、
+    // 印刷可能領域と同じサイズの枠に内容を transform で縮小して配置する。
+    const PX_PER_MM = 96 / 25.4
+    const PAGE_MARGIN_MM = 5
+    const printableWpx = (420 - PAGE_MARGIN_MM * 2) * PX_PER_MM
+    const printableHpx = (297 - PAGE_MARGIN_MM * 2) * PX_PER_MM
+    const printScale = Math.min(printableWpx / printImgW, printableHpx / printImgH)
+    const printLeft = Math.max(0, (printableWpx - printImgW * printScale) / 2)
+    const printTop = Math.max(0, (printableHpx - printImgH * printScale) / 2)
+
     const win = window.open('', '_blank')
     if (!win) {
       window.print()
@@ -3263,10 +3401,12 @@ export function DrawingViewer({
   <meta charset="utf-8" />
   <title>drawing-print</title>
   <style>
+    /* 用紙サイズを指定すると印刷ダイアログの用紙・レイアウト・倍率の選択が隠れるため、いまは指定しない。
+       A3 横で固定したい場合: @page { size: A3 landscape; margin: ${PAGE_MARGIN_MM}mm; } */
     @page { margin: 8mm; }
     * { box-sizing: border-box; }
     body { margin: 0; background: #fff; font-family: Arial, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; }
-    .sheet { position: relative; width: ${canvas.width}px; max-width: 100vw; margin: 0 auto; }
+    .sheet { position: relative; width: ${printImgW}px; max-width: 100vw; margin: 0 auto; }
     .sheet img { display: block; width: 100%; height: auto; }
     .summary {
       position: absolute;
@@ -3281,10 +3421,11 @@ export function DrawingViewer({
     }
     .summary-group + .summary-group { margin-top: calc(18px * var(--sum-scale, 1)); }
     .summary h2 {
-      margin: 0 0 calc(8px * var(--sum-scale, 1));
+      /* ユニット名と直下の数値の間隔は最小にする */
+      margin: 0;
       color: #64748b;
       font-size: calc(18px * var(--sum-scale, 1));
-      line-height: 1.2;
+      line-height: 1.05;
     }
     .summary-row {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
@@ -3294,13 +3435,34 @@ export function DrawingViewer({
     @media print {
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .sheet { max-width: 100%; }
+      /* A3 横にぴったり合わせる場合は以下を有効化する（@page の size 指定と併用）
+      html, body { width: ${printableWpx}px; height: ${printableHpx}px; overflow: hidden; }
+      .page {
+        position: relative;
+        width: ${printableWpx}px;
+        height: ${printableHpx}px;
+        overflow: hidden;
+      }
+      .sheet {
+        position: absolute;
+        left: ${printLeft}px;
+        top: ${printTop}px;
+        width: ${printImgW}px;
+        max-width: none;
+        margin: 0;
+        transform: scale(${printScale});
+        transform-origin: top left;
+      }
+      */
     }
   </style>
 </head>
 <body>
-  <div class="sheet">
-    <img src="${dataUrl}" alt="drawing" />
-    ${summaryHtml}
+  <div class="page">
+    <div class="sheet">
+      <img src="${dataUrl}" alt="drawing" />
+      ${summaryHtml}
+    </div>
   </div>
   <script>
     window.addEventListener('load', () => {
@@ -3313,124 +3475,205 @@ export function DrawingViewer({
     win.document.close()
   }
 
+  // 全画面ではツールバーを左の縦レールにするため、幅の要る「アクティブユニット」欄は
+  // 図面を隠さない右パネル側の上部に置く。通常表示では従来どおりツールバー内に並べる。
+  const activeUnitBar = (
+    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-md border border-border bg-white/80 px-2 py-1">
+      <span className="text-[11px] font-medium text-muted whitespace-nowrap">
+        アクティブユニット
+      </span>
+      <select
+        value={activeDrawingUnitId ?? ''}
+        onChange={(ev) => {
+          const v = ev.target.value ? ev.target.value : null
+          selectActiveDrawingUnit(v, { openLengthPresetPicker: true })
+        }}
+        className="max-w-[200px] rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
+        title="先にユニットと表示色を選ぶと入力しやすくなります。選択した線は Z キーで削除できます。Shift キーを押しながら描画すると、線を水平または垂直にまっすぐ描けます。"
+      >
+        <option value="">ユニットを選択してください</option>
+        {activeUnitChoices.map((u) => {
+          const name = (u.name ?? '').trim() || (u.code ?? '').trim() || getUnitCodeBase(u)
+          const colorJa = getSegmentColorLabelJa(normalizeSegmentColor(u.color))
+          const label = `${name}(${colorJa})`
+
+          return (
+            <option key={u.id} value={u.id}>
+              {label.slice(0, 80)}
+            </option>
+          )
+        })}
+      </select>
+      {activeUnit ? (
+        <>
+          <span
+            className="hidden sm:inline text-[11px] text-muted truncate max-w-[180px]"
+            title={activeUnit.name}
+          >
+            {activeUnit.name}
+          </span>
+          {(activeUnit.detail_spec || activeUnit.detail_geometry) && (
+            <button
+              type="button"
+              onClick={() => setPreviewUnit(activeUnit)}
+              className="hidden sm:inline rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700 hover:bg-indigo-100"
+              title="詳細形状のプレビュー"
+            >
+              プレビュー
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setLengthPresetSelectUnit(activeUnit)}
+            className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-100"
+            title="長さプリセットを選択"
+          >
+            {activeLengthPresetGroup ? activeLengthPresetGroup.name : 'プリセットなし'}
+          </button>
+        </>
+      ) : null}
+    </div>
+  )
+
+  /** 全画面時: ツールバーは左端の縦レール（図面と重ならない余白に置く） */
+  const toolButtonClass = (active: boolean, activeBg = 'bg-primary') =>
+    `rounded-md transition-colors ${isFullscreen ? 'w-full px-1 py-1.5 text-[11px]' : 'px-3 py-1.5 text-sm'} ${
+      active ? `${activeBg} text-white` : 'bg-gray-100 text-foreground hover:bg-gray-200'
+    }`
+
   return (
-    <div className="flex flex-1 gap-2 min-h-0">
-      {/* Canvas area */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="mb-2 flex flex-col gap-1.5">
-          <div className="flex flex-wrap items-center gap-2">
+    <div
+      className={
+        isFullscreen
+          ? 'fixed inset-0 z-[55] overflow-hidden bg-white'
+          : 'flex flex-1 gap-2 min-h-0'
+      }
+    >
+      {/* Canvas area（全画面ではツールバー・パネルを図面の上に重ねる） */}
+      <div
+        className={
+          isFullscreen ? 'absolute inset-0 flex flex-col' : 'flex-1 flex flex-col min-w-0'
+        }
+      >
+        <div
+          className={
+            isFullscreen
+              ? 'absolute left-2 top-2 bottom-2 z-20 flex w-20 flex-col gap-1.5 overflow-y-auto rounded-lg border border-border bg-white/90 px-1.5 py-2 shadow-sm backdrop-blur-sm'
+              : 'mb-2 flex flex-col gap-1.5'
+          }
+        >
+          <div
+            className={
+              isFullscreen
+                ? 'flex flex-col items-stretch gap-1.5'
+                : 'flex flex-wrap items-center gap-2'
+            }
+          >
           <button
             onClick={() => setTool('select')}
-            className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
-              tool === 'select'
-                ? 'bg-primary text-white'
-                : 'bg-gray-100 text-foreground hover:bg-gray-200'
-            }`}
+            className={toolButtonClass(tool === 'select')}
           >
             選択
           </button>
           <button
             onClick={() => setTool('draw')}
-            className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
-              tool === 'draw'
-                ? 'bg-primary text-white'
-                : 'bg-gray-100 text-foreground hover:bg-gray-200'
-            }`}
+            className={toolButtonClass(tool === 'draw')}
           >
             線を描く
           </button>
           <button
             onClick={() => setTool('spacing')}
-            className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
-              tool === 'spacing'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-gray-100 text-foreground hover:bg-gray-200'
-            }`}
+            className={toolButtonClass(tool === 'spacing', 'bg-emerald-600')}
           >
             間隔線
           </button>
-          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-md border border-border bg-white/80 px-2 py-1">
-            <span className="text-[11px] font-medium text-muted whitespace-nowrap">
-              アクティブユニット
-            </span>
-            <select
-              value={activeDrawingUnitId ?? ''}
-              onChange={(ev) => {
-                const v = ev.target.value ? ev.target.value : null
-                selectActiveDrawingUnit(v, { openLengthPresetPicker: true })
-              }}
-              className="max-w-[200px] rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary"
-              title="先にユニットと表示色を選ぶと入力しやすくなります。選択した線は Z キーで削除できます。Shift キーを押しながら描画すると、線を水平または垂直にまっすぐ描けます。"
-            >
-              <option value="">ユニットを選択してください</option>
-              {activeUnitChoices.map((u) => {
-                const name = (u.name ?? '').trim() || (u.code ?? '').trim() || getUnitCodeBase(u)
-                const colorJa = getSegmentColorLabelJa(normalizeSegmentColor(u.color))
-                const label = `${name}(${colorJa})`
-
-                return (
-                  <option key={u.id} value={u.id}>
-                    {label.slice(0, 80)}
-                  </option>
-                )
-              })}
-            </select>
-            {activeUnit ? (
-              <>
-                <span
-                  className="hidden sm:inline text-[11px] text-muted truncate max-w-[180px]"
-                  title={activeUnit.name}
-                >
-                  {activeUnit.name}
-                </span>
-                {(activeUnit.detail_spec || activeUnit.detail_geometry) && (
-                  <button
-                    type="button"
-                    onClick={() => setPreviewUnit(activeUnit)}
-                    className="hidden sm:inline rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700 hover:bg-indigo-100"
-                    title="詳細形状のプレビュー"
-                  >
-                    プレビュー
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setLengthPresetSelectUnit(activeUnit)}
-                  className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-100"
-                  title="長さプリセットを選択"
-                >
-                  {activeLengthPresetGroup ? activeLengthPresetGroup.name : 'プリセットなし'}
-                </button>
-              </>
-            ) : null}
-          </div>
-          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 text-[10px]">
-            {/* 最近: UI上削除（表示の単純化） */}
-          </div>
+          {!isFullscreen ? activeUnitBar : null}
+          {isFullscreen ? <div className="my-0.5 border-t border-border" /> : null}
           <button
             type="button"
             onClick={rotateLeft90}
             disabled={!imgLoaded}
-            className={`rounded-md px-2 py-1.5 text-sm transition-colors ${
+            className={`rounded-md transition-colors ${
+              isFullscreen ? 'w-full px-1 py-1.5 text-[11px]' : 'px-2 py-1.5 text-sm'
+            } ${
               !imgLoaded ? 'bg-gray-100 text-muted cursor-not-allowed' : 'bg-gray-100 text-foreground hover:bg-gray-200'
             }`}
             title="左に90度回転"
           >
             ↺ 90°
           </button>
+          <div
+            className={
+              isFullscreen
+                ? 'flex flex-col items-stretch gap-0.5 rounded-md border border-border bg-white px-1 py-1'
+                : 'inline-flex items-center gap-1 rounded-md border border-border bg-white px-1 py-0.5'
+            }
+          >
+            <button
+              type="button"
+              onClick={() => zoomByFactor(1 / 1.2)}
+              disabled={!imgLoaded}
+              className="rounded px-1.5 py-0.5 text-sm text-foreground hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+              title="縮小"
+              aria-label="縮小"
+            >
+              −
+            </button>
+            <span className="min-w-[46px] text-center text-[11px] tabular-nums text-muted">
+              {Math.round(scale * 100)}%
+            </span>
+            <button
+              type="button"
+              onClick={() => zoomByFactor(1.2)}
+              disabled={!imgLoaded}
+              className="rounded px-1.5 py-0.5 text-sm text-foreground hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+              title="拡大"
+              aria-label="拡大"
+            >
+              ＋
+            </button>
+            <button
+              type="button"
+              onClick={fitToBox}
+              disabled={!imgLoaded}
+              className="rounded px-1.5 py-0.5 text-[11px] text-foreground hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+              title="画面に合わせる"
+            >
+              全体
+            </button>
+          </div>
+          {isFullscreen ? <div className="my-0.5 border-t border-border" /> : null}
           <button
             type="button"
             onClick={openPrintPreview}
             disabled={!imgLoaded}
-            className="rounded-md bg-gray-100 px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+            className={`rounded-md bg-gray-100 text-foreground transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50 ${
+              isFullscreen ? 'w-full px-1 py-1.5 text-[11px]' : 'px-2 py-1.5 text-sm'
+            }`}
             title="印刷プレビューを開く"
           >
             印刷
           </button>
-          <span className="text-xs text-muted ml-2">
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className={`rounded-md transition-colors ${
+              isFullscreen
+                ? 'w-full bg-primary px-1 py-1.5 text-[11px] text-white hover:bg-primary-hover'
+                : 'bg-gray-100 px-2 py-1.5 text-sm text-foreground hover:bg-gray-200'
+            }`}
+            title={isFullscreen ? '全画面を終了 (F)' : '図面を全画面で表示 (F)'}
+          >
+            {isFullscreen ? '⤢ 終了' : '⤢ 全画面'}
+          </button>
+          <span
+            className={`text-xs text-muted ml-2 ${
+              isFullscreen && !splitArmedSegmentId ? 'hidden' : ''
+            }`}
+          >
             {splitArmedSegmentId
               ? '分割: 図面上の線をクリックして分割点を選択（Escでキャンセル）'
-              : 'Escキー: 描画中の線を取り消します。もう一度押すと選択モードに戻ります。／Dキー: 描画／Gキー: 間隔線／Sキー: 選択／Tキー: 数値を90°回転／Shift+T: 数値を元に戻す／Zキー: 選択した線を削除します。／Shiftキーを押しながら描画: 線を水平または垂直にまっすぐ描けます。'}
+              : 'Escキー: 描画中の線を取り消します。もう一度押すと選択モードに戻ります。／Dキー: 描画／Gキー: 間隔線／Sキー: 選択／Fキー: 全画面／Zキー: 選択した線を削除します。／Shiftキーを押しながら描画: 線を水平または垂直にまっすぐ描けます。'}
           </span>
           </div>
           {persistedActiveUnits.length === 0 ? (
@@ -3442,9 +3685,20 @@ export function DrawingViewer({
           ) : null}
         </div>
         <div
+          ref={a3FrameRef}
+          className={
+            isFullscreen
+              ? // 左の縦レールと右のパネル領域を避けて中央寄せ（用紙がツールバーに隠れない）
+                'drawing-a3-frame absolute inset-y-0 left-[6rem] right-[19rem] flex items-center justify-center'
+              : 'drawing-a3-frame relative flex flex-1 min-h-0 items-center justify-center'
+          }
+        >
+        <div
           ref={containerRef}
-          className="relative flex-1 rounded-lg border border-border bg-gray-50 overflow-hidden overscroll-none"
+          className="drawing-a3-box relative rounded-lg border border-border bg-gray-50 overflow-hidden overscroll-none"
           style={{
+            width: a3BoxSize ? `${a3BoxSize.w}px` : '100%',
+            height: a3BoxSize ? `${a3BoxSize.h}px` : '100%',
             cursor:
               tool === 'draw' || tool === 'spacing'
                 ? 'crosshair'
@@ -3473,9 +3727,19 @@ export function DrawingViewer({
             style={{ display: imgLoaded ? 'block' : 'none' }}
           />
         </div>
+        </div>
       </div>
 
-      {/* Side panel */}
+      {/* Side panel（全画面では図面の上に重ねて表示） */}
+      <div
+        className={
+          isFullscreen
+            ? 'absolute right-2 top-2 bottom-2 z-20 flex w-72 flex-col gap-1.5 drop-shadow-lg'
+            : 'contents'
+        }
+      >
+      {isFullscreen ? activeUnitBar : null}
+      <div className={isFullscreen ? 'flex min-h-0 flex-1' : 'contents'}>
       <SegmentPanel
         segments={segments}
         selectedSegmentIds={selectedSegmentIds}
@@ -3506,6 +3770,8 @@ export function DrawingViewer({
         activeTemplateId={activeTemplateId ?? ''}
         activeTemplateColor={activeTemplateColor}
       />
+      </div>
+      </div>
 
       {printModalImageUrl && (
         <div className="fixed inset-0 z-[60] flex flex-col bg-black/55 p-4">
@@ -3611,7 +3877,7 @@ export function DrawingViewer({
                         const color = getSegmentStrokeHex(group.color, false)
                         return (
                           <section key={group.key}>
-                            <div className="mb-1 text-sm font-bold leading-tight text-slate-500">
+                            <div className="text-sm font-bold leading-none text-slate-500">
                               {group.name}
                             </div>
                             <div className="space-y-0.5 font-mono text-[13px] font-bold leading-tight">
@@ -4208,6 +4474,18 @@ export function DrawingViewer({
       )}
     </div>
   )
+}
+
+/** A3 枠に収まる最大倍率。PDF は高解像度でラスタライズしているため 100% を超える拡大も許容する。 */
+function computeFitScale(
+  boxW: number,
+  boxH: number,
+  rotW: number,
+  rotH: number,
+  maxScale = 4,
+): number {
+  if (!(rotW > 0) || !(rotH > 0) || !(boxW > 0) || !(boxH > 0)) return 1
+  return Math.max(0.1, Math.min(boxW / rotW, boxH / rotH, maxScale))
 }
 
 function getRotatedDims(w: number, h: number, steps: number): { w: number; h: number } {

@@ -107,8 +107,40 @@ button,
   }
 }
 
+/* 図面キャンバスは A3 横（420×297mm = 1.4142:1）比率。
+   実サイズは JS（ResizeObserver）で枠に収まる最大値を計算して指定する。 */
+.drawing-a3-frame {
+  min-height: 320px;
+  /* 用紙の外側は薄いグレーにして、A3 の範囲（＝印刷範囲）が分かるようにする */
+  background: #eef1f5;
+  border-radius: 0.5rem;
+}
+
+/* A3 用紙らしく見せる（境界と落ち影） */
+.drawing-a3-box {
+  background: #ffffff;
+  box-shadow:
+    0 0 0 1px #cbd5e1,
+    0 6px 18px rgba(15, 23, 42, 0.14);
+}
+
+/* 用紙の右下に A3 表示（図面操作を邪魔しない位置） */
+.drawing-a3-frame::after {
+  content: 'A3 横';
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+  pointer-events: none;
+}
+
 @media print {
   @page {
+    /* 用紙サイズを固定すると印刷ダイアログの用紙・レイアウト選択が隠れるため、いまは指定しない。
+       A4 縦で固定したい場合は次の行を有効化する。 */
+    /* size: A4 portrait; */
     /* 上下余白を詰めて 1 ページに製作図 7 個を収める（左右は従来どおり） */
     margin: 6mm 10mm;
   }
@@ -227,5 +259,6 @@ button,
      これで印刷時に「様」「様邸」がテキストのすぐ後ろに来る（余白が空かない）。 */
   .auto-width-field {
     width: auto !important;
+    min-width: 0 !important;
   }
 }

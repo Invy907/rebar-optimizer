@@ -78,7 +78,7 @@ export default async function ProjectsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-bold">プロジェクト</h1>
+        <h1 className="text-xl font-bold">現場一覧</h1>
         <CreateProjectButton />
       </div>
 

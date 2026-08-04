@@ -441,9 +441,9 @@ export function SegmentPanel({
                   type="button"
                   onClick={() => onRotateLabel(selected.id)}
                   className="rounded border border-border bg-white px-2 py-1 text-[11px] text-foreground hover:bg-slate-50"
-                  title="ショートカット: T"
+                  title="数値ラベルを90°回転"
                 >
-                  90°回転 (T)
+                  90°回転
                 </button>
               )}
               {onResetLabel && (
@@ -452,7 +452,7 @@ export function SegmentPanel({
                   onClick={() => onResetLabel(selected.id)}
                   disabled={!selectedLabelIsCustomized}
                   className="rounded border border-border bg-white px-2 py-1 text-[11px] text-foreground hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                  title="ショートカット: Shift+T"
+                  title="数値ラベルの位置・角度を初期状態に戻す"
                 >
                   位置・角度を戻す
                 </button>

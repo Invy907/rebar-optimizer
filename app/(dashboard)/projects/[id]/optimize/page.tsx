@@ -67,7 +67,7 @@ export default async function OptimizePage({
           }
           className="text-sm text-muted hover:text-foreground transition-colors"
         >
-          &larr; プロジェクトに戻る
+          &larr; 図面に戻る
         </Link>
       </div>
 

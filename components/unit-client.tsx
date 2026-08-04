@@ -2180,6 +2180,14 @@ function DetailShapeEditor({
   const isMvpTemplate = template === 'straight' || template === 'corner_L' || template === 'corner_T'
   const displayGeometry = startMode === 'free' && geometry ? geometry : sketch.geometry
 
+  useEffect(() => {
+    if (mode !== 'shape' || startMode !== 'free') return
+    const segs = displayGeometry.segments
+    if (segs.length === 0) return
+    if (segs.every((s) => s.doubleLine === true)) setDoubleLineEnabled(true)
+    else if (segs.every((s) => s.doubleLine !== true)) setDoubleLineEnabled(false)
+  }, [mode, startMode, displayGeometry.segments])
+
   const byRebarId = useMemo(
     () => Object.fromEntries(rebarLayout.rebars.map((r) => [r.id, r])),
     [rebarLayout.rebars],
@@ -2276,6 +2284,17 @@ function DetailShapeEditor({
     setHistory((prev) => [...prev.slice(-29), displayGeometry])
   }
 
+  function setGlobalDoubleLine(enabled: boolean) {
+    pushHistorySnapshot()
+    setDoubleLineEnabled(enabled)
+    const nextSegments = displayGeometry.segments.map((s) => ({ ...s, doubleLine: enabled }))
+    onGeometryChange({
+      ...displayGeometry,
+      segments: nextSegments,
+      bounds: calcBounds(displayGeometry.points),
+    })
+  }
+
   function screenToSvgFrom(
     clientX: number,
     clientY: number,
@@ -2315,7 +2334,7 @@ function DetailShapeEditor({
   }
 
   function addAnnotationAt(x: number, y: number) {
-    setAnnotationInput({ x, y, value: String(spacingMmDraft || ''), error: null })
+    setAnnotationInput({ x, y, value: '', error: null })
   }
 
   function submitAnnotationInput(overrideValue?: string) {
@@ -2696,13 +2715,13 @@ function DetailShapeEditor({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setDoubleLineEnabled((v) => !v)}
+                  onClick={() => setGlobalDoubleLine(!doubleLineEnabled)}
                   className={`rounded border px-2 py-0.5 text-[10px] font-semibold ${
                     doubleLineEnabled
                       ? 'border-primary bg-primary/10 text-primary'
                       : 'border-border bg-white text-muted hover:bg-slate-100'
                   }`}
-                  title="ONの状態で作成した線は二重線として保存されます"
+                  title="ONにすると既存の線とこれから描く線がすべて二重線になります"
                 >
                   二重線 {doubleLineEnabled ? 'ON' : 'OFF'}
                 </button>
@@ -3512,7 +3531,9 @@ function DetailShapeEditor({
           const pe = mode === 'annotation' ? 'auto' : 'none'
           const isNumeric = parseSpacingMm(an.text) != null
           const annotationFont = isNumeric ? 46 : 64
-          const hitW = Math.max(34, String(an.text).length * (annotationFont * 0.5) + 8)
+          const hitPadX = 4
+          const textW = String(an.text).length * (annotationFont * 0.62)
+          const hitW = Math.max(34, textW + hitPadX * 2)
           const hitH = 44
 
           return (
@@ -3520,7 +3541,7 @@ function DetailShapeEditor({
               {isNumeric ? (
                 <rect
                   data-canvas-hit="item"
-                  x={an.x - hitW / 2}
+                  x={an.x - hitPadX}
                   y={an.y - hitH / 2}
                   width={hitW}
                   height={hitH}
@@ -3617,7 +3638,6 @@ function DetailShapeEditor({
                       const mm = parseSpacingMm(normalized)
                       if (mm != null) setDim('pitch', mm)
                     }}
-                    placeholder="@200"
                     className={`mt-1 w-32 rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary ${
                       hasPitchValue ? 'font-semibold' : 'font-normal'
                     }`}
@@ -3888,29 +3908,23 @@ function DetailShapeEditor({
               </div>
             )}
 
-            {mode === 'shape' && startMode === 'free' && selectedSegmentInfo && !selectedFreePoint && (
+            {mode === 'shape' && startMode === 'free' && (
               <div className="space-y-2 border-b border-border pb-3">
-                <div className="font-medium text-foreground">形状の線分</div>
+                <div className="font-medium text-foreground">形状の鉄筋種類</div>
                 <label className="flex items-center justify-between gap-2 text-muted">
-                  <span>二重線</span>
+                  <span>D13(二重線)</span>
                   <input
                     type="checkbox"
-                    checked={selectedSegmentInfo.seg.doubleLine === true}
-                    onChange={(e) => {
-                      const checked = e.target.checked
-                      pushHistorySnapshot()
-                      const nextSegments = displayGeometry.segments.map((s, idx) =>
-                        idx === selectedSegmentInfo.idx ? { ...s, doubleLine: checked } : s,
-                      )
-                      onGeometryChange({
-                        ...displayGeometry,
-                        segments: nextSegments,
-                        bounds: calcBounds(displayGeometry.points),
-                      })
-                    }}
+                    checked={doubleLineEnabled}
+                    onChange={(e) => setGlobalDoubleLine(e.target.checked)}
                     className="rounded"
                   />
                 </label>
+              </div>
+            )}
+
+            {mode === 'shape' && startMode === 'free' && selectedSegmentInfo && !selectedFreePoint && (
+              <div className="space-y-2 border-b border-border pb-3">
                 <button
                   type="button"
                   onClick={() => {
@@ -3957,7 +3971,8 @@ function DetailShapeEditor({
             {!(
               (mode === 'annotation' && (selectedSpacing || selectedAnnotation)) ||
               (mode === 'rebar' && selectedRebar) ||
-              (mode === 'shape' && startMode === 'free' && (selectedFreePoint || selectedSegmentInfo)) ||
+              (mode === 'shape' && startMode === 'free' && selectedFreePoint) ||
+              (mode === 'shape' && startMode === 'free') ||
               (mode === 'shape' && startMode === 'template') ||
               mode === 'pitch'
             ) && (

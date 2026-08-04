@@ -34,24 +34,41 @@ const CARD_STYLE = [
   'text-align:center',
 ].join(';')
 
-const cardHtml = [
-  '<div style="' + CARD_STYLE + '">',
-  '<h1 style="margin:0 0 16px;font-size:18px;font-weight:700;">',
+function buildCard(title: string, bodyHtml: string, footnote: string) {
+  return [
+    '<div style="' + CARD_STYLE + '">',
+    '<h1 style="margin:0 0 16px;font-size:18px;font-weight:700;">',
+    title,
+    '</h1>',
+    '<p style="margin:0 0 12px;font-size:15px;">',
+    bodyHtml,
+    '</p>',
+    '<p style="margin:0;font-size:14px;color:#64748b;">',
+    footnote,
+    '</p>',
+    '</div>',
+  ].join('')
+}
+
+/** Chrome 以外 */
+const cardHtmlNonChrome = buildCard(
   'ご利用のブラウザはサポート対象外です',
-  '</h1>',
-  '<p style="margin:0 0 12px;font-size:15px;">',
   '本システムは <strong>Google Chrome</strong> でのご利用をお願いしております。',
-  '</p>',
-  '<p style="margin:0;font-size:14px;color:#64748b;">',
   'Google Chrome をインストールするか、Google Chrome から再度アクセスしてください。',
-  '</p>',
-  '</div>',
-].join('')
+)
+
+/** Chrome だがバージョンが古い（color-mix 非対応） */
+const cardHtmlOldChrome = buildCard(
+  'Google Chrome のバージョンが古いです',
+  '本システムを正しく表示するには、<strong>Google Chrome 111 以降</strong> が必要です。',
+  'お使いのパソコンでは対応できない場合があります。別のパソコンから Google Chrome でアクセスしてください。',
+)
 
 /** ES5 のみ。テンプレートリテラル・アロー関数・const は使わない。 */
 export const BROWSER_SUPPORT_NOTICE_SCRIPT = [
   '(function(){',
-  'var CARD=' + JSON.stringify(cardHtml) + ';',
+  'var CARD_NON_CHROME=' + JSON.stringify(cardHtmlNonChrome) + ';',
+  'var CARD_OLD_CHROME=' + JSON.stringify(cardHtmlOldChrome) + ';',
   'var OVERLAY=' + JSON.stringify(OVERLAY_STYLE) + ';',
   'function isGoogleChrome(){',
   'try{',
@@ -70,6 +87,10 @@ export const BROWSER_SUPPORT_NOTICE_SCRIPT = [
   '}catch(e){return false;}',
   '}',
   'function ok(){return isGoogleChrome()&&hasRequiredCss();}',
+  'function pickCard(){',
+  'if(isGoogleChrome()&&!hasRequiredCss())return CARD_OLD_CHROME;',
+  'return CARD_NON_CHROME;',
+  '}',
   'function lockScroll(){',
   'try{',
   'document.documentElement.style.overflow="hidden";',
@@ -84,7 +105,7 @@ export const BROWSER_SUPPORT_NOTICE_SCRIPT = [
   'var el=document.createElement("div");',
   'el.id="browser-support-notice";',
   'el.setAttribute("style",OVERLAY);',
-  'el.innerHTML=CARD;',
+  'el.innerHTML=pickCard();',
   'document.body.appendChild(el);',
   '}',
   'if(document.readyState==="loading"){',

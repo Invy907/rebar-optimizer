@@ -8,6 +8,18 @@ import type { UnitCalculationRow, UnitCountRoundingMode } from '@/lib/unit-calcu
 import type { Unit } from '@/lib/types/database'
 import { UnitShapeThumbnail } from '@/components/unit-client'
 
+/**
+ * ユニットが「二重線 ON」かどうか。
+ * 二重線は形状編集で detail_geometry.segments[].doubleLine に保存される
+ * （ON にすると全セグメントに付与される）。ON = D13 / OFF = D10 として表示する。
+ */
+function getHookBarLabel(unit: Unit | null): string | null {
+  if (!unit) return null
+  const segments = unit.detail_geometry?.segments
+  if (!Array.isArray(segments) || segments.length === 0) return 'D10'
+  return segments.some((s) => s?.doubleLine === true) ? 'D13' : 'D10'
+}
+
 interface UnitResultSummary {
   key: string
   unitId: string | null
@@ -125,13 +137,23 @@ export function OptimizationResultView({
                 <div className="mt-1 flex items-center gap-2">
                   {(() => {
                     const u = s.unitId ? unitById.get(s.unitId) ?? null : null
-                    return u ? (
-                      <UnitShapeThumbnail
-                        unit={u}
-                        shapeOnly
-                        thumbClassName="h-9 w-14 shrink-0 print:h-6 print:w-10"
-                      />
-                    ) : null
+                    const barLabel = getHookBarLabel(u)
+                    return (
+                      <>
+                        {u ? (
+                          <UnitShapeThumbnail
+                            unit={u}
+                            shapeOnly
+                            thumbClassName="h-9 w-14 shrink-0 print:h-6 print:w-10"
+                          />
+                        ) : null}
+                        {barLabel ? (
+                          <span className="shrink-0 font-mono text-sm font-semibold tabular-nums text-foreground print:text-xs">
+                            {barLabel}
+                          </span>
+                        ) : null}
+                      </>
+                    )
                   })()}
                   <div className="flex items-center gap-1.5 font-mono text-base font-semibold tabular-nums">
                   <input

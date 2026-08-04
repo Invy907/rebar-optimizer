@@ -37,7 +37,7 @@ export default async function ProjectDetailPage({
           href="/projects"
           className="text-sm text-muted hover:text-foreground transition-colors"
         >
-          &larr; プロジェクト一覧に戻る
+          &larr; 現場一覧に戻る
         </Link>
       </div>
 
