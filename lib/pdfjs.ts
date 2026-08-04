@@ -1,13 +1,28 @@
+/** public/pdfjs は scripts/copy-pdfjs-assets.mjs が dev / build 前に生成する。 */
+const ASSET_BASE = '/pdfjs'
+
 let pdfjsPromise: Promise<typeof import('pdfjs-dist')> | null = null
 
-function assetBase(version: string) {
-  return `//unpkg.com/pdfjs-dist@${version}`
+/** pdfjs-dist 5.x は Promise.withResolvers を使う（Safari 17.3 以前などは未対応）。 */
+function polyfillPromiseWithResolvers() {
+  if (typeof Promise.withResolvers === 'function') return
+
+  Promise.withResolvers = function withResolvers<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void
+    let reject!: (reason?: unknown) => void
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
 }
 
 async function getPdfjs() {
   if (!pdfjsPromise) {
+    polyfillPromiseWithResolvers()
     pdfjsPromise = import('pdfjs-dist').then((pdfjs) => {
-      pdfjs.GlobalWorkerOptions.workerSrc = `${assetBase(pdfjs.version)}/build/pdf.worker.min.mjs`
+      pdfjs.GlobalWorkerOptions.workerSrc = `${ASSET_BASE}/pdf.worker.min.mjs`
       return pdfjs
     })
   }
@@ -20,12 +35,11 @@ async function getPdfjs() {
  */
 export async function loadPdfDocument(data: ArrayBuffer) {
   const pdfjs = await getPdfjs()
-  const base = assetBase(pdfjs.version)
 
   return pdfjs.getDocument({
     data,
-    cMapUrl: `${base}/cmaps/`,
+    cMapUrl: `${ASSET_BASE}/cmaps/`,
     cMapPacked: true,
-    standardFontDataUrl: `${base}/standard_fonts/`,
+    standardFontDataUrl: `${ASSET_BASE}/standard_fonts/`,
   }).promise
 }
