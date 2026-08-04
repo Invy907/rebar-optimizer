@@ -3385,9 +3385,9 @@ export function DrawingViewer({
     // 印刷可能領域と同じサイズの枠を作り、内容を transform で拡大縮小して配置する。
     const PX_PER_MM = 96 / 25.4
     const PAGE_MARGIN_MM = 5
-    const paper = PRINT_PAPERS[printPaper]
-    const printableWpx = (paper.widthMm - PAGE_MARGIN_MM * 2) * PX_PER_MM
-    const printableHpx = (paper.heightMm - PAGE_MARGIN_MM * 2) * PX_PER_MM
+    const fitToA3Landscape = printPaper === 'a3-landscape'
+    const printableWpx = (A3_LANDSCAPE.widthMm - PAGE_MARGIN_MM * 2) * PX_PER_MM
+    const printableHpx = (A3_LANDSCAPE.heightMm - PAGE_MARGIN_MM * 2) * PX_PER_MM
 
     // キャンバスには図面の外側に空白が含まれるため、キャンバス全体ではなく
     // 「図面が写っている矩形」を基準に合わせる。座標系（=要約ボックスの位置）は
@@ -3416,6 +3416,33 @@ export function DrawingViewer({
     const printLeft = (printableWpx - fitW * printScale) / 2 - fitX * printScale
     const printTop = (printableHpx - fitH * printScale) / 2 - fitY * printScale
 
+    // A3 横固定なら用紙を指定して合わせ込み、そうでなければブラウザ設定に任せる
+    const pageRule = fitToA3Landscape
+      ? `@page { size: ${A3_LANDSCAPE.cssSize}; margin: ${PAGE_MARGIN_MM}mm; }`
+      : `@page { margin: 8mm; }`
+    const printFitCss = fitToA3Landscape
+      ? `
+      /* A3 横の印刷可能領域と同じ枠を作り、その中に図面を合わせて配置する */
+      html, body { width: ${printableWpx}px; height: ${printableHpx}px; overflow: hidden; }
+      .page {
+        position: relative;
+        width: ${printableWpx}px;
+        height: ${printableHpx}px;
+        overflow: hidden;
+      }
+      .sheet {
+        position: absolute;
+        left: ${printLeft}px;
+        top: ${printTop}px;
+        width: ${printImgW}px;
+        max-width: none;
+        margin: 0;
+        transform: scale(${printScale});
+        transform-origin: top left;
+      }`
+      : `
+      .sheet { max-width: 100%; }`
+
     const win = window.open('', '_blank')
     if (!win) {
       window.print()
@@ -3428,8 +3455,8 @@ export function DrawingViewer({
   <meta charset="utf-8" />
   <title>drawing-print</title>
   <style>
-    /* 用紙はアプリ側のモーダルで選ぶ（ブラウザのダイアログでは選択欄が隠れる） */
-    @page { size: ${paper.cssSize}; margin: ${PAGE_MARGIN_MM}mm; }
+    /* 用紙はアプリ側のモーダルで選ぶ */
+    ${pageRule}
     * { box-sizing: border-box; }
     body { margin: 0; background: #fff; font-family: Arial, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; }
     .sheet { position: relative; width: ${printImgW}px; max-width: 100vw; margin: 0 auto; }
@@ -3459,25 +3486,7 @@ export function DrawingViewer({
       white-space: nowrap;
     }
     @media print {
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      /* 選択した用紙の印刷可能領域と同じ枠を作り、その中に図面を合わせて配置する */
-      html, body { width: ${printableWpx}px; height: ${printableHpx}px; overflow: hidden; }
-      .page {
-        position: relative;
-        width: ${printableWpx}px;
-        height: ${printableHpx}px;
-        overflow: hidden;
-      }
-      .sheet {
-        position: absolute;
-        left: ${printLeft}px;
-        top: ${printTop}px;
-        width: ${printImgW}px;
-        max-width: none;
-        margin: 0;
-        transform: scale(${printScale});
-        transform-origin: top left;
-      }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }${printFitCss}
     }
   </style>
 </head>
@@ -3812,16 +3821,18 @@ export function DrawingViewer({
                     value={printPaper}
                     onChange={(e) => setPrintPaper(e.target.value as PrintPaper)}
                     className="rounded border border-border bg-white px-1.5 py-0.5 text-[11px] outline-none focus:border-primary"
-                    title="用紙サイズと向き（ブラウザの印刷ダイアログでは選べないため、ここで選びます）"
+                    title="A3 横で固定するか、ブラウザの印刷設定に従うかを選びます"
                   >
-                    {(Object.keys(PRINT_PAPERS) as PrintPaper[]).map((key) => (
-                      <option key={key} value={key}>
-                        {PRINT_PAPERS[key].label}
+                    {PRINT_PAPER_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
                       </option>
                     ))}
                   </select>
                   <span className="text-[10px] text-muted">
-                    選んだ用紙にぴったり合わせて印刷します
+                    {printPaper === 'a3-landscape'
+                      ? 'A3 横に合わせて印刷します（ダイアログの用紙・倍率は変更できません）'
+                      : '印刷ダイアログで用紙・向き・倍率を選べます'}
                   </span>
                 </div>
                 {drawingPrintSummaryGroups.length > 0 && (
@@ -4518,18 +4529,20 @@ export function DrawingViewer({
   )
 }
 
-/** 図面印刷の用紙。ブラウザの印刷ダイアログでは選べないため、アプリ側の UI で選ぶ。 */
-type PrintPaper = 'a3-landscape' | 'a3-portrait' | 'a4-landscape' | 'a4-portrait'
+/**
+ * 図面印刷の用紙設定。
+ * - 'a3-landscape': A3 横で固定し、用紙にぴったり合わせて印刷する
+ *   （@page で用紙を指定するため、ブラウザ側の用紙・倍率の選択欄は隠れる）
+ * - 'browser': 用紙を指定せず、ブラウザの印刷ダイアログの設定に従う
+ */
+type PrintPaper = 'a3-landscape' | 'browser'
 
-const PRINT_PAPERS: Record<
-  PrintPaper,
-  { label: string; widthMm: number; heightMm: number; cssSize: string }
-> = {
-  'a3-landscape': { label: 'A3 横', widthMm: 420, heightMm: 297, cssSize: 'A3 landscape' },
-  'a3-portrait': { label: 'A3 縦', widthMm: 297, heightMm: 420, cssSize: 'A3 portrait' },
-  'a4-landscape': { label: 'A4 横', widthMm: 297, heightMm: 210, cssSize: 'A4 landscape' },
-  'a4-portrait': { label: 'A4 縦', widthMm: 210, heightMm: 297, cssSize: 'A4 portrait' },
-}
+const PRINT_PAPER_OPTIONS: { value: PrintPaper; label: string }[] = [
+  { value: 'a3-landscape', label: 'A3 横（ぴったり合わせる）' },
+  { value: 'browser', label: 'ブラウザの設定に従う' },
+]
+
+const A3_LANDSCAPE = { widthMm: 420, heightMm: 297, cssSize: 'A3 landscape' }
 
 /** A3 枠に収まる最大倍率。PDF は高解像度でラスタライズしているため 100% を超える拡大も許容する。 */
 function computeFitScale(
