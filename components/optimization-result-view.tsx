@@ -124,14 +124,13 @@ export function OptimizationResultView({
 
   return (
     <div className="space-y-4">
-      <div className="print-hook-summary rounded-lg border border-border bg-white p-4">
-        <h3 className="mb-3 text-sm font-semibold">フック付</h3>
+      <div className="print-hook-summary rounded-lg border-2 border-primary bg-white p-5">
         {unitSummaries.length > 0 ? (
           <div className="flex flex-col gap-3 print:gap-1">
             {unitSummaries.map((s) => (
               <div
                 key={s.key}
-                className="hook-card rounded-md border border-border bg-muted/30 px-3 py-2 text-sm leading-snug"
+                className="hook-card rounded-md border border-border bg-white px-3 py-2 text-sm leading-snug"
               >
                 <div className="font-medium text-foreground">{s.unitName}</div>
                 <div className="mt-1 flex items-center gap-2">

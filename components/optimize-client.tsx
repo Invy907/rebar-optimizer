@@ -54,6 +54,8 @@ export function OptimizeClient({
   const [customerDate, setCustomerDate] = useState('')
   /** 到着日（日付＋時刻, datetime-local の YYYY-MM-DDTHH:mm） */
   const [customerArrival, setCustomerArrival] = useState('')
+  /** 製作担当者 */
+  const [customerProduction, setCustomerProduction] = useState('')
   const [focusSegmentId, setFocusSegmentId] = useState<string | null>(
     initialFocusSegmentId ?? null,
   )
@@ -86,12 +88,14 @@ export function OptimizeClient({
         name?: string
         date?: string
         arrival?: string
+        production?: string
       }
       setCustomerCompany(parsed.company ?? '')
       setCustomerAddress(parsed.address ?? '')
       setCustomerName(parsed.name ?? '')
       setCustomerDate(parsed.date ?? '')
       setCustomerArrival(parsed.arrival ?? '')
+      setCustomerProduction(parsed.production ?? '')
     } catch {
       // Ignore malformed local data and continue with empty fields.
     }
@@ -108,6 +112,7 @@ export function OptimizeClient({
           name: customerName,
           date: customerDate,
           arrival: customerArrival,
+          production: customerProduction,
         }),
       )
     } catch {
@@ -120,6 +125,7 @@ export function OptimizeClient({
     customerDate,
     customerInfoStorageKey,
     customerName,
+    customerProduction,
   ])
 
   useEffect(() => {
@@ -214,6 +220,8 @@ export function OptimizeClient({
             onCustomerDateChange={setCustomerDate}
             customerArrival={customerArrival}
             onCustomerArrivalChange={setCustomerArrival}
+            customerProduction={customerProduction}
+            onCustomerProductionChange={setCustomerProduction}
           />
         </section>
       )}
@@ -222,7 +230,7 @@ export function OptimizeClient({
       {result && !calculating && (
         <section className="optimize-print-results space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold">計算結果</h2>
+            <h2 className="text-base font-semibold">材料取り</h2>
           </div>
           {barSummaryTable && barSummaryTable.length > 0 && (
             <BarSummarySection
@@ -316,7 +324,6 @@ function BarSummarySection({
 
   return (
     <div className="print-bar-summary rounded-lg border-2 border-primary bg-white p-5">
-      <h3 className="text-base font-semibold mb-1">鉄筋種類別の必要本数</h3>
       {adjustmentMm !== 0 && (
         <p className="text-xs text-muted mb-3">
           鉄筋長さ補正値: {adjustmentMm > 0 ? '+' : ''}

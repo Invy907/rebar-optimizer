@@ -164,6 +164,7 @@ button,
 
   .optimize-print-manufacture {
     order: 1 !important;
+    border: 0 !important;
     /* セクションの余白を詰めて表を上に寄せる（従来 p-5 = 20px を縮小） */
     padding: 0 10px 4px !important;
   }

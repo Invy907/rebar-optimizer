@@ -105,6 +105,15 @@ function formatArrivalDayTime(value: string): string {
   return `${p.day}(${p.weekday})${time}`
 }
 
+function splitEveryCharacters(value: string, size: number): string[] {
+  const characters = Array.from(value)
+  const lines: string[] = []
+  for (let index = 0; index < characters.length; index += size) {
+    lines.push(characters.slice(index, index + size).join(''))
+  }
+  return lines
+}
+
 /**
  * 計算用のユニット解決（入力サマリと同じ挙動）。
  * 1. 線分に unit_id が付いていればそれ
@@ -210,6 +219,8 @@ export function ManufactureListView({
   onCustomerDateChange,
   customerArrival,
   onCustomerArrivalChange,
+  customerProduction,
+  onCustomerProductionChange,
 }: {
   segments: DrawingSegment[]
   units: Unit[]
@@ -224,6 +235,8 @@ export function ManufactureListView({
   onCustomerDateChange: (value: string) => void
   customerArrival: string
   onCustomerArrivalChange: (value: string) => void
+  customerProduction: string
+  onCustomerProductionChange: (value: string) => void
 }) {
   const groups = useMemo(
     () => buildManufactureGroups(segments, units, adjustmentMm),
@@ -231,7 +244,7 @@ export function ManufactureListView({
   )
 
   const plainTextInputClass =
-    'min-w-0 border-0 bg-transparent px-0 py-0 text-sm outline-none placeholder:text-muted/50 focus:underline focus:decoration-primary/40 print:border-transparent print:bg-transparent'
+    'min-w-0 border-0 bg-transparent px-0 py-0 text-sm outline-none placeholder:text-muted/50 focus:underline focus:decoration-primary/40 print:border-transparent print:bg-transparent print:text-base'
 
   if (groups.length === 0) {
     return (
@@ -250,8 +263,8 @@ export function ManufactureListView({
     <div className="manufacture-list-root space-y-3 print:space-y-0.5">
       <div className="manufacture-list-header flex items-start justify-between gap-4">
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <h2 className="text-base font-semibold">製作図リスト</h2>
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+          <h2 className="text-base font-semibold print:text-xs">製作図リスト</h2>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm print:text-base">
             <label className="inline-flex max-w-full items-center gap-1">
               <AutoWidthInput
                 value={customerCompany}
@@ -303,19 +316,41 @@ export function ManufactureListView({
             value={customerArrival}
             onChange={onCustomerArrivalChange}
           />
+          <label className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-dashed border-slate-300 bg-slate-50/80 px-2 py-1 text-sm text-muted shadow-sm transition-colors focus-within:border-primary/50 focus-within:bg-primary/5 focus-within:text-foreground">
+            <span>製作:</span>
+            <input
+              type="text"
+              value={customerProduction}
+              onChange={(e) => onCustomerProductionChange(e.target.value)}
+              aria-label="製作"
+              className="w-28 min-w-0 border-0 bg-transparent p-0 font-medium text-foreground outline-none"
+            />
+          </label>
         </div>
-        <div className="hidden shrink-0 flex-col items-end leading-tight print:flex">
-          {formatReiwaDate(customerDate) ? (
-            <div className="text-base font-bold">{formatReiwaDate(customerDate)}</div>
-          ) : null}
-          {formatArrivalDayTime(customerArrival) ? (
-            <>
-              <div className="mt-0.5 text-[10px] leading-none">つみこみ</div>
-              <div className="text-base font-bold">
-                {formatArrivalDayTime(customerArrival)}
-              </div>
-            </>
-          ) : null}
+        <div className="hidden shrink-0 items-start gap-4 leading-tight print:mr-4 print:flex">
+          <div className="flex flex-col items-end">
+            {formatReiwaDate(customerDate) ? (
+              <div className="text-base font-bold">{formatReiwaDate(customerDate)}</div>
+            ) : null}
+            {formatArrivalDayTime(customerArrival) ? (
+              <>
+                <div className="mt-0.5 text-[10px] leading-none">つみこみ</div>
+                <div className="text-base font-bold">
+                  {formatArrivalDayTime(customerArrival)}
+                </div>
+              </>
+            ) : null}
+          </div>
+          <div className="relative left-6 flex flex-col items-start whitespace-nowrap pt-0.5">
+            <span className="text-xs font-medium">製作</span>
+            {customerProduction ? (
+              <span className="flex flex-col text-base font-bold leading-tight">
+                {splitEveryCharacters(customerProduction, 8).map((line, index) => (
+                  <span key={`${index}:${line}`}>{line}</span>
+                ))}
+              </span>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -442,7 +477,7 @@ function AutoWidthInput({
     >
       <span
         aria-hidden
-        className="invisible col-start-1 row-start-1 whitespace-pre px-0 py-0 pr-[2px] text-sm"
+        className="invisible col-start-1 row-start-1 whitespace-pre py-0 pl-0 pr-[0.5em] text-sm font-semibold print:text-base"
       >
         {mirrorText}
       </span>
