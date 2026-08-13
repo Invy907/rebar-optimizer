@@ -63,6 +63,7 @@ export function SegmentPanel({
   onSplit,
   onRotateLabel,
   onResetLabel,
+  onPickLength,
   barTypes,
   projectId,
   canUndo,
@@ -82,6 +83,7 @@ export function SegmentPanel({
   onSplit?: (id: string) => void
   onRotateLabel?: (id: string) => void
   onResetLabel?: (id: string) => void
+  onPickLength?: (id: string) => void
   barTypes: string[]
   projectId: string
   canUndo?: boolean
@@ -465,16 +467,27 @@ export function SegmentPanel({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-xs text-muted mb-0.5">長さ (mm)</label>
-              <input
-                type="number"
-                value={selected.length_mm}
-                onChange={(e) =>
-                  onUpdate(selected.id, {
-                    length_mm: parseInt(e.target.value) || 0,
-                  })
-                }
-                className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
-              />
+              {onPickLength && !selectedIsSpacing ? (
+                <button
+                  type="button"
+                  onClick={() => onPickLength(selected.id)}
+                  className="w-full rounded border border-border bg-white px-2 py-1 text-left font-mono text-sm outline-none hover:border-primary hover:bg-primary/5 focus:border-primary"
+                  title="クリックして長さを選択"
+                >
+                  {selected.length_mm.toLocaleString('ja-JP')}
+                </button>
+              ) : (
+                <input
+                  type="number"
+                  value={selected.length_mm}
+                  onChange={(e) =>
+                    onUpdate(selected.id, {
+                      length_mm: parseInt(e.target.value) || 0,
+                    })
+                  }
+                  className="w-full rounded border border-border px-2 py-1 text-sm outline-none focus:border-primary"
+                />
+              )}
             </div>
             {!selectedIsSpacing && (
               <div>

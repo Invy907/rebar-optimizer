@@ -87,6 +87,8 @@ type QuickMarkPickModalState = {
 }
 
 type LengthPresetDrawModalState = {
+  mode: 'draw' | 'edit'
+  segmentId?: string
   p1: Point
   p2: Point
   sourceUnit: Unit
@@ -1074,7 +1076,7 @@ export function DrawingViewer({
       ctx.strokeStyle = isLastSplit && !isSelected ? baseStroke : baseStroke
       ctx.lineWidth =
         isSelected ? 3 / scale : isLastSplit ? 3 / scale : 2 / scale
-      ctx.lineCap = 'round'
+      ctx.lineCap = isSpacing ? 'round' : 'butt'
       if (isSpacing) {
         ctx.setLineDash([4 / scale, 4 / scale])
       }
@@ -1183,22 +1185,6 @@ export function DrawingViewer({
       ctx.lineWidth = 2 / scale
       ctx.strokeStyle = '#2563eb'
       ctx.stroke()
-    }
-
-    if (lastSplitMarker) {
-      const p = lastSplitMarker.point
-      ctx.beginPath()
-      ctx.arc(p.x, p.y, 7 / scale, 0, Math.PI * 2)
-      ctx.fillStyle = 'rgba(239, 68, 68, 0.18)'
-      ctx.fill()
-      ctx.lineWidth = 3 / scale
-      ctx.strokeStyle = '#ef4444'
-      ctx.stroke()
-
-      ctx.beginPath()
-      ctx.arc(p.x, p.y, 3.5 / scale, 0, Math.PI * 2)
-      ctx.fillStyle = '#ffffff'
-      ctx.fill()
     }
 
     if (drawing && startPoint && currentPoint) {
@@ -2174,6 +2160,7 @@ export function DrawingViewer({
       activeLengthPresetGroup.lengths.some((len) => Number.isFinite(len) && len > 0)
     ) {
       setLengthPresetDrawModal({
+        mode: 'draw',
         p1,
         p2,
         sourceUnit: activeUnit,
@@ -2252,11 +2239,122 @@ export function DrawingViewer({
   }
   submitQuickMarkPickUnitRef.current = submitQuickMarkPickUnit
 
+  function resolveSourceUnitForSegment(segment: DrawingSegment): Unit | null {
+    if (activeUnit) return activeUnit
+    if (segment.unit_id) {
+      const linked = effectiveUnits.find((u) => u.id === segment.unit_id)
+      if (linked) return linked
+    }
+    const color = getSegmentColor(segment, effectiveUnits)
+    return (
+      persistedActiveUnits.find(
+        (u) =>
+          u.is_active !== false &&
+          isPersistedUnitId(u.id) &&
+          normalizeSegmentColor(u.color) === color,
+      ) ?? null
+    )
+  }
+
+  function openLengthPickerForSegment(segmentId: string) {
+    const segment = segments.find((s) => s.id === segmentId)
+    if (!segment) return
+    if (segment.bar_type === 'SPACING' && segment.quantity === 0) return
+
+    if (
+      !activeLengthPresetGroup ||
+      !activeLengthPresetGroup.lengths.some((len) => Number.isFinite(len) && len > 0)
+    ) {
+      alert('長さプリセットを選択してください。（図面上部のプリセットボタンから選択）')
+      return
+    }
+
+    const sourceUnit = resolveSourceUnitForSegment(segment)
+    if (!sourceUnit) {
+      alert('対応するユニットが見つかりません。')
+      return
+    }
+
+    setLengthPresetCustomMm('')
+    setLengthPresetDrawModal({
+      mode: 'edit',
+      segmentId,
+      p1: { x: segment.x1, y: segment.y1 },
+      p2: { x: segment.x2, y: segment.y2 },
+      sourceUnit,
+      preset: activeLengthPresetGroup,
+    })
+  }
+
+  async function applyLengthToExistingSegment(
+    segmentId: string,
+    lengthMm: number,
+    markNumber: number | null,
+    sourceUnit: Unit,
+  ) {
+    const segment = segments.find((s) => s.id === segmentId)
+    if (!segment) return
+
+    const color = normalizeSegmentColor(sourceUnit.color)
+    const sameFamily = (u: Unit) =>
+      getUnitCodeBase(u) === getUnitCodeBase(sourceUnit) &&
+      normalizeSegmentColor(u.color) === color
+
+    const matchedVariant = persistedActiveUnits.find(
+      (u) =>
+        sameFamily(u) &&
+        typeof u.length_mm === 'number' &&
+        Number.isFinite(u.length_mm) &&
+        u.length_mm === lengthMm,
+    )
+
+    if (matchedVariant) {
+      const bars = matchedVariant.bars
+        .filter((b) => BAR_TYPES.includes(b.diameter as (typeof BAR_TYPES)[number]))
+        .map((b) => ({ barType: b.diameter, quantity: b.qtyPerUnit }))
+      const finalBars = bars.length ? bars : [{ barType: 'D10', quantity: 1 }]
+      const legacy = legacyFieldsFromBars(finalBars)
+      const { meta, legacyNote } = decodeSegmentMeta(segment.memo)
+      const resolvedMark = markNumber ?? matchedVariant.mark_number ?? null
+      const memo = encodeSegmentMeta({
+        v: 1,
+        color: normalizeSegmentColor(matchedVariant.color),
+        bars: finalBars,
+        note: meta?.note ?? legacyNote ?? null,
+        labelPlacement: meta?.labelPlacement ?? null,
+      })
+      await updateSegment(segmentId, {
+        length_mm: lengthMm,
+        memo,
+        bar_type: legacy.bar_type,
+        quantity: legacy.quantity,
+        unit_id: matchedVariant.id,
+        unit_code: matchedVariant.code ?? null,
+        unit_name: matchedVariant.name ?? null,
+        mark_number: resolvedMark,
+        label: resolvedMark != null ? String(resolvedMark) : segment.label,
+      })
+      return
+    }
+
+    const resolvedMark = markNumber ?? segment.mark_number ?? null
+    await updateSegment(segmentId, {
+      length_mm: lengthMm,
+      mark_number: resolvedMark,
+      label: markNumber != null ? String(markNumber) : segment.label,
+    })
+  }
+
   async function submitLengthPresetDrawLength(
     ctx: LengthPresetDrawModalState,
     lengthMm: number,
     markNumber: number | null,
   ) {
+    if (ctx.mode === 'edit' && ctx.segmentId) {
+      await applyLengthToExistingSegment(ctx.segmentId, lengthMm, markNumber, ctx.sourceUnit)
+      return
+    }
+
     const source = ctx.sourceUnit
     const color = normalizeSegmentColor(source.color)
     const sameFamily = (u: Unit) =>
@@ -3001,11 +3099,17 @@ export function DrawingViewer({
     const labelA = trimmedLabel ? `${trimmedLabel}-1` : null
     const labelB = trimmedLabel ? `${trimmedLabel}-2` : null
 
-    const lengthA = Math.max(1, Math.round(segment.length_mm * t))
-    const lengthB = Math.max(1, segment.length_mm - lengthA)
     const isSpacingSegment = segment.bar_type === 'SPACING' && segment.quantity === 0
-    if (!isSpacingSegment && (lengthA < MIN_REBAR_LENGTH_MM || lengthB < MIN_REBAR_LENGTH_MM)) {
-      alert(`${MIN_REBAR_LENGTH_MM}mm未満の鉄筋線分ができる位置では分割できません。`)
+
+    // 鉄筋線分の length_mm はプリセット/入力で選んだ呼称。比例配分すると
+    // 3,800 を 2 本に分けたつもりが 1,900 + 1,900 になるため、分割後も同じ呼称を保つ。
+    let lengthA = segment.length_mm
+    let lengthB = segment.length_mm
+    if (isSpacingSegment) {
+      lengthA = Math.max(1, Math.round(segment.length_mm * t))
+      lengthB = Math.max(1, segment.length_mm - lengthA)
+    } else if (segment.length_mm < MIN_REBAR_LENGTH_MM) {
+      alert(`${MIN_REBAR_LENGTH_MM}mm未満の鉄筋線分は分割できません。`)
       return
     }
 
@@ -3794,6 +3898,7 @@ export function DrawingViewer({
           setSplitHoverPoint(null)
           setLastSplitMarker(null)
         }}
+        onPickLength={openLengthPickerForSegment}
         barTypes={BAR_TYPES}
         projectId={projectId}
         canUndo={!!lastAction}
@@ -4054,7 +4159,7 @@ export function DrawingViewer({
           >
             <div className="border-b border-border px-6 py-4">
               <h2 id="length-preset-draw-title" className="text-base font-semibold">
-                長さを選択
+                {lengthPresetDrawModal.mode === 'edit' ? '長さを変更' : '長さを選択'}
               </h2>
               <p className="mt-1 text-xs text-muted">
                 {lengthPresetDrawModal.preset.name} の長さをクリック、または数字キーで選択できます。
