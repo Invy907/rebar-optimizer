@@ -244,7 +244,8 @@ export function ManufactureListView({
   )
 
   const plainTextInputClass =
-    'min-w-0 border-0 bg-transparent px-0 py-0 text-sm outline-none placeholder:text-muted/50 focus:underline focus:decoration-primary/40 print:border-transparent print:bg-transparent print:text-base'
+    'min-w-0 border-0 bg-transparent px-0 py-0 text-lg outline-none placeholder:text-muted/50 focus:underline focus:decoration-primary/40 print:border-transparent print:bg-transparent print:text-lg'
+  const headerLabelClass = 'shrink-0 text-lg font-semibold text-foreground print:text-lg'
 
   if (groups.length === 0) {
     return (
@@ -262,41 +263,40 @@ export function ManufactureListView({
   return (
     <div className="manufacture-list-root space-y-3 print:space-y-0.5">
       <div className="manufacture-list-header flex items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <h2 className="text-base font-semibold print:text-xs">製作図リスト</h2>
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm print:text-base">
-            <label className="inline-flex max-w-full items-center gap-1">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-2 text-lg print:text-lg">
+            <label className="inline-flex max-w-full items-center gap-1.5">
               <AutoWidthInput
                 value={customerCompany}
                 onChange={onCustomerCompanyChange}
                 placeholder="会社名"
                 ariaLabel="会社名"
-                minCh={8}
-                maxCh={48}
+                minCh={10}
+                maxCh={56}
                 className={`${plainTextInputClass} font-semibold text-foreground`}
               />
-              <span className="shrink-0 font-semibold text-foreground">様</span>
+              <span className={headerLabelClass}>様</span>
             </label>
-            <label className="inline-flex max-w-full items-center gap-1">
+            <label className="inline-flex max-w-full items-center gap-1.5">
               <AutoWidthInput
                 value={customerName}
                 onChange={onCustomerNameChange}
                 placeholder="顧客名"
                 ariaLabel="顧客名"
-                minCh={6}
-                maxCh={40}
+                minCh={8}
+                maxCh={48}
                 className={`${plainTextInputClass} font-semibold text-foreground`}
               />
-              <span className="shrink-0 font-semibold text-foreground">様邸</span>
+              <span className={headerLabelClass}>様邸</span>
             </label>
-            <label className="inline-flex max-w-full items-center gap-1">
+            <label className="inline-flex max-w-full items-center gap-1.5">
               <AutoWidthInput
                 value={customerAddress}
                 onChange={onCustomerAddressChange}
                 placeholder="現場住所"
                 ariaLabel="現場住所"
-                minCh={6}
-                maxCh={48}
+                minCh={12}
+                maxCh={64}
                 className={`${plainTextInputClass} text-foreground`}
               />
             </label>
@@ -477,7 +477,7 @@ function AutoWidthInput({
     >
       <span
         aria-hidden
-        className="invisible col-start-1 row-start-1 whitespace-pre py-0 pl-0 pr-[0.5em] text-sm font-semibold print:text-base"
+        className="invisible col-start-1 row-start-1 whitespace-pre py-0 pl-0 pr-[0.5em] text-inherit font-semibold"
       >
         {mirrorText}
       </span>
