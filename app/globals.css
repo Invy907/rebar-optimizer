@@ -141,7 +141,7 @@ button,
     /* 用紙サイズを固定すると印刷ダイアログの用紙・レイアウト選択が隠れるため、いまは指定しない。
        A4 縦で固定したい場合は次の行を有効化する。 */
     /* size: A4 portrait; */
-    /* 上下余白を詰めて 1 ページに製作図 7 個を収める（左右は従来どおり） */
+    /* 上下余白を詰めて 1 ページに製作図 6 個（各 8 行）を収める（左右は従来どおり） */
     margin: 6mm 10mm;
   }
 
@@ -167,10 +167,11 @@ button,
     border: 0 !important;
     /* セクションの余白を詰めて表を上に寄せる（従来 p-5 = 20px を縮小） */
     padding: 0 10px 4px !important;
+    overflow: visible !important;
   }
 
   /* 顧客情報・到着日ヘッダーを上に詰めて、表を 1 行分でも上へ寄せる。
-     これで 6 行 × 7 製作図 が 1 ページに収まりやすくなる。 */
+     これで 8 行 × 6 製作図 が 1 ページに収まりやすくなる。 */
   .manufacture-list-header {
     margin-top: 0 !important;
     line-height: 1.15 !important;

@@ -38,6 +38,7 @@ export function OptimizationResultView({
   unitCalculationRows,
   roundingMode,
   units = [],
+  onShapeLengthSave,
 }: {
   result: OptimizationOutput
   stockLengthMm: number
@@ -48,6 +49,7 @@ export function OptimizationResultView({
   unitCalculationRows: UnitCalculationRow[]
   roundingMode: UnitCountRoundingMode
   units?: Unit[]
+  onShapeLengthSave?: (unitId: string, lengthMm: number) => Promise<void>
 }) {
   void stockLengthMm
   void projectId
@@ -62,6 +64,8 @@ export function OptimizationResultView({
   >({})
   const [editingShapeKey, setEditingShapeKey] = useState<string | null>(null)
   const [shapeLengthDraft, setShapeLengthDraft] = useState('')
+  const [savingShapeKey, setSavingShapeKey] = useState<string | null>(null)
+  const [saveErrorKey, setSaveErrorKey] = useState<string | null>(null)
 
   const unitById = useMemo(
     () => new Map(units.map((u) => [u.id, u])),
@@ -143,6 +147,7 @@ export function OptimizationResultView({
                           <UnitShapeThumbnail
                             unit={u}
                             shapeOnly
+                            singleLineShape
                             thumbClassName="h-9 w-14 shrink-0 print:h-6 print:w-10"
                           />
                         ) : null}
@@ -154,7 +159,7 @@ export function OptimizationResultView({
                       </>
                     )
                   })()}
-                  <div className="flex items-center gap-1.5 font-mono text-base font-semibold tabular-nums">
+                  <div className="flex flex-wrap items-center gap-1.5 font-mono text-base font-semibold tabular-nums">
                   <input
                     type="text"
                     inputMode="numeric"
@@ -167,6 +172,7 @@ export function OptimizationResultView({
                           ).toLocaleString('ja-JP')
                     }
                     onFocus={() => {
+                      setSaveErrorKey(null)
                       setEditingShapeKey(s.key)
                       setShapeLengthDraft(
                         String(shapeLengthOverrides[s.key] ?? s.shapeLengthMm),
@@ -175,20 +181,56 @@ export function OptimizationResultView({
                     onChange={(e) => {
                       setShapeLengthDraft(e.target.value.replace(/[^\d]/g, ''))
                     }}
-                    onBlur={() => {
+                    onBlur={async () => {
                       const n = Number.parseInt(shapeLengthDraft, 10)
-                      if (Number.isFinite(n) && n > 0) {
-                        setShapeLengthOverrides((prev) => ({
-                          ...prev,
-                          [s.key]: n,
-                        }))
-                      }
+                      const previous =
+                        shapeLengthOverrides[s.key] ?? s.shapeLengthMm
                       setEditingShapeKey(null)
+
+                      if (!Number.isFinite(n) || n <= 0) return
+
+                      setShapeLengthOverrides((prev) => ({
+                        ...prev,
+                        [s.key]: n,
+                      }))
+
+                      if (
+                        !s.unitId ||
+                        !onShapeLengthSave ||
+                        n === previous
+                      ) {
+                        return
+                      }
+
+                      setSavingShapeKey(s.key)
+                      setSaveErrorKey(null)
+                      try {
+                        await onShapeLengthSave(s.unitId, n)
+                        setShapeLengthOverrides((prev) => {
+                          const next = { ...prev }
+                          delete next[s.key]
+                          return next
+                        })
+                      } catch {
+                        setSaveErrorKey(s.key)
+                      } finally {
+                        setSavingShapeKey(null)
+                      }
                     }}
                     className="w-[5.5rem] rounded border border-border bg-white px-1.5 py-0.5 text-base font-semibold outline-none focus:border-primary print:border-transparent print:bg-transparent print:p-0"
                   />
                   <span className="text-muted">×</span>
                   <span>{s.totalCount.toLocaleString('ja-JP')}</span>
+                  {savingShapeKey === s.key ? (
+                    <span className="text-xs font-normal text-muted print:hidden">
+                      保存中…
+                    </span>
+                  ) : null}
+                  {saveErrorKey === s.key ? (
+                    <span className="text-xs font-normal text-red-600 print:hidden">
+                      保存に失敗しました
+                    </span>
+                  ) : null}
                   </div>
                 </div>
               </div>

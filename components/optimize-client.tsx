@@ -1,8 +1,9 @@
 // components/optimize-client.tsx
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
+import { createClient } from '@/lib/supabase/client'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput } from '@/lib/optimizer'
 import { OptimizationResultView } from '@/components/optimization-result-view'
@@ -28,7 +29,7 @@ export function OptimizeClient({
   initialFocusSegmentId,
   initialPieceLengthAdjustmentMm = DEFAULT_PIECE_LENGTH_ADJUSTMENT_MM,
   autoRun = false,
-  units = [],
+  units: initialUnits = [],
 }: {
   projectId: string
   segments: DrawingSegment[]
@@ -37,6 +38,7 @@ export function OptimizeClient({
   autoRun?: boolean
   units?: Unit[]
 }) {
+  const [units, setUnits] = useState(initialUnits)
   const segmentLabelById = getSegmentLabelMap(segments)
   const segmentDrawingIdById = Object.fromEntries(
     segments.map((s) => [s.id, s.drawing_id]),
@@ -70,6 +72,40 @@ export function OptimizeClient({
   const unitCalculationRows = useMemo(
     () => buildUnitCalculationRows(segments, units, unitCountRoundingMode),
     [segments, unitCountRoundingMode, units],
+  )
+
+  const handleShapeLengthSave = useCallback(
+    async (unitId: string, lengthMm: number) => {
+      if (
+        unitId.startsWith('mock-') ||
+        unitId.startsWith('local-')
+      ) {
+        return
+      }
+
+      const unit = units.find((u) => u.id === unitId)
+      if (!unit) {
+        throw new Error('ユニットが見つかりません')
+      }
+
+      const rebar_layout = {
+        ...(unit.rebar_layout ?? { rebars: [], spacings: [], annotations: [] }),
+        shape_length_mm: lengthMm,
+      }
+
+      const supabase = createClient()
+      const { error } = await supabase
+        .from('units')
+        .update({ rebar_layout })
+        .eq('id', unitId)
+
+      if (error) throw error
+
+      setUnits((prev) =>
+        prev.map((u) => (u.id === unitId ? { ...u, rebar_layout } : u)),
+      )
+    },
+    [units],
   )
 
   const customerInfoStorageKey = useMemo(
@@ -249,6 +285,7 @@ export function OptimizeClient({
             unitCalculationRows={unitCalculationRows}
             roundingMode={unitCountRoundingMode}
             units={units}
+            onShapeLengthSave={handleShapeLengthSave}
           />
         </section>
       )}

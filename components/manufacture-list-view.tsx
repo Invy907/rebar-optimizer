@@ -20,11 +20,11 @@ import {
 } from '@/lib/segment-meta'
 import { getPitchBaseCount, getUnitPitchMm } from '@/lib/unit-calculations'
 
-/** 1 データ行の高さ(px)。全行を均一にし、約 42 行/ページを目安に収める */
+/** 1 データ行の高さ(px)。全行を均一にし、約 48 行/ページを目安に収める */
 const ROW_HEIGHT = 21
 /** 1 製作図あたりの最小行数。データ行が少ない場合は空行で埋めて形状の高さを確保
- *  （7 製作図 × 6 行 = 42 行 / ページ。行の多い製作図があるページは製作図が 7 未満になる） */
-const MIN_ROWS_PER_BLOCK = 6
+ *  （8 行 × 6 製作図 = 48 行 / ページ。データが 9 行以上の製作図はその分高くなり 6 未満になる） */
+const MIN_ROWS_PER_BLOCK = 8
 /** 列幅(px)。データ列だけ詰める（製作図は広いまま） */
 const COL_SHAPE = 384
 const COL_LEN = 118
@@ -259,7 +259,6 @@ export function ManufactureListView({
     'border border-slate-400 px-1 py-1 text-center text-sm font-semibold bg-slate-50'
   const dataCell =
     'border border-slate-400 px-1 font-mono text-[15px] leading-none tabular-nums'
-
   return (
     <div className="manufacture-list-root space-y-3 print:space-y-0.5">
       <div className="manufacture-list-header flex items-start justify-between gap-4">
@@ -354,7 +353,8 @@ export function ManufactureListView({
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="manufacture-list-table-wrap relative w-fit max-w-full">
+        <div className="overflow-x-auto">
         <table className="border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
           <colgroup>
             <col style={{ width: COL_SHAPE }} />
@@ -444,6 +444,7 @@ export function ManufactureListView({
             )
           })}
         </table>
+        </div>
       </div>
     </div>
   )

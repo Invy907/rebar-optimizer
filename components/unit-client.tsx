@@ -4097,12 +4097,20 @@ export function UnitVariantLengthList({ allUnits, unit }: { allUnits: Unit[]; un
   )
 }
 
+/** detail_geometry の二重線 ON = D13（optimize 結果のラベル表示と同じ判定） */
+export function getDoubleLineBarLabel(unit: Unit): 'D13' | null {
+  const segments = unit.detail_geometry?.segments
+  if (!Array.isArray(segments) || segments.length === 0) return null
+  return segments.some((s) => s?.doubleLine === true) ? 'D13' : null
+}
+
 export function UnitShapeThumbnail({
   unit,
   large = false,
   thumbClassName,
   containerClassName,
   shapeOnly = false,
+  singleLineShape = false,
 }: {
   unit: Unit
   large?: boolean
@@ -4112,6 +4120,8 @@ export function UnitShapeThumbnail({
   containerClassName?: string
   /** 形状の折れ線のみを描く（鉄筋・間隔線・ピッチ・寸法ラベルを省く）。小さいアイコン用 */
   shapeOnly?: boolean
+  /** true のとき detail_geometry の二重線を無視し、単線で描く（optimize 結果表示用） */
+  singleLineShape?: boolean
 }) {
   const template = shapeTypeToDetailTemplate(unit.shape_type)
   const spec = normalizeDetailSpecForTemplate(
@@ -4259,12 +4269,16 @@ export function UnitShapeThumbnail({
     : large
       ? lineStyle.strokeWidth
       : Math.max(1.5, lineStyle.strokeWidth - 0.5)
+  const doubleLineBarLabel = getDoubleLineBarLabel(unit)
 
   return (
     <div className={large ? (containerClassName ?? 'relative h-80 w-full') : 'contents'}>
       {large && pitchMm != null && (
-        <div className="pointer-events-none absolute left-4 top-3 z-10 text-[18px] font-bold leading-none text-slate-800">
-          @{pitchMm}
+        <div className="pointer-events-none absolute left-4 top-3 z-10 flex items-baseline gap-1 font-bold leading-none text-slate-800">
+          {doubleLineBarLabel ? (
+            <span className="text-[13px] font-semibold">{doubleLineBarLabel}</span>
+          ) : null}
+          <span className="text-[18px]">@{pitchMm}</span>
         </div>
       )}
       {large && previewBarDiameters.length > 0 && (
@@ -4319,7 +4333,7 @@ export function UnitShapeThumbnail({
         const ny = dx / len
         return (
           <g key={`${seg.from}-${seg.to}-${i}`}>
-            {seg.doubleLine === true ? (
+            {seg.doubleLine === true && !singleLineShape ? (
               (() => {
                 const baseW = segStrokeW
                 const w = large ? Math.max(1.2, baseW * 0.58) : Math.max(1.6, baseW * 0.72)
