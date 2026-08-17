@@ -22,14 +22,19 @@ import { getPitchBaseCount, getUnitPitchMm } from '@/lib/unit-calculations'
 
 /** 1 データ行の高さ(px)。全行を均一にし、約 48 行/ページを目安に収める */
 const ROW_HEIGHT = 21
-/** 1 製作図あたりの最小行数。データ行が少ない場合は空行で埋めて形状の高さを確保
- *  （8 行 × 6 製作図 = 48 行 / ページ。データが 9 行以上の製作図はその分高くなり 6 未満になる） */
+/** 1 製作図あたりの最小行数（数量の合計行を含む）。データ行が少ない場合は空行で埋めて形状の高さを確保
+ *  （8 行 × 6 製作図 = 48 行 / ページ。データ行 7 + 合計行 1 が上限で、
+ *   それを超える製作図はその分高くなり 1 ページ 6 未満になる） */
 const MIN_ROWS_PER_BLOCK = 8
 /** 列幅(px)。データ列だけ詰める（製作図は広いまま） */
 const COL_SHAPE = 384
 const COL_LEN = 118
 const COL_QTY = 46
 const COL_TATE = 54
+/** 印刷時に「製作」を置く、表の右外に残る余白の幅(px)。
+ *  A4 縦・左右余白 10mm で使える幅は約 698px、表は 602px なので右に約 90px 残る。
+ *  ここを超える長さは折り返して、ページ外にはみ出さないようにする */
+const PRODUCTION_BOX_WIDTH = 88
 import {
   compareSegmentColorOrder,
   getSegmentColorLabelJa,
@@ -59,6 +64,10 @@ type ManufactureGroup = {
   /** ユニットのピッチ(mm)。タテ筋本数の計算に使う */
   pitchMm: number | null
   rows: ManufactureRow[]
+  /** 数量の合計 = Σ 数量 */
+  qtyTotal: number
+  /** タテ筋の合計 = Σ (数量 × タテ筋)。ピッチ未設定の行は 0 として扱う */
+  tateTotal: number
 }
 
 function isPersistedUnitId(id: string): boolean {
@@ -103,15 +112,6 @@ function formatArrivalDayTime(value: string): string {
   const time =
     p.hour != null ? `${p.hour}:${String(p.minute ?? 0).padStart(2, '0')}` : ''
   return `${p.day}(${p.weekday})${time}`
-}
-
-function splitEveryCharacters(value: string, size: number): string[] {
-  const characters = Array.from(value)
-  const lines: string[] = []
-  for (let index = 0; index < characters.length; index += size) {
-    lines.push(characters.slice(index, index + size).join(''))
-  }
-  return lines
 }
 
 /**
@@ -172,6 +172,8 @@ export function buildManufactureGroups(
           colorHex: getSegmentStrokeHex(color, false),
           pitchMm: getUnitPitchMm(unit),
           rows: [],
+          qtyTotal: 0,
+          tateTotal: 0,
         },
         byLength: new Map(),
       }
@@ -200,9 +202,35 @@ export function buildManufactureGroups(
       acc.group.rows = Array.from(acc.byLength.values()).sort(
         (a, b) => b.nominalMm - a.nominalMm,
       )
+      acc.group.qtyTotal = acc.group.rows.reduce((sum, r) => sum + r.qty, 0)
+      // 例: 7×12 + 1×11 + 3×9 = 122（材料取りの「× 122」と同じ値）
+      acc.group.tateTotal = acc.group.rows.reduce(
+        (sum, r) => sum + r.qty * (r.tateCount ?? 0),
+        0,
+      )
       return acc.group
     })
     .sort((a, b) => compareSegmentColorOrder(a.color, b.color))
+}
+
+/**
+ * ユニット別の合計（数量 / タテ筋）。製作図リストの「計」行と材料取りで
+ * 同じ値を使うため、集計は buildManufactureGroups の 1 か所に集約する。
+ * 数量・タテ筋は鉄筋長さ補正値に依存しないため adjustmentMm は 0 で計算する。
+ */
+export function buildManufactureUnitTotals(
+  segments: DrawingSegment[],
+  units: Unit[],
+): Map<string, { qtyTotal: number; tateTotal: number }> {
+  const totals = new Map<string, { qtyTotal: number; tateTotal: number }>()
+  for (const group of buildManufactureGroups(segments, units, 0)) {
+    if (!group.unit) continue
+    totals.set(group.unit.id, {
+      qtyTotal: group.qtyTotal,
+      tateTotal: group.tateTotal,
+    })
+  }
+  return totals
 }
 
 export function ManufactureListView({
@@ -261,7 +289,7 @@ export function ManufactureListView({
     'border border-slate-400 px-1 font-mono text-[15px] leading-none tabular-nums'
   return (
     <div className="manufacture-list-root space-y-3 print:space-y-0.5">
-      <div className="manufacture-list-header flex items-start justify-between gap-4">
+      <div className="manufacture-list-header relative flex items-start justify-between gap-4">
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex flex-wrap items-center gap-x-8 gap-y-2 text-lg print:text-lg">
             <label className="inline-flex max-w-full items-center gap-1.5">
@@ -315,18 +343,20 @@ export function ManufactureListView({
             value={customerArrival}
             onChange={onCustomerArrivalChange}
           />
-          <label className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-dashed border-slate-300 bg-slate-50/80 px-2 py-1 text-sm text-muted shadow-sm transition-colors focus-within:border-primary/50 focus-within:bg-primary/5 focus-within:text-foreground">
-            <span>製作:</span>
-            <input
-              type="text"
-              value={customerProduction}
-              onChange={(e) => onCustomerProductionChange(e.target.value)}
-              aria-label="製作"
-              className="w-28 min-w-0 border-0 bg-transparent p-0 font-medium text-foreground outline-none"
-            />
-          </label>
         </div>
-        <div className="hidden shrink-0 items-start gap-4 leading-tight print:mr-4 print:flex">
+        {/* 手書き伝票と同じく「製作」は日付より下げた位置に置く。
+            絶対配置にして、入力が複数行に増えてもヘッダーが高くならない
+            （行内に置くと表が下へ押され、会社名の行と表の間が空いてしまう） */}
+        <label className="absolute right-0 top-[72px] inline-flex items-start gap-1 rounded-md border border-dashed border-slate-300 bg-slate-50/80 px-2 py-1 text-sm text-muted shadow-sm transition-colors focus-within:border-primary/50 focus-within:bg-primary/5 focus-within:text-foreground print:hidden">
+          <span className="whitespace-nowrap">製作:</span>
+          <AutoGrowTextarea
+            value={customerProduction}
+            onChange={onCustomerProductionChange}
+            ariaLabel="製作"
+            className="w-28 font-medium text-foreground"
+          />
+        </label>
+        <div className="hidden shrink-0 items-start leading-tight print:flex">
           <div className="flex flex-col items-end">
             {formatReiwaDate(customerDate) ? (
               <div className="text-base font-bold">{formatReiwaDate(customerDate)}</div>
@@ -340,17 +370,21 @@ export function ManufactureListView({
               </>
             ) : null}
           </div>
-          <div className="relative left-6 flex flex-col items-start whitespace-nowrap pt-0.5">
-            <span className="text-xs font-medium">製作</span>
-            {customerProduction ? (
-              <span className="flex flex-col text-base font-bold leading-tight">
-                {splitEveryCharacters(customerProduction, 8).map((line, index) => (
-                  <span key={`${index}:${line}`}>{line}</span>
-                ))}
-              </span>
-            ) : null}
-          </div>
         </div>
+        {/* 「製作」は絶対配置にしてヘッダーの高さに影響させない。
+            行内に置くと文字が増えるほどヘッダーが高くなり、表が下へ押されてしまう。
+            幅は表の右外の余白ぶんに固定し、長い文字列は折り返す */}
+        {customerProduction ? (
+          <div
+            className="absolute right-0 top-[72px] hidden flex-col items-center pt-0.5 leading-tight print:flex"
+            style={{ width: PRODUCTION_BOX_WIDTH }}
+          >
+            <span className="text-xs font-medium">製作</span>
+            <span className="w-full whitespace-pre-wrap break-all text-[13px] font-bold leading-tight">
+              {customerProduction}
+            </span>
+          </div>
+        ) : null}
       </div>
 
       <div className="manufacture-list-table-wrap relative w-fit max-w-full">
@@ -371,12 +405,15 @@ export function ManufactureListView({
             </tr>
           </thead>
           {groups.map((g) => {
-            const rowSlots = Math.max(g.rows.length, MIN_ROWS_PER_BLOCK)
+            // 合計行はデータ行の直後に 1 行入れる（残りは空行で埋める）
+            const totalRowIndex = g.rows.length
+            const rowSlots = Math.max(totalRowIndex + 1, MIN_ROWS_PER_BLOCK)
             const shapeCellHeight = rowSlots * ROW_HEIGHT
             return (
               <tbody key={g.key} className="break-inside-avoid">
                 {Array.from({ length: rowSlots }, (_, idx) => {
                   const r = g.rows[idx] ?? null
+                  const isTotalRow = idx === totalRowIndex
                   return (
                     <tr key={`${g.key}:${idx}`}>
                       {idx === 0 && (
@@ -423,19 +460,36 @@ export function ManufactureListView({
                               ({r.actualMm.toLocaleString('ja-JP')})
                             </span>
                           </>
+                        ) : isTotalRow ? (
+                          // 数量列の合計値と近づきすぎないよう右に少し余白を取る
+                          <span className="pr-2 font-semibold text-slate-700">計</span>
                         ) : null}
                       </td>
                       <td
                         className={`${dataCell} text-center`}
                         style={{ height: ROW_HEIGHT }}
                       >
-                        {r ? r.qty : null}
+                        {r ? (
+                          r.qty
+                        ) : isTotalRow ? (
+                          <span className="font-semibold">
+                            {g.qtyTotal.toLocaleString('ja-JP')}
+                          </span>
+                        ) : null}
                       </td>
                       <td
                         className={`${dataCell} text-center`}
                         style={{ height: ROW_HEIGHT }}
                       >
-                        {r ? r.tateCount ?? '-' : null}
+                        {r ? (
+                          r.tateCount ?? '-'
+                        ) : isTotalRow ? (
+                          <span className="font-semibold">
+                            {g.pitchMm != null && g.pitchMm > 0
+                              ? g.tateTotal.toLocaleString('ja-JP')
+                              : '-'}
+                          </span>
+                        ) : null}
                       </td>
                     </tr>
                   )
@@ -447,6 +501,44 @@ export function ManufactureListView({
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * 入力内容に合わせて高さが伸びる複数行入力。
+ * 「製作」は長くなりがちで 1 行入力だと入れた文字が見えなくなるため、
+ * 画面では折り返して全文を表示する（幅は className の w-* で指定）。
+ * 高さは非表示のミラー要素に合わせるので JS でのリサイズは不要。
+ */
+function AutoGrowTextarea({
+  value,
+  onChange,
+  ariaLabel,
+  className,
+}: {
+  value: string
+  onChange: (value: string) => void
+  ariaLabel: string
+  className: string
+}) {
+  const sharedTextClass = 'whitespace-pre-wrap break-all text-sm leading-5'
+  return (
+    <span className={`inline-grid min-w-0 ${className}`}>
+      {/* 末尾の改行や空文字でも 1 行分の高さを確保するため zero-width space を足す */}
+      <span
+        aria-hidden
+        className={`invisible col-start-1 row-start-1 ${sharedTextClass}`}
+      >
+        {`${value}\u200b`}
+      </span>
+      <textarea
+        rows={1}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={ariaLabel}
+        className={`col-start-1 row-start-1 w-full resize-none overflow-hidden border-0 bg-transparent p-0 outline-none ${sharedTextClass}`}
+      />
+    </span>
   )
 }
 

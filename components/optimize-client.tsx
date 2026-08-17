@@ -7,7 +7,10 @@ import { createClient } from '@/lib/supabase/client'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput } from '@/lib/optimizer'
 import { OptimizationResultView } from '@/components/optimization-result-view'
-import { ManufactureListView } from '@/components/manufacture-list-view'
+import {
+  ManufactureListView,
+  buildManufactureUnitTotals,
+} from '@/components/manufacture-list-view'
 import {
   DEFAULT_PIECE_LENGTH_ADJUSTMENT_MM,
   pieceAdjustmentStorageKey,
@@ -72,6 +75,12 @@ export function OptimizeClient({
   const unitCalculationRows = useMemo(
     () => buildUnitCalculationRows(segments, units, unitCountRoundingMode),
     [segments, unitCountRoundingMode, units],
+  )
+
+  /** 製作図リストの「計」行と材料取りで同じ数量・タテ筋合計を使う */
+  const manufactureTotalsByUnitId = useMemo(
+    () => buildManufactureUnitTotals(segments, units),
+    [segments, units],
   )
 
   const handleShapeLengthSave = useCallback(
@@ -286,6 +295,7 @@ export function OptimizeClient({
             roundingMode={unitCountRoundingMode}
             units={units}
             onShapeLengthSave={handleShapeLengthSave}
+            manufactureTotalsByUnitId={manufactureTotalsByUnitId}
           />
         </section>
       )}

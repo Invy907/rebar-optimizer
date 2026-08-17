@@ -39,6 +39,7 @@ export function OptimizationResultView({
   roundingMode,
   units = [],
   onShapeLengthSave,
+  manufactureTotalsByUnitId,
 }: {
   result: OptimizationOutput
   stockLengthMm: number
@@ -50,6 +51,8 @@ export function OptimizationResultView({
   roundingMode: UnitCountRoundingMode
   units?: Unit[]
   onShapeLengthSave?: (unitId: string, lengthMm: number) => Promise<void>
+  /** 製作図リストの「計」行と同じ数量・タテ筋合計。タテ筋合計を本数として表示する */
+  manufactureTotalsByUnitId?: Map<string, { qtyTotal: number; tateTotal: number }>
 }) {
   void stockLengthMm
   void projectId
@@ -89,8 +92,16 @@ export function OptimizationResultView({
         })
       }
     }
-    return Array.from(map.values()).filter((s) => s.totalCount > 0)
-  }, [unitCalculationRows])
+    // 本数は製作図リストの「計」行（Σ 数量 × タテ筋）と同じ値を使い、両者が食い違わないようにする
+    return Array.from(map.values())
+      .map((s) => {
+        const totals = s.unitId
+          ? manufactureTotalsByUnitId?.get(s.unitId)
+          : undefined
+        return totals ? { ...s, totalCount: totals.tateTotal } : s
+      })
+      .filter((s) => s.totalCount > 0)
+  }, [manufactureTotalsByUnitId, unitCalculationRows])
 
   useEffect(() => {
     const validKeys = new Set(unitSummaries.map((s) => s.key))
