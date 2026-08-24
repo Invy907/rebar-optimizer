@@ -406,6 +406,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     'shape',
   )
   const [saveValidationMessage, setSaveValidationMessage] = useState<string | null>(null)
+  const [shapeLengthWarningOpen, setShapeLengthWarningOpen] = useState(false)
   const [savingPreset, setSavingPreset] = useState(false)
   const [presetSavedToast, setPresetSavedToast] = useState(false)
   const [userPresets, setUserPresets] = useState<UserUnitPreset[]>([])
@@ -813,6 +814,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
     setEditingUnit(null)
     setOpenShapeEditorOnModal(false)
     setModalTab('basic')
+    setShapeLengthWarningOpen(false)
   }
 
   useEffect(() => {
@@ -893,7 +895,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
   }
 
   // ─── 保存 ──────────────────────────────────────────────
-  async function handleSave() {
+  async function handleSave({ skipShapeLengthWarning = false } = {}) {
     try {
       if (!draft.name.trim()) {
         setModalTab('basic')
@@ -915,6 +917,14 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
         setModalTab('detail')
         setDetailEditMode('pitch')
         setSaveValidationMessage('ピッチを入力してください。')
+        return
+      }
+
+      const hasExcludedShapeLengthDimension = draft.rebar_layout.annotations.some(
+        (annotation) => annotation.is_excluded === true,
+      )
+      if (!editingUnit && !skipShapeLengthWarning && !hasExcludedShapeLengthDimension) {
+        setShapeLengthWarningOpen(true)
         return
       }
 
@@ -987,7 +997,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
           ),
         )
       } else if (editingUnit) {
-        let { data, error } = await supabase
+        const { data, error } = await supabase
           .from('units')
           .update(payload)
           .eq('id', editingUnit.id)
@@ -1017,7 +1027,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
           alert('ログインが必要です。')
           return
         }
-        let { data, error } = await supabase
+        const { data, error } = await supabase
           .from('units')
           .insert({ ...payload, user_id: user.id })
           .select()
@@ -1270,6 +1280,55 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                 className="rounded-md bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:bg-primary-hover"
               >
                 OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {shapeLengthWarningOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="shape-length-warning-title"
+          aria-describedby="shape-length-warning-description"
+        >
+          <div className="w-full max-w-md rounded-xl border border-amber-200 bg-white shadow-xl">
+            <div className="border-b border-amber-100 bg-amber-50 px-5 py-4">
+              <h3
+                id="shape-length-warning-title"
+                className="text-sm font-semibold text-amber-950"
+              >
+                確認
+              </h3>
+            </div>
+            <div className="px-5 py-4">
+              <p id="shape-length-warning-description" className="text-sm leading-6 text-slate-700">
+                「形状長さから除外する」にチェックが入っていません。寸法が重複している場合、材料取りの計算長さが正しく算出されない可能性があります。このまま進んでもよろしいですか？
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShapeLengthWarningOpen(false)
+                  setModalTab('detail')
+                  setDetailEditMode('annotation')
+                }}
+                className="rounded-md border border-border px-4 py-1.5 text-xs font-semibold text-muted hover:bg-gray-50"
+              >
+                戻る
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShapeLengthWarningOpen(false)
+                  void handleSave({ skipShapeLengthWarning: true })
+                }}
+                className="rounded-md bg-amber-500 px-4 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"
+              >
+                このまま進む
               </button>
             </div>
           </div>
@@ -1578,7 +1637,7 @@ export function UnitClient({ initialUnits }: { initialUnits: Unit[] }) {
                 </button>
                 <button
                   type="button"
-                  onClick={handleSave}
+                  onClick={() => void handleSave()}
                   disabled={saving}
                   className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50 transition-colors"
                 >
