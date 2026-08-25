@@ -4163,6 +4163,15 @@ export function getDoubleLineBarLabel(unit: Unit): 'D13' | null {
   return segments.some((s) => s?.doubleLine === true) ? 'D13' : null
 }
 
+/** 大判プレビュー内に置く鉄筋径凡例の中心位置（プレビュー幅・高さに対する比率） */
+export type UnitShapeLegendPosition = {
+  x: number
+  y: number
+}
+
+/** 鉄筋径ごとに独立した凡例位置 */
+export type UnitShapeLegendPositions = Record<string, UnitShapeLegendPosition>
+
 export function UnitShapeThumbnail({
   unit,
   large = false,
@@ -4170,6 +4179,8 @@ export function UnitShapeThumbnail({
   containerClassName,
   shapeOnly = false,
   singleLineShape = false,
+  legendPositions,
+  onLegendPositionChange,
 }: {
   unit: Unit
   large?: boolean
@@ -4181,7 +4192,22 @@ export function UnitShapeThumbnail({
   shapeOnly?: boolean
   /** true のとき detail_geometry の二重線を無視し、単線で描く（optimize 結果表示用） */
   singleLineShape?: boolean
+  /** 大判プレビュー内の鉄筋径ごとの凡例中心位置。未指定の凡例は右上に置く */
+  legendPositions?: UnitShapeLegendPositions
+  /** 指定時は各鉄筋径の凡例を個別にドラッグ・矢印キーで移動できる */
+  onLegendPositionChange?: (
+    diameter: string,
+    position: UnitShapeLegendPosition,
+  ) => void
 }) {
+  const shapeContainerRef = useRef<HTMLDivElement | null>(null)
+  const diameterLegendRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const diameterLegendDragRef = useRef<{
+    diameter: string
+    pointerId: number
+    offsetX: number
+    offsetY: number
+  } | null>(null)
   const template = shapeTypeToDetailTemplate(unit.shape_type)
   const spec = normalizeDetailSpecForTemplate(
     template,
@@ -4330,8 +4356,77 @@ export function UnitShapeThumbnail({
       : Math.max(1.5, lineStyle.strokeWidth - 0.5)
   const doubleLineBarLabel = getDoubleLineBarLabel(unit)
 
+  const getCurrentLegendPosition = (diameter: string): UnitShapeLegendPosition | null => {
+    const container = shapeContainerRef.current
+    const legend = diameterLegendRefs.current[diameter]
+    if (!container || !legend) return null
+    const containerRect = container.getBoundingClientRect()
+    const legendRect = legend.getBoundingClientRect()
+    if (containerRect.width <= 0 || containerRect.height <= 0) return null
+    return {
+      x: (legendRect.left - containerRect.left + legendRect.width / 2) / containerRect.width,
+      y: (legendRect.top - containerRect.top + legendRect.height / 2) / containerRect.height,
+    }
+  }
+
+  const moveLegendFromPointer = (clientX: number, clientY: number) => {
+    const drag = diameterLegendDragRef.current
+    const container = shapeContainerRef.current
+    const legend = drag ? diameterLegendRefs.current[drag.diameter] : null
+    if (!drag || !container || !legend || !onLegendPositionChange) return
+
+    const containerRect = container.getBoundingClientRect()
+    const legendRect = legend.getBoundingClientRect()
+    if (containerRect.width <= 0 || containerRect.height <= 0) return
+
+    const halfWidth = Math.min(legendRect.width / 2, containerRect.width / 2)
+    const halfHeight = Math.min(legendRect.height / 2, containerRect.height / 2)
+    const desiredCenterX = clientX - containerRect.left - drag.offsetX + legendRect.width / 2
+    const desiredCenterY = clientY - containerRect.top - drag.offsetY + legendRect.height / 2
+    const centerX = Math.min(
+      containerRect.width - halfWidth,
+      Math.max(halfWidth, desiredCenterX),
+    )
+    const centerY = Math.min(
+      containerRect.height - halfHeight,
+      Math.max(halfHeight, desiredCenterY),
+    )
+
+    onLegendPositionChange(drag.diameter, {
+      x: centerX / containerRect.width,
+      y: centerY / containerRect.height,
+    })
+  }
+
+  const nudgeLegend = (diameter: string, dx: number, dy: number) => {
+    if (!onLegendPositionChange) return
+    const current = legendPositions?.[diameter] ?? getCurrentLegendPosition(diameter)
+    if (!current) return
+
+    const container = shapeContainerRef.current
+    const legend = diameterLegendRefs.current[diameter]
+    const containerRect = container?.getBoundingClientRect()
+    const legendRect = legend?.getBoundingClientRect()
+    const minX =
+      containerRect && legendRect && containerRect.width > 0
+        ? Math.min(0.5, legendRect.width / 2 / containerRect.width)
+        : 0
+    const minY =
+      containerRect && legendRect && containerRect.height > 0
+        ? Math.min(0.5, legendRect.height / 2 / containerRect.height)
+        : 0
+
+    onLegendPositionChange(diameter, {
+      x: Math.min(1 - minX, Math.max(minX, current.x + dx)),
+      y: Math.min(1 - minY, Math.max(minY, current.y + dy)),
+    })
+  }
+
   return (
-    <div className={large ? (containerClassName ?? 'relative h-80 w-full') : 'contents'}>
+    <div
+      ref={large ? shapeContainerRef : undefined}
+      className={large ? (containerClassName ?? 'relative h-80 w-full') : 'contents'}
+    >
       {large && pitchMm != null && (
         <div className="pointer-events-none absolute left-4 top-3 z-10 flex items-baseline gap-1 font-bold leading-none text-slate-800">
           {doubleLineBarLabel ? (
@@ -4340,24 +4435,90 @@ export function UnitShapeThumbnail({
           <span className="text-[18px]">@{pitchMm}</span>
         </div>
       )}
-      {large && previewBarDiameters.length > 0 && (
-        <div className="pointer-events-none absolute right-4 top-3 z-10 flex flex-col items-end gap-1.5">
-          {previewBarDiameters.map((diameter) => {
-            const token = rebarDiameterVisualToken(diameter)
-            const radius = 8 * token.radiusScale
-            return (
-              <div key={diameter} className="flex items-center gap-1.5 rounded border border-slate-200 bg-white/85 px-1.5 py-1 shadow-sm">
-                <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
-                  <RebarSymbol x={12} y={12} token={token} radius={radius} strokeWidth={1.8} />
-                </svg>
-                <span className="min-w-7 text-left text-[10px] font-semibold leading-none text-slate-700">
-                  {diameter}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      )}
+      {large &&
+        previewBarDiameters.map((diameter, index) => {
+          const legendPosition = legendPositions?.[diameter]
+          const token = rebarDiameterVisualToken(diameter)
+          const radius = 8 * token.radiusScale
+          return (
+            <div
+              key={diameter}
+              ref={(element) => {
+                diameterLegendRefs.current[diameter] = element
+              }}
+              className={`absolute z-10 flex items-center gap-1.5 rounded border border-slate-200 bg-white/85 px-1.5 py-1 shadow-sm focus:z-20 active:z-20 ${
+                legendPosition ? '' : 'right-4'
+              } ${
+                onLegendPositionChange
+                  ? 'touch-none cursor-grab select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 active:cursor-grabbing print:cursor-default'
+                  : 'pointer-events-none'
+              }`}
+              style={
+                legendPosition
+                  ? {
+                      left: `${Math.min(1, Math.max(0, legendPosition.x)) * 100}%`,
+                      top: `${Math.min(1, Math.max(0, legendPosition.y)) * 100}%`,
+                      transform: 'translate(-50%, -50%)',
+                    }
+                  : { top: 12 + index * 36 }
+              }
+              role={onLegendPositionChange ? 'group' : undefined}
+              aria-label={
+                onLegendPositionChange
+                  ? `${diameter} 鉄筋径の凡例。ドラッグで移動`
+                  : undefined
+              }
+              title={onLegendPositionChange ? `${diameter} をドラッグして移動できます` : undefined}
+              tabIndex={onLegendPositionChange ? 0 : undefined}
+              onPointerDown={(event) => {
+                if (!onLegendPositionChange || event.button !== 0) return
+                const legendRect = event.currentTarget.getBoundingClientRect()
+                diameterLegendDragRef.current = {
+                  diameter,
+                  pointerId: event.pointerId,
+                  offsetX: event.clientX - legendRect.left,
+                  offsetY: event.clientY - legendRect.top,
+                }
+                event.currentTarget.setPointerCapture(event.pointerId)
+                event.preventDefault()
+              }}
+              onPointerMove={(event) => {
+                if (diameterLegendDragRef.current?.pointerId !== event.pointerId) return
+                moveLegendFromPointer(event.clientX, event.clientY)
+              }}
+              onPointerUp={(event) => {
+                if (diameterLegendDragRef.current?.pointerId !== event.pointerId) return
+                diameterLegendDragRef.current = null
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId)
+                }
+              }}
+              onPointerCancel={(event) => {
+                if (diameterLegendDragRef.current?.pointerId !== event.pointerId) return
+                diameterLegendDragRef.current = null
+              }}
+              onLostPointerCapture={() => {
+                diameterLegendDragRef.current = null
+              }}
+              onKeyDown={(event) => {
+                const amount = event.shiftKey ? 0.05 : 0.01
+                if (event.key === 'ArrowLeft') nudgeLegend(diameter, -amount, 0)
+                else if (event.key === 'ArrowRight') nudgeLegend(diameter, amount, 0)
+                else if (event.key === 'ArrowUp') nudgeLegend(diameter, 0, -amount)
+                else if (event.key === 'ArrowDown') nudgeLegend(diameter, 0, amount)
+                else return
+                event.preventDefault()
+              }}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                <RebarSymbol x={12} y={12} token={token} radius={radius} strokeWidth={1.8} />
+              </svg>
+              <span className="min-w-7 text-left text-[10px] font-semibold leading-none text-slate-700">
+                {diameter}
+              </span>
+            </div>
+          )
+        })}
       <svg
         viewBox={`${minX - pad} ${minY - pad} ${w} ${h}`}
         preserveAspectRatio="xMidYMid meet"

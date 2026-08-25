@@ -12,7 +12,11 @@ import { useMemo } from 'react'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
 import { CustomerDatePicker } from '@/components/customer-date-picker'
 import { CustomerDateTimePicker } from '@/components/customer-datetime-picker'
-import { UnitShapeThumbnail } from '@/components/unit-client'
+import {
+  UnitShapeThumbnail,
+  type UnitShapeLegendPosition,
+  type UnitShapeLegendPositions,
+} from '@/components/unit-client'
 import {
   getSegmentColor,
   getSegmentEffectiveLengthMm,
@@ -69,6 +73,8 @@ type ManufactureGroup = {
   /** タテ筋の合計 = Σ (数量 × タテ筋)。ピッチ未設定の行は 0 として扱う */
   tateTotal: number
 }
+
+export type ManufactureLegendPositions = Record<string, UnitShapeLegendPositions>
 
 function isPersistedUnitId(id: string): boolean {
   return !id.startsWith('mock-') && !id.startsWith('local-')
@@ -249,6 +255,8 @@ export function ManufactureListView({
   onCustomerArrivalChange,
   customerProduction,
   onCustomerProductionChange,
+  legendPositions = {},
+  onLegendPositionChange,
 }: {
   segments: DrawingSegment[]
   units: Unit[]
@@ -265,6 +273,12 @@ export function ManufactureListView({
   onCustomerArrivalChange: (value: string) => void
   customerProduction: string
   onCustomerProductionChange: (value: string) => void
+  legendPositions?: ManufactureLegendPositions
+  onLegendPositionChange?: (
+    groupKey: string,
+    diameter: string,
+    position: UnitShapeLegendPosition,
+  ) => void
 }) {
   const groups = useMemo(
     () => buildManufactureGroups(segments, units, adjustmentMm),
@@ -431,6 +445,13 @@ export function ManufactureListView({
                                   unit={g.unit}
                                   large
                                   containerClassName="relative h-full w-full"
+                                  legendPositions={legendPositions[g.key]}
+                                  onLegendPositionChange={
+                                    onLegendPositionChange
+                                      ? (diameter, position) =>
+                                          onLegendPositionChange(g.key, diameter, position)
+                                      : undefined
+                                  }
                                 />
                               </div>
                             ) : (

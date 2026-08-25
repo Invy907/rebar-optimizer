@@ -10,7 +10,9 @@ import { OptimizationResultView } from '@/components/optimization-result-view'
 import {
   ManufactureListView,
   buildManufactureUnitTotals,
+  type ManufactureLegendPositions,
 } from '@/components/manufacture-list-view'
+import type { UnitShapeLegendPosition } from '@/components/unit-client'
 import {
   DEFAULT_PIECE_LENGTH_ADJUSTMENT_MM,
   pieceAdjustmentStorageKey,
@@ -25,6 +27,64 @@ import {
 } from '@/lib/unit-calculations'
 
 const DEFAULT_STOCK_LENGTH_MM = 6000
+
+type ManufactureLegendPositionState = {
+  storageKey: string | null
+  positions: ManufactureLegendPositions
+}
+
+function parseManufactureLegendPositions(raw: string | null): ManufactureLegendPositions {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const positions: ManufactureLegendPositions = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+      const parsePosition = (candidate: unknown): UnitShapeLegendPosition | null => {
+        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+        const x = (candidate as { x?: unknown }).x
+        const y = (candidate as { y?: unknown }).y
+        return typeof x === 'number' &&
+          Number.isFinite(x) &&
+          x >= 0 &&
+          x <= 1 &&
+          typeof y === 'number' &&
+          Number.isFinite(y) &&
+          y >= 0 &&
+          y <= 1
+          ? { x, y }
+          : null
+      }
+
+      // 旧形式（D13/D10 のまとまり全体の中心）も、個別位置へ展開して引き継ぐ。
+      const legacyGroupPosition = parsePosition(value)
+      if (legacyGroupPosition) {
+        positions[key] = {
+          D13: {
+            x: legacyGroupPosition.x,
+            y: Math.max(0, legacyGroupPosition.y - 0.1),
+          },
+          D10: {
+            x: legacyGroupPosition.x,
+            y: Math.min(1, legacyGroupPosition.y + 0.1),
+          },
+        }
+        continue
+      }
+
+      const diameterPositions: Record<string, UnitShapeLegendPosition> = {}
+      for (const [diameter, candidate] of Object.entries(value)) {
+        const position = parsePosition(candidate)
+        if (position) diameterPositions[diameter] = position
+      }
+      if (Object.keys(diameterPositions).length > 0) positions[key] = diameterPositions
+    }
+    return positions
+  } catch {
+    return {}
+  }
+}
 
 export function OptimizeClient({
   projectId,
@@ -66,6 +126,60 @@ export function OptimizeClient({
   )
   const [calculating, setCalculating] = useState(false)
   const autoRunStartedRef = useRef(false)
+
+  const manufactureLegendStorageKey = useMemo(
+    () => `optimize-manufacture-legend-positions:${projectId}`,
+    [projectId],
+  )
+  const [manufactureLegendPositionState, setManufactureLegendPositionState] =
+    useState<ManufactureLegendPositionState>({ storageKey: null, positions: {} })
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    setManufactureLegendPositionState({
+      storageKey: manufactureLegendStorageKey,
+      positions: parseManufactureLegendPositions(
+        window.localStorage.getItem(manufactureLegendStorageKey),
+      ),
+    })
+  }, [manufactureLegendStorageKey])
+
+  useEffect(() => {
+    if (
+      typeof window === 'undefined' ||
+      manufactureLegendPositionState.storageKey !== manufactureLegendStorageKey
+    ) {
+      return
+    }
+    try {
+      window.localStorage.setItem(
+        manufactureLegendStorageKey,
+        JSON.stringify(manufactureLegendPositionState.positions),
+      )
+    } catch {
+      // Ignore storage write errors so dragging remains usable.
+    }
+  }, [manufactureLegendPositionState, manufactureLegendStorageKey])
+
+  const handleManufactureLegendPositionChange = useCallback(
+    (groupKey: string, diameter: string, position: UnitShapeLegendPosition) => {
+      setManufactureLegendPositionState((current) => {
+        const currentPositions =
+          current.storageKey === manufactureLegendStorageKey ? current.positions : {}
+        return {
+          storageKey: manufactureLegendStorageKey,
+          positions: {
+            ...currentPositions,
+            [groupKey]: {
+              ...(currentPositions[groupKey] ?? {}),
+              [diameter]: position,
+            },
+          },
+        }
+      })
+    },
+    [manufactureLegendStorageKey],
+  )
 
   const adjustmentStorageKey = useMemo(
     () => pieceAdjustmentStorageKey(projectId),
@@ -267,6 +381,12 @@ export function OptimizeClient({
             onCustomerArrivalChange={setCustomerArrival}
             customerProduction={customerProduction}
             onCustomerProductionChange={setCustomerProduction}
+            legendPositions={
+              manufactureLegendPositionState.storageKey === manufactureLegendStorageKey
+                ? manufactureLegendPositionState.positions
+                : {}
+            }
+            onLegendPositionChange={handleManufactureLegendPositionChange}
           />
         </section>
       )}
