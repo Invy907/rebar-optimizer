@@ -83,7 +83,8 @@ function createEmptyFreeGeometry(): UnitDetailGeometry {
 
 /** 間隔・注記テキストから数値(mm)を解釈（形状編集キャンバスとプレビューで共通） */
 function parseSpacingMm(label: string | null | undefined): number | null {
-  const s = String(label ?? '').trim()
+  // Windows の IME で全角のまま入力された「＠２００」も受け付ける
+  const s = String(label ?? '').normalize('NFKC').trim()
   if (!s) return null
   const m = s.match(/@?(\d+)/)
   if (!m) return null
@@ -2075,6 +2076,9 @@ function DetailShapeEditor({
   const [history, setHistory] = useState<UnitDetailGeometry[]>([])
   const [selection, setSelection] = useState<CanvasSelection | null>(null)
   const [spacingMmDraft, setSpacingMmDraft] = useState<number>(() => spec.pitch)
+  /** IME 変換中の入力欄の表示値。確定するまで value を書き換えないために使う */
+  const [pitchDraft, setPitchDraft] = useState<string | null>(null)
+  const pitchComposingRef = useRef(false)
   const [annotationInput, setAnnotationInput] = useState<{
     x: number
     y: number
@@ -2215,6 +2219,23 @@ function DetailShapeEditor({
     const next = normalizeDetailSpecForTemplate(template, { ...spec, [dimKey]: value })
     onChange(next)
   }
+  /**
+   * ピッチ入力を確定する。全角（＠２００）は半角へ直し、先頭に @ を補う。
+   * IME 変換中に呼ぶと変換中の文字列と競合するため、変換確定後だけ呼ぶこと。
+   */
+  function commitPitchValue(raw: string) {
+    setPitchDraft(null)
+    const compact = raw.normalize('NFKC').replace(/\s+/g, '')
+    if (compact === '') {
+      onPitchChange('')
+      return
+    }
+    const normalized = compact.startsWith('@') ? compact : `@${compact}`
+    onPitchChange(normalized)
+    const mm = parseSpacingMm(normalized)
+    if (mm != null) setDim('pitch', mm)
+  }
+
   const hasPitchValue = Number.isFinite(spec.pitch) && spec.pitch > 0
 
   function handlePointerMove(
@@ -3685,17 +3706,28 @@ function DetailShapeEditor({
                 <label className="block text-muted">
                   値（mm, 例: @200）
                   <input
-                    value={pitchValue}
+                    value={pitchDraft ?? pitchValue}
+                    inputMode="numeric"
+                    autoComplete="off"
+                    onCompositionStart={() => {
+                      pitchComposingRef.current = true
+                    }}
+                    onCompositionEnd={(e) => {
+                      pitchComposingRef.current = false
+                      commitPitchValue(e.currentTarget.value)
+                    }}
                     onChange={(e) => {
-                      const compact = e.target.value.replace(/\s+/g, '')
-                      if (compact === '') {
-                        onPitchChange('')
+                      // 変換中に value を書き換えると、古い Windows の IME で
+                      // 未確定文字が二重に描画される。確定するまでは入力文字をそのまま表示する
+                      if (pitchComposingRef.current) {
+                        setPitchDraft(e.target.value)
                         return
                       }
-                      const normalized = compact.startsWith('@') ? compact : `@${compact}`
-                      onPitchChange(normalized)
-                      const mm = parseSpacingMm(normalized)
-                      if (mm != null) setDim('pitch', mm)
+                      commitPitchValue(e.target.value)
+                    }}
+                    onBlur={(e) => {
+                      if (pitchComposingRef.current) return
+                      commitPitchValue(e.currentTarget.value)
                     }}
                     className={`mt-1 w-32 rounded border border-border px-2 py-1 text-xs outline-none focus:border-primary ${
                       hasPitchValue ? 'font-semibold' : 'font-normal'
