@@ -24,8 +24,9 @@ export interface UnitDetailSpec {
 
 export interface UnitDetailGeometry {
   templateType: DetailShapeTemplate
-  points: Array<{ key: string; x: number; y: number }>
-  segments: Array<{ from: string; to: string; doubleLine?: boolean }>
+  /** groupId が同じ点・線分はひとつの形状として選択・移動・拡縮される */
+  points: Array<{ key: string; x: number; y: number; groupId?: string }>
+  segments: Array<{ from: string; to: string; doubleLine?: boolean; groupId?: string }>
   bounds: { minX: number; minY: number; maxX: number; maxY: number }
 }
 

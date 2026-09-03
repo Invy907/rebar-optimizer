@@ -33,6 +33,13 @@ import {
   type UnitDetailSpec,
 } from '@/lib/unit-detail-shape'
 import {
+  SHAPE_PRESETS,
+  shapePresetBounds,
+  shapePresetSegments,
+  shapePresetThumbPath,
+  type ShapePresetDef,
+} from '@/lib/unit-shape-presets'
+import {
   deleteUserPresetFromDb,
   fetchUserPresetsFromDb,
   insertUserPresetToDb,
@@ -2027,9 +2034,12 @@ function getUnitShapeLineStyle(unit: Pick<Unit, 'bars'>): {
     : { strokeWidth: 1.9, innerStrokeWidth: 0, offset: 0, isDouble: false }
 }
 
+type GroupResizeCorner = 'nw' | 'ne' | 'sw' | 'se'
+
 type CanvasSelection =
   | { kind: 'point'; id: string }
   | { kind: 'segment'; id: string }
+  | { kind: 'group'; id: string }
   | { kind: 'rebar'; id: string }
   | { kind: 'spacing'; id: string }
   | { kind: 'annotation'; id: string }
@@ -2121,6 +2131,27 @@ function DetailShapeEditor({
     start: { x: number; y: number }
     basePoint: { x: number; y: number }
   } | null>(null)
+  const [dragGroupId, setDragGroupId] = useState<string | null>(null)
+  const groupDragRef = useRef<{
+    groupId: string
+    start: { x: number; y: number }
+    basePoints: Array<{ key: string; x: number; y: number }>
+  } | null>(null)
+  const groupResizeRef = useRef<{
+    groupId: string
+    corner: GroupResizeCorner
+    /** ドラッグ中に固定する対角のコーナー座標 */
+    anchor: { x: number; y: number }
+    baseW: number
+    baseH: number
+    basePoints: Array<{ key: string; x: number; y: number }>
+  } | null>(null)
+  /** プリセット挿入時に同じ位置へ重ならないよう少しずつずらすためのカウンタ */
+  const presetInsertCountRef = useRef(0)
+  /** 挿入時の寸法。拡縮率（%）の基準と 100% リセットに使う */
+  const [groupBaseSize, setGroupBaseSize] = useState<
+    Record<string, { w: number; h: number }>
+  >({})
   const spacingDragRef = useRef<{ id: string; lastX: number; lastY: number } | null>(null)
   const suppressCanvasGestureRef = useRef(false)
   /** ホイールボタン（中クリック）ドラッグで viewBox をパン */
@@ -2145,8 +2176,18 @@ function DetailShapeEditor({
     setDragSegmentKey(null)
     segmentDragRef.current = null
     pointDragRef.current = null
+    setDragGroupId(null)
+    groupDragRef.current = null
+    groupResizeRef.current = null
     setFreezeViewBounds(false)
     frozenViewBoundsRef.current = null
+  }
+
+  /** グループのドラッグ／拡縮の途中状態だけを片付ける（選択は保持する） */
+  function resetGroupDrags() {
+    setDragGroupId(null)
+    groupDragRef.current = null
+    groupResizeRef.current = null
   }
 
   function resetNonShapeDrags() {
@@ -2165,6 +2206,10 @@ function DetailShapeEditor({
 
   function selectSegment(segmentKey: string) {
     setSelection({ kind: 'segment', id: segmentKey })
+  }
+
+  function selectGroup(groupId: string) {
+    setSelection({ kind: 'group', id: groupId })
   }
 
   function selectRebar(rebarId: string) {
@@ -2286,6 +2331,48 @@ function DetailShapeEditor({
     return m
   }, [displayGeometry.segments])
 
+  const groupIdByPointKey = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const p of displayGeometry.points) {
+      if (p.groupId) m.set(p.key, p.groupId)
+    }
+    return m
+  }, [displayGeometry.points])
+
+  /**
+   * 選択中の要素が属するグループ。グループ自体を選んでいる場合も、
+   * グループ内の点・線分まで掘り下げている場合も同じ ID を返す。
+   */
+  const activeGroupId = useMemo(() => {
+    if (!selection) return null
+    if (selection.kind === 'group') return selection.id
+    if (selection.kind === 'point') return groupIdByPointKey.get(selection.id) ?? null
+    if (selection.kind === 'segment') {
+      const idx = displayGeometry.segments.findIndex(
+        (s, i) => `${s.from}-${s.to}-${i}` === selection.id,
+      )
+      if (idx < 0) return null
+      return displayGeometry.segments[idx]?.groupId ?? null
+    }
+    return null
+  }, [selection, groupIdByPointKey, displayGeometry.segments])
+
+  const selectedGroupId = selection?.kind === 'group' ? selection.id : null
+
+  const selectedGroupBounds = useMemo(() => {
+    if (!selectedGroupId) return null
+    const pts = displayGeometry.points.filter((p) => p.groupId === selectedGroupId)
+    if (pts.length === 0) return null
+    const xs = pts.map((p) => p.x)
+    const ys = pts.map((p) => p.y)
+    return {
+      minX: Math.min(...xs),
+      minY: Math.min(...ys),
+      maxX: Math.max(...xs),
+      maxY: Math.max(...ys),
+    }
+  }, [selectedGroupId, displayGeometry.points])
+
   function nextId(prefix: string): string {
     return `${prefix}-${Math.random().toString(36).slice(2, 10)}`
   }
@@ -2373,6 +2460,178 @@ function DetailShapeEditor({
       segments: nextSegments,
       bounds: calcBounds(displayGeometry.points),
     })
+  }
+
+  function boundsOrDefault(points: Array<{ x: number; y: number }>) {
+    if (points.length === 0) return createEmptyFreeGeometry().bounds
+    return calcBounds(points)
+  }
+
+  function groupPointKeys(groupId: string): Set<string> {
+    return new Set(
+      displayGeometry.points.filter((p) => p.groupId === groupId).map((p) => p.key),
+    )
+  }
+
+  /** パレットの定型形状を、現在のビュー中央にひとつのグループとして挿入する */
+  function insertShapePreset(preset: ShapePresetDef) {
+    const b = shapePresetBounds(preset)
+    const w = b.maxX - b.minX
+    const h = b.maxY - b.minY
+    const cascade = (presetInsertCountRef.current % 6) * 40
+    presetInsertCountRef.current += 1
+    const originX = Math.round(centerX - w / 2 + cascade)
+    const originY = Math.round(centerY - h / 2 + cascade)
+
+    const groupId = nextId('grp')
+    const keys = preset.points.map(() => nextId('p'))
+    const newPoints = preset.points.map((p, i) => ({
+      key: keys[i],
+      x: originX + (p.x - b.minX),
+      y: originY + (p.y - b.minY),
+      groupId,
+    }))
+    const newSegments: UnitDetailGeometry['segments'] = shapePresetSegments(preset).map(
+      ([a, z]) => ({ from: keys[a], to: keys[z], doubleLine: doubleLineEnabled, groupId }),
+    )
+
+    pushHistorySnapshot()
+    const nextPoints = [...displayGeometry.points, ...newPoints]
+    onGeometryChange({
+      ...displayGeometry,
+      points: nextPoints,
+      segments: [...displayGeometry.segments, ...newSegments],
+      bounds: boundsOrDefault(nextPoints),
+    })
+    setGroupBaseSize((prev) => ({ ...prev, [groupId]: { w, h } }))
+    setDrawAnchorKey(null)
+    setNewPathMode(true)
+    selectGroup(groupId)
+  }
+
+  function deleteGroup(groupId: string) {
+    pushHistorySnapshot()
+    const keys = groupPointKeys(groupId)
+    const nextPoints = displayGeometry.points.filter((p) => !keys.has(p.key))
+    const nextSegments = displayGeometry.segments.filter(
+      (s) => !keys.has(s.from) && !keys.has(s.to),
+    )
+    onGeometryChange({
+      ...displayGeometry,
+      points: nextPoints,
+      segments: nextSegments,
+      bounds: boundsOrDefault(nextPoints),
+    })
+    setSelection(null)
+    resetGroupDrags()
+  }
+
+  /** グループ指定を外し、点・線分を個別編集だけの状態に戻す */
+  function ungroupGroup(groupId: string) {
+    pushHistorySnapshot()
+    onGeometryChange({
+      ...displayGeometry,
+      points: displayGeometry.points.map((p) =>
+        p.groupId === groupId ? { key: p.key, x: p.x, y: p.y } : p,
+      ),
+      segments: displayGeometry.segments.map((s) =>
+        s.groupId === groupId ? { from: s.from, to: s.to, doubleLine: s.doubleLine } : s,
+      ),
+      bounds: boundsOrDefault(displayGeometry.points),
+    })
+    setSelection(null)
+    resetGroupDrags()
+  }
+
+  /** グループ全体を、bbox 左上を固定したまま指定サイズへ拡縮する */
+  function resizeGroupTo(groupId: string, nextW: number, nextH: number) {
+    const pts = displayGeometry.points.filter((p) => p.groupId === groupId)
+    if (pts.length === 0) return
+    const bounds = calcBounds(pts)
+    const baseW = bounds.maxX - bounds.minX
+    const baseH = bounds.maxY - bounds.minY
+    const sx = baseW > 0 ? Math.max(10, nextW) / baseW : 1
+    const sy = baseH > 0 ? Math.max(10, nextH) / baseH : 1
+    pushHistorySnapshot()
+    const nextPoints = displayGeometry.points.map((p) =>
+      p.groupId === groupId
+        ? {
+            ...p,
+            x: bounds.minX + (p.x - bounds.minX) * sx,
+            y: bounds.minY + (p.y - bounds.minY) * sy,
+          }
+        : p,
+    )
+    onGeometryChange({
+      ...displayGeometry,
+      points: nextPoints,
+      bounds: boundsOrDefault(nextPoints),
+    })
+  }
+
+  /** グループを中心固定で相対的に拡大・縮小する（- / + ボタン用） */
+  function scaleGroup(groupId: string, factor: number) {
+    const pts = displayGeometry.points.filter((p) => p.groupId === groupId)
+    if (pts.length === 0) return
+    const b = calcBounds(pts)
+    const curW = b.maxX - b.minX
+    const curH = b.maxY - b.minY
+
+    const base = groupBaseSize[groupId]
+    if (base) {
+      const cur = base.w > 0 ? curW / base.w : base.h > 0 ? curH / base.h : 1
+      const next = cur * factor
+      if (next < 0.2 || next > 5) return
+    }
+    // 直線などは片方の寸法が 0 になるため、大きい側だけで下限を判定する
+    if (factor < 1 && Math.max(curW, curH) * factor < 20) return
+
+    const cx = (b.minX + b.maxX) / 2
+    const cy = (b.minY + b.maxY) / 2
+    pushHistorySnapshot()
+    const nextPoints = displayGeometry.points.map((p) =>
+      p.groupId === groupId
+        ? { ...p, x: cx + (p.x - cx) * factor, y: cy + (p.y - cy) * factor }
+        : p,
+    )
+    onGeometryChange({
+      ...displayGeometry,
+      points: nextPoints,
+      bounds: boundsOrDefault(nextPoints),
+    })
+  }
+
+  /** 挿入時の寸法へ戻す */
+  function resetGroupScale(groupId: string) {
+    const base = groupBaseSize[groupId]
+    if (!base) return
+    resizeGroupTo(groupId, base.w, base.h)
+  }
+
+  /** 挿入時の寸法に対する現在の拡縮率（%）。基準が不明なら null */
+  function groupScalePercent(groupId: string): number | null {
+    const base = groupBaseSize[groupId]
+    if (!base) return null
+    const pts = displayGeometry.points.filter((p) => p.groupId === groupId)
+    if (pts.length === 0) return null
+    const b = calcBounds(pts)
+    if (base.w > 0) return Math.round(((b.maxX - b.minX) / base.w) * 100)
+    if (base.h > 0) return Math.round(((b.maxY - b.minY) / base.h) * 100)
+    return null
+  }
+
+  function beginGroupDrag(groupId: string, startPoint: { x: number; y: number }) {
+    frozenViewBoundsRef.current = viewBounds
+    setFreezeViewBounds(true)
+    pushHistorySnapshot()
+    setDragGroupId(groupId)
+    groupDragRef.current = {
+      groupId,
+      start: startPoint,
+      basePoints: displayGeometry.points
+        .filter((p) => p.groupId === groupId)
+        .map((p) => ({ key: p.key, x: p.x, y: p.y })),
+    }
   }
 
   function screenToSvgFrom(
@@ -2844,6 +3103,8 @@ function DetailShapeEditor({
           const p = screenToSvgFrom(e.clientX, e.clientY, e.currentTarget)
           if (mode === 'shape') {
             if (startMode === 'free') {
+              // 何もない場所を押したらグループ／点／線の選択を解除する
+              setSelection(null)
               const anchorKey =
                 !newPathMode && drawAnchorKey && freeByKey[drawAnchorKey] ? drawAnchorKey : null
               // 새 선을 그리는 동안에도 viewBox를 고정해서
@@ -2905,6 +3166,56 @@ function DetailShapeEditor({
 
           if ((mode === 'rebar' || mode === 'annotation') && dragRebarId) {
             moveRebar(dragRebarId, p)
+            return
+          }
+
+          if (mode === 'shape' && startMode === 'free' && groupResizeRef.current) {
+            const drag = groupResizeRef.current
+            const minSize = 20
+            const rawW = Math.max(minSize, Math.abs(p.x - drag.anchor.x))
+            const rawH = Math.max(minSize, Math.abs(p.y - drag.anchor.y))
+            let sx = drag.baseW > 0 ? rawW / drag.baseW : 1
+            let sy = drag.baseH > 0 ? rawH / drag.baseH : 1
+            if (e.shiftKey) {
+              // Shift 併用で縦横比を保つ。片方が 0 幅（直線）の場合はもう片方に合わせる。
+              const s =
+                drag.baseW > 0 && drag.baseH > 0 ? Math.max(sx, sy) : drag.baseW > 0 ? sx : sy
+              if (drag.baseW > 0) sx = s
+              if (drag.baseH > 0) sy = s
+            }
+            const baseByKey = new Map(drag.basePoints.map((b) => [b.key, b]))
+            const nextPoints = displayGeometry.points.map((pt) => {
+              const base = baseByKey.get(pt.key)
+              if (!base) return pt
+              return {
+                ...pt,
+                x: drag.anchor.x + (base.x - drag.anchor.x) * sx,
+                y: drag.anchor.y + (base.y - drag.anchor.y) * sy,
+              }
+            })
+            onGeometryChange({
+              ...displayGeometry,
+              points: nextPoints,
+              bounds: boundsOrDefault(nextPoints),
+            })
+            return
+          }
+
+          if (mode === 'shape' && startMode === 'free' && dragGroupId && groupDragRef.current) {
+            const drag = groupDragRef.current
+            const dx = p.x - drag.start.x
+            const dy = p.y - drag.start.y
+            const baseByKey = new Map(drag.basePoints.map((b) => [b.key, b]))
+            const nextPoints = displayGeometry.points.map((pt) => {
+              const base = baseByKey.get(pt.key)
+              if (!base) return pt
+              return { ...pt, x: base.x + dx, y: base.y + dy }
+            })
+            onGeometryChange({
+              ...displayGeometry,
+              points: nextPoints,
+              bounds: boundsOrDefault(nextPoints),
+            })
             return
           }
 
@@ -2980,6 +3291,7 @@ function DetailShapeEditor({
             setDragSegmentKey(null)
             segmentDragRef.current = null
             pointDragRef.current = null
+            resetGroupDrags()
             setFreezeViewBounds(false)
             frozenViewBoundsRef.current = null
             return
@@ -2996,6 +3308,7 @@ function DetailShapeEditor({
           setDragSegmentKey(null)
           segmentDragRef.current = null
           pointDragRef.current = null
+          resetGroupDrags()
           setFreezeViewBounds(false)
           frozenViewBoundsRef.current = null
 
@@ -3032,6 +3345,7 @@ function DetailShapeEditor({
               /* ignore */
             }
           }
+          resetGroupDrags()
           setFreezeViewBounds(false)
           frozenViewBoundsRef.current = null
         }}
@@ -3052,6 +3366,7 @@ function DetailShapeEditor({
           setDragSegmentKey(null)
           segmentDragRef.current = null
           pointDragRef.current = null
+          resetGroupDrags()
           setFreezeViewBounds(false)
           frozenViewBoundsRef.current = null
           if (mode === 'annotation') setSpacingDrawGesture(null)
@@ -3071,8 +3386,9 @@ function DetailShapeEditor({
           if (!p1 || !p2) return null
           const segPe = mode === 'shape' && startMode === 'free' ? 'auto' : 'none'
           const isSegSelected = selection?.kind === 'segment' && selection.id === `${seg.from}-${seg.to}-${idx}`
-          const stroke = isSegSelected ? '#7c3aed' : '#0f172a'
-          const baseStrokeW = isSegSelected ? 3.0 : 1.6
+          const isInSelectedGroup = !!seg.groupId && seg.groupId === selectedGroupId
+          const stroke = isSegSelected || isInSelectedGroup ? '#7c3aed' : '#0f172a'
+          const baseStrokeW = isSegSelected ? 3.0 : isInSelectedGroup ? 2.4 : 1.6
           const dx = p2.x - p1.x
           const dy = p2.y - p1.y
           const len = Math.hypot(dx, dy) || 1
@@ -3141,6 +3457,24 @@ function DetailShapeEditor({
                 onPointerDown={(e) => {
                   if (mode !== 'shape' || startMode !== 'free') return
                   beginObjectPointer(e)
+                  // グループ化された形状の線は常に形状全体としてドラッグする。
+                  // 個別の線分を編集したい場合は右パネルから「グループ解除」する。
+                  const segGroupId = seg.groupId ?? null
+                  if (segGroupId) {
+                    const groupSvg =
+                      (e.currentTarget as SVGLineElement).ownerSVGElement ??
+                      ((e.currentTarget as SVGLineElement).closest('svg') as SVGSVGElement | null)
+                    if (!groupSvg) return
+                    const gp = screenToSvgFrom(e.clientX, e.clientY, groupSvg)
+                    selectGroup(segGroupId)
+                    beginGroupDrag(segGroupId, gp)
+                    try {
+                      ;(e.currentTarget as SVGLineElement).setPointerCapture(e.pointerId)
+                    } catch {
+                      /* ignore */
+                    }
+                    return
+                  }
                   const pickedKey = `${seg.from}-${seg.to}-${idx}`
                   selectSegment(pickedKey)
                   pushHistorySnapshot()
@@ -3259,6 +3593,22 @@ function DetailShapeEditor({
                   onPointerDown={(e) => {
                     if (mode !== 'shape' || startMode !== 'free') return
                     beginObjectPointer(e)
+                    const pointGroupId = p.groupId ?? null
+                    if (pointGroupId && activeGroupId !== pointGroupId) {
+                      const groupSvg =
+                        (e.currentTarget as SVGCircleElement).ownerSVGElement ??
+                        ((e.currentTarget as SVGCircleElement).closest('svg') as SVGSVGElement | null)
+                      if (!groupSvg) return
+                      const gp = screenToSvgFrom(e.clientX, e.clientY, groupSvg)
+                      selectGroup(pointGroupId)
+                      beginGroupDrag(pointGroupId, gp)
+                      try {
+                        ;(e.currentTarget as SVGCircleElement).setPointerCapture(e.pointerId)
+                      } catch {
+                        /* ignore */
+                      }
+                      return
+                    }
                     selectPoint(p.key)
                     pushHistorySnapshot()
                     // Moving free-draw points updates bounds; freeze viewBox during drag for a stable feel (like rebar/spacings).
@@ -3281,6 +3631,117 @@ function DetailShapeEditor({
               </g>
             )
           })}
+        {mode === 'shape' &&
+          startMode === 'free' &&
+          selectedGroupId &&
+          selectedGroupBounds &&
+          (() => {
+            const b = selectedGroupBounds
+            const pad = Math.max(6, viewRef * 0.014)
+            const x0 = b.minX - pad
+            const y0 = b.minY - pad
+            const x1 = b.maxX + pad
+            const y1 = b.maxY + pad
+            const handleR = Math.max(4, viewRef * 0.013)
+            const edgeHitW = Math.max(7, viewRef * 0.018)
+            const corners: Array<{
+              corner: GroupResizeCorner
+              x: number
+              y: number
+              cursor: string
+            }> = [
+              { corner: 'nw', x: x0, y: y0, cursor: 'nwse-resize' },
+              { corner: 'ne', x: x1, y: y0, cursor: 'nesw-resize' },
+              { corner: 'sw', x: x0, y: y1, cursor: 'nesw-resize' },
+              { corner: 'se', x: x1, y: y1, cursor: 'nwse-resize' },
+            ]
+            const anchorFor = (c: GroupResizeCorner) => ({
+              x: c === 'nw' || c === 'sw' ? b.maxX : b.minX,
+              y: c === 'nw' || c === 'ne' ? b.maxY : b.minY,
+            })
+            return (
+              <g>
+                <rect
+                  x={x0}
+                  y={y0}
+                  width={x1 - x0}
+                  height={y1 - y0}
+                  fill="none"
+                  stroke="#7c3aed"
+                  strokeWidth={Math.max(1, viewRef * 0.003)}
+                  strokeDasharray={`${Math.max(6, viewRef * 0.016)} ${Math.max(4, viewRef * 0.011)}`}
+                  strokeOpacity={0.85}
+                  pointerEvents="none"
+                />
+                {/* 枠線をつかんで形状全体を移動する（内側は線の描画用に空けておく） */}
+                <rect
+                  data-canvas-hit="item"
+                  x={x0}
+                  y={y0}
+                  width={x1 - x0}
+                  height={y1 - y0}
+                  fill="none"
+                  stroke="rgba(0,0,0,0.001)"
+                  strokeWidth={edgeHitW}
+                  style={{ cursor: dragGroupId === selectedGroupId ? 'grabbing' : 'move' }}
+                  onPointerDownCapture={() => {
+                    markObjectPointer()
+                  }}
+                  onPointerDown={(e) => {
+                    beginObjectPointer(e)
+                    const svg =
+                      (e.currentTarget as SVGRectElement).ownerSVGElement ??
+                      ((e.currentTarget as SVGRectElement).closest('svg') as SVGSVGElement | null)
+                    if (!svg) return
+                    beginGroupDrag(selectedGroupId, screenToSvgFrom(e.clientX, e.clientY, svg))
+                    try {
+                      ;(e.currentTarget as SVGRectElement).setPointerCapture(e.pointerId)
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                />
+                {corners.map((c) => (
+                  <rect
+                    key={c.corner}
+                    data-canvas-hit="item"
+                    x={c.x - handleR}
+                    y={c.y - handleR}
+                    width={handleR * 2}
+                    height={handleR * 2}
+                    fill="#ffffff"
+                    stroke="#7c3aed"
+                    strokeWidth={Math.max(1, viewRef * 0.0035)}
+                    style={{ cursor: c.cursor }}
+                    onPointerDownCapture={() => {
+                      markObjectPointer()
+                    }}
+                    onPointerDown={(e) => {
+                      beginObjectPointer(e)
+                      frozenViewBoundsRef.current = viewBounds
+                      setFreezeViewBounds(true)
+                      pushHistorySnapshot()
+                      groupResizeRef.current = {
+                        groupId: selectedGroupId,
+                        corner: c.corner,
+                        anchor: anchorFor(c.corner),
+                        baseW: b.maxX - b.minX,
+                        baseH: b.maxY - b.minY,
+                        basePoints: displayGeometry.points
+                          .filter((p) => p.groupId === selectedGroupId)
+                          .map((p) => ({ key: p.key, x: p.x, y: p.y })),
+                      }
+                      try {
+                        ;(e.currentTarget as SVGRectElement).setPointerCapture(e.pointerId)
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                  />
+                ))}
+              </g>
+            )
+          })()}
         {mode === 'shape' && startMode === 'free' && drawGesture && (
           <line
             x1={drawGesture.anchorKey && freeByKey[drawGesture.anchorKey] ? freeByKey[drawGesture.anchorKey].x : drawGesture.start.x}
@@ -3994,6 +4455,104 @@ function DetailShapeEditor({
                     className="rounded border border-red-200 px-2 py-1 text-[11px] text-red-700 hover:bg-red-50"
                   >
                     この端点を削除
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {mode === 'shape' && startMode === 'free' && (
+              <div className="space-y-2 border-b border-border pb-3">
+                <div className="font-medium text-foreground">形状パレット</div>
+                <p className="text-[10px] leading-snug text-muted/80">
+                  クリックでキャンバス中央に配置します。配置した形状は 1 つのまとまりとして
+                  ドラッグ移動・拡縮できます。
+                </p>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {SHAPE_PRESETS.map((preset) => {
+                    const d = shapePresetThumbPath(preset, 56, 48, 7)
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        title={preset.label}
+                        aria-label={preset.label}
+                        onClick={() => insertShapePreset(preset)}
+                        className="flex items-center justify-center rounded border border-border bg-white p-1 hover:border-primary hover:bg-primary/5"
+                      >
+                        <svg width={56} height={48} viewBox="0 0 56 48" aria-hidden="true">
+                          <path
+                            d={d}
+                            fill="none"
+                            stroke="#0f172a"
+                            strokeWidth={2}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {mode === 'shape' && startMode === 'free' && selectedGroupBounds && selectedGroupId && (
+              <div className="space-y-2 border-b border-border pb-3">
+                <div className="font-medium text-foreground">形状（グループ）</div>
+                <p className="text-[10px] leading-snug text-muted/80">
+                  枠線をドラッグで移動、四隅をドラッグで拡縮（Shift で縦横比固定）。
+                </p>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted">サイズ</span>
+                  <div className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-white px-1.5 py-1 text-[10px] text-muted">
+                    <button
+                      type="button"
+                      onClick={() => scaleGroup(selectedGroupId, 1 / 1.1)}
+                      className="rounded border border-border/60 px-1.5 py-0.5 hover:bg-slate-50"
+                      aria-label="形状を縮小"
+                    >
+                      -
+                    </button>
+                    <span className="min-w-[46px] text-center">
+                      {groupScalePercent(selectedGroupId) ?? 100}%
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => scaleGroup(selectedGroupId, 1.1)}
+                      className="rounded border border-border/60 px-1.5 py-0.5 hover:bg-slate-50"
+                      aria-label="形状を拡大"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => resetGroupScale(selectedGroupId)}
+                      title="挿入時のサイズに戻す"
+                      aria-label="挿入時のサイズに戻す"
+                      className="rounded border border-border/60 px-1.5 py-0.5 hover:bg-slate-50"
+                    >
+                      100%
+                    </button>
+                  </div>
+                </div>
+                <div className="text-[10px] text-muted/80">
+                  幅 {Math.round(selectedGroupBounds.maxX - selectedGroupBounds.minX)} × 高さ{' '}
+                  {Math.round(selectedGroupBounds.maxY - selectedGroupBounds.minY)} mm
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => ungroupGroup(selectedGroupId)}
+                    className="rounded border border-border px-2 py-1 text-[11px] hover:bg-gray-50"
+                  >
+                    グループ解除
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteGroup(selectedGroupId)}
+                    className="rounded border border-red-200 px-2 py-1 text-[11px] text-red-700 hover:bg-red-50"
+                  >
+                    この形状を削除
                   </button>
                 </div>
               </div>
