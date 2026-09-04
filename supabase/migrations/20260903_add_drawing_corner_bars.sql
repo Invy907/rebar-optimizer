@@ -5,7 +5,7 @@
 -- 寸法値(mm)と寸法基準（芯々／内々）を順序どおり segments jsonb に持つ。
 --
 --   segments: [{ id, lengthMm, measurementType, labelOffsetX?, labelOffsetY? }, ...]
---   measurementType: 'SHIN_SHIN' | 'UCHI_UCHI' | null
+--   measurementType: 'SHIN_SHIN' | 'UCHI_UCHI' | 'SOTO_SOTO' | null
 --
 -- category（筋種類）と shape_type（形状トポロジー）は独立させる。
 -- 同じ L 形がコーナー筋にも添え筋にも使えるため 1:1 に固定しない。

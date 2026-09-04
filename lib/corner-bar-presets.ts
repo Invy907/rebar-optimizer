@@ -11,16 +11,17 @@
  * 同じ L 形がコーナー筋にも添え筋にも使えるため、形状と筋種類は 1:1 にしない。
  *
  * 寸法は「鉄筋 1 本 ＝ 長さ 1 個」では持たない。
- * 形状を構成する辺（segment）ごとに寸法値(mm)と寸法基準（芯々／内々）を持ち、
+ * 形状を構成する辺（segment）ごとに寸法値(mm)と寸法基準（芯々／内々／外々）を持ち、
  * 辺の順序は資料の表記（例: 600 × 455 × 115 × 600）と一致させる。
  */
 
 /** 寸法基準。辺ごとに個別に持つ（鉄筋全体の属性ではない） */
-export type MeasurementType = 'SHIN_SHIN' | 'UCHI_UCHI'
+export type MeasurementType = 'SHIN_SHIN' | 'UCHI_UCHI' | 'SOTO_SOTO'
 
 export const MEASUREMENT_TYPES: Array<{ id: MeasurementType; label: string }> = [
   { id: 'SHIN_SHIN', label: '芯々' },
   { id: 'UCHI_UCHI', label: '内々' },
+  { id: 'SOTO_SOTO', label: '外々' },
 ]
 
 export function measurementTypeLabel(value: MeasurementType | null | undefined): string {
@@ -142,6 +143,147 @@ export function cornerBarShapeLabel(shapeType: string): string {
   return getCornerBarShape(shapeType)?.label ?? shapeType
 }
 
+/** 筋種類ごとに形状が固定される場合のマッピング（添え筋＝ストレート、コーナー筋＝L形） */
+const CATEGORY_FIXED_SHAPE: Partial<Record<CornerBarCategory, CornerBarShapeType>> = {
+  CORNER: 'L',
+  SOE: 'STRAIGHT',
+}
+
+export function getFixedShapeForCategory(
+  category: CornerBarCategory,
+): CornerBarShapeType | null {
+  return CATEGORY_FIXED_SHAPE[category] ?? null
+}
+
+export function isCategoryShapeFixed(category: CornerBarCategory): boolean {
+  return getFixedShapeForCategory(category) != null
+}
+
+export function getCornerBarShapesForCategory(
+  category: CornerBarCategory,
+): CornerBarShapeDef[] {
+  const fixed = getFixedShapeForCategory(category)
+  if (fixed) {
+    const shape = getCornerBarShape(fixed)
+    return shape ? [shape] : []
+  }
+  return CORNER_BAR_SHAPES
+}
+
+/** パレット用。コーナー筋は L 形を 90° ずつ 4 通り、添え筋はストレート 1 つ */
+export interface CornerBarShapeOption {
+  key: string
+  shapeType: CornerBarShapeType
+  rotation: number
+  label: string
+  shape: CornerBarShapeDef
+}
+
+export function getCornerBarShapeOptionsForCategory(
+  category: CornerBarCategory,
+): CornerBarShapeOption[] {
+  if (category === 'CORNER') {
+    const shape = getCornerBarShape('L')
+    if (!shape) return []
+    return [0, 1, 2, 3].map((rotation) => ({
+      key: `L-${rotation}`,
+      shapeType: 'L',
+      rotation,
+      label: `L形 ${cornerBarRotationLabel(rotation)}`,
+      shape,
+    }))
+  }
+  if (category === 'SOE') {
+    const shape = getCornerBarShape('STRAIGHT')
+    if (!shape) return []
+    return [
+      {
+        key: 'STRAIGHT-0',
+        shapeType: 'STRAIGHT',
+        rotation: 0,
+        label: shape.label,
+        shape,
+      },
+    ]
+  }
+  return CORNER_BAR_SHAPES.map((shape) => ({
+    key: shape.id,
+    shapeType: shape.id,
+    rotation: 0,
+    label: shape.label,
+    shape,
+  }))
+}
+
+export function resolveCategoryShape(
+  category: CornerBarCategory,
+  shapeType?: CornerBarShapeType | string | null,
+): CornerBarShapeType {
+  const fixed = getFixedShapeForCategory(category)
+  if (fixed) return fixed
+  if (shapeType && getCornerBarShape(shapeType)) return shapeType as CornerBarShapeType
+  return 'STRAIGHT'
+}
+
+/** コーナー筋 L 形の標準寸法（径ごと、辺1 × 辺2） */
+const CORNER_STANDARD_LENGTHS_MM: Record<string, readonly [number, number]> = {
+  D13: [600, 600],
+  D10: [450, 450],
+  D16: [750, 750],
+  D19: [900, 900],
+}
+
+/** 添え筋ストレートの標準寸法（径ごと） */
+const SOE_STANDARD_LENGTHS_MM: Record<string, number> = {
+  D13: 1200,
+  D10: 900,
+  D16: 1500,
+  D19: 1800,
+}
+
+export function hasStandardSegmentLengths(category: CornerBarCategory): boolean {
+  return category === 'CORNER' || category === 'SOE'
+}
+
+/** 筋種類・径に対応する標準寸法（mm）。未定義の径は null */
+export function getStandardSegmentLengthsMm(
+  category: CornerBarCategory,
+  diameter: string,
+  shapeType: CornerBarShapeType,
+): number[] | null {
+  if (category === 'SOE' && shapeType === 'STRAIGHT') {
+    const len = SOE_STANDARD_LENGTHS_MM[diameter]
+    return len != null ? [len] : null
+  }
+  if (category === 'CORNER' && shapeType === 'L') {
+    const legs = CORNER_STANDARD_LENGTHS_MM[diameter]
+    return legs ? [...legs] : null
+  }
+  return null
+}
+
+function formatStandardDimsLabel(category: CornerBarCategory, diameter: string): string | null {
+  if (category === 'SOE') {
+    const len = SOE_STANDARD_LENGTHS_MM[diameter]
+    return len != null ? String(len) : null
+  }
+  if (category === 'CORNER') {
+    const legs = CORNER_STANDARD_LENGTHS_MM[diameter]
+    return legs ? `${legs[0]} × ${legs[1]}` : null
+  }
+  return null
+}
+
+/** 鉄筋径プルダウン表示。コーナー筋・添え筋は標準寸法を括弧付きで示す */
+export function cornerBarDiameterOptionLabel(
+  category: CornerBarCategory,
+  diameter: string,
+): string {
+  if (!hasStandardSegmentLengths(category)) return diameter
+  const dims = formatStandardDimsLabel(category, diameter)
+  return dims ? `${diameter}(${dims})` : diameter
+}
+
 /**
  * 保存する辺データ。
  *
@@ -166,6 +308,37 @@ export function makeCornerBarSegments(shape: CornerBarShapeDef): CornerBarSegmen
 }
 
 /**
+ * 筋種類・径の標準寸法を辺に入れる。標準が無い径は既存値を維持する。
+ * measurementType など標準以外の属性は既存値を保つ。
+ */
+export function applyStandardSegmentLengths(
+  shape: CornerBarShapeDef,
+  category: CornerBarCategory,
+  diameter: string,
+  existing?: CornerBarSegment[],
+): CornerBarSegment[] {
+  const standard = getStandardSegmentLengthsMm(
+    category,
+    diameter,
+    shape.id as CornerBarShapeType,
+  )
+  return shape.directions.map((_, i) => {
+    const prev = existing?.[i]
+    return {
+      id: prev?.id ?? `s${i + 1}`,
+      lengthMm: standard?.[i] ?? prev?.lengthMm ?? null,
+      measurementType: prev?.measurementType ?? null,
+      ...(Number.isFinite(Number(prev?.labelOffsetX))
+        ? { labelOffsetX: Number(prev?.labelOffsetX) }
+        : {}),
+      ...(Number.isFinite(Number(prev?.labelOffsetY))
+        ? { labelOffsetY: Number(prev?.labelOffsetY) }
+        : {}),
+    }
+  })
+}
+
+/**
  * 保存済みの辺データを形状に合わせて整える。
  * 形状の辺数と合わない古いデータでも、順序を保ったまま過不足を補正する。
  */
@@ -182,7 +355,11 @@ export function normalizeCornerBarSegments(
       id: typeof raw?.id === 'string' && raw.id ? raw.id : `s${i + 1}`,
       lengthMm: Number.isFinite(lengthRaw) && lengthRaw > 0 ? lengthRaw : null,
       measurementType:
-        measurement === 'SHIN_SHIN' || measurement === 'UCHI_UCHI' ? measurement : null,
+        measurement === 'SHIN_SHIN' ||
+        measurement === 'UCHI_UCHI' ||
+        measurement === 'SOTO_SOTO'
+          ? measurement
+          : null,
       ...(Number.isFinite(Number(raw?.labelOffsetX))
         ? { labelOffsetX: Number(raw?.labelOffsetX) }
         : {}),
@@ -372,15 +549,19 @@ export function cornerBarThumbPath(
   boxW: number,
   boxH: number,
   pad = 6,
+  rotationSteps = 0,
 ): string {
   const geometry = buildCornerBarGeometry(shape, makeCornerBarSegments(shape))
-  const b = cornerBarGeometryBounds(geometry)
+  const rotated = {
+    points: geometry.points.map((p) => rotateCornerBarPoint(p, rotationSteps)),
+  }
+  const b = cornerBarGeometryBounds(rotated)
   const w = Math.max(1, b.maxX - b.minX)
   const h = Math.max(1, b.maxY - b.minY)
   const scale = Math.min((boxW - pad * 2) / w, (boxH - pad * 2) / h)
   const offsetX = (boxW - w * scale) / 2
   const offsetY = (boxH - h * scale) / 2
-  return geometry.points
+  return rotated.points
     .map((p, i) => {
       const x = offsetX + (p.x - b.minX) * scale
       const y = offsetY + (p.y - b.minY) * scale
