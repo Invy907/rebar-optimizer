@@ -20,6 +20,7 @@ import {
   cornerBarSegmentLines,
   cornerBarShapeLabel,
   cornerBarSizePxFromDrag,
+  cornerBarRotationFromDrag,
   DEFAULT_CORNER_BAR_SIZE_PX,
   getCornerBarShape,
   getCornerBarShapeOptionsForCategory,
@@ -314,6 +315,14 @@ type CornerBarPlaceDragState = {
   current: Point
 }
 
+/** 形状未選択のままドラッグしたあと、モーダルで形状を選んだら配置する待ち状態 */
+type PendingCornerBarPlacement = {
+  center: Point
+  sizePx: number
+  dx: number
+  dy: number
+}
+
 type SegmentDragState = {
   ids: string[]
   origin: Point
@@ -528,6 +537,8 @@ export function DrawingViewer({
     null,
   )
   const [cornerBarShapeSelectModalOpen, setCornerBarShapeSelectModalOpen] = useState(false)
+  const [pendingCornerBarPlacement, setPendingCornerBarPlacement] =
+    useState<PendingCornerBarPlacement | null>(null)
   /** 付加筋レイヤーの操作モード。ユニットレイヤーの tool と同じ役割 */
   const [cornerTool, setCornerTool] = useState<'select' | 'place'>('select')
   /** これから配置する付加筋の色（配置設定で選ぶ） */
@@ -561,16 +572,23 @@ export function DrawingViewer({
     shapeType: CornerBarPlacementDraft['shapeType'],
     rotation: number,
   ) {
-    changePlacementDraft(
-      makeCornerBarDraft(shapeType, {
-        ...(placementDraft ?? {
-          category: cornerBarPlacementCategory,
-          diameter: 'D13',
-        }),
-        rotation,
+    const draft = makeCornerBarDraft(shapeType, {
+      ...(placementDraft ?? {
+        category: cornerBarPlacementCategory,
+        diameter: 'D13',
       }),
-    )
+      rotation,
+    })
+    changePlacementDraft(draft)
     setCornerBarShapeSelectModalOpen(false)
+    const pending = pendingCornerBarPlacement
+    setPendingCornerBarPlacement(null)
+    if (pending) {
+      void insertCornerBarAt(draft, pending.center, pending.sizePx, {
+        dx: pending.dx,
+        dy: pending.dy,
+      })
+    }
   }
   const cornerBarDragMovedRef = useRef(false)
   /** 付加筋の線上にマウスがあるときだけカーソルを変える（配置待ちでも十字と区別） */
@@ -1211,9 +1229,23 @@ export function DrawingViewer({
     }
   }
 
-  async function insertCornerBarAt(draft: CornerBarPlacementDraft, pt: Point, sizePx: number) {
+  async function insertCornerBarAt(
+    draft: CornerBarPlacementDraft,
+    pt: Point,
+    sizePx: number,
+    drag?: { dx: number; dy: number },
+  ) {
     const shape = getCornerBarShape(draft.shapeType)
     if (!shape) return
+    const rotation = drag
+      ? cornerBarRotationFromDrag(
+          drag.dx,
+          drag.dy,
+          draft.category,
+          draft.shapeType,
+          draft.rotation,
+        )
+      : normalizeCornerBarRotation(draft.rotation)
     // 寸法は配置後に右パネルで入れる運用なので、辺だけ先に作る
     const row = {
       drawing_id: drawingId,
@@ -1225,7 +1257,7 @@ export function DrawingViewer({
       x: pt.x,
       y: pt.y,
       size_px: clampCornerBarSizePx(sizePx),
-      rotation: ((draft.rotation % 4) + 4) % 4,
+      rotation,
       color: cornerPlacementColor,
       label: null as string | null,
     }
@@ -1346,13 +1378,14 @@ export function DrawingViewer({
       const dy = pt.y - origin.y
       setCornerBarPlaceDrag(null)
       if (!isCornerBarDragPlacement(dx, dy)) return
+      const center = { x: origin.x + dx / 2, y: origin.y + dy / 2 }
+      const sizePx = cornerBarSizePxFromDrag(dx, dy)
       if (!placementDraft) {
+        setPendingCornerBarPlacement({ center, sizePx, dx, dy })
         setCornerBarShapeSelectModalOpen(true)
         return
       }
-      const center = { x: origin.x + dx / 2, y: origin.y + dy / 2 }
-      const sizePx = cornerBarSizePxFromDrag(dx, dy)
-      void insertCornerBarAt(placementDraft, center, sizePx)
+      void insertCornerBarAt(placementDraft, center, sizePx, { dx, dy })
     }
 
     window.addEventListener('mousemove', handleMove)
@@ -1739,12 +1772,19 @@ export function DrawingViewer({
                 x: cornerBarPlaceDrag.origin.x + dx / 2,
                 y: cornerBarPlaceDrag.origin.y + dy / 2,
               }
+              const previewRotation = cornerBarRotationFromDrag(
+                dx,
+                dy,
+                placementDraft.category,
+                placementDraft.shapeType,
+                placementDraft.rotation,
+              )
               const preview = cornerBarCanvasGeometry(
                 shapeDef,
                 makeCornerBarSegments(shapeDef),
                 center.x,
                 center.y,
-                placementDraft.rotation,
+                previewRotation,
                 cornerBarSizePxFromDrag(dx, dy),
               )
               ctx.beginPath()
@@ -1886,6 +1926,7 @@ export function DrawingViewer({
       if (e.key === 'Escape') {
         if (cornerBarShapeSelectModalOpen) {
           setCornerBarShapeSelectModalOpen(false)
+          setPendingCornerBarPlacement(null)
           return
         }
         if (lengthPresetDrawModalRef.current) {
@@ -4920,7 +4961,11 @@ export function DrawingViewer({
             <div className="px-6 py-4">
               <div
                 className={`grid gap-2 ${
-                  cornerBarPlacementCategory === 'CORNER' ? 'grid-cols-4' : 'grid-cols-3'
+                  cornerBarPlacementCategory === 'CORNER'
+                    ? 'grid-cols-4'
+                    : cornerBarPlacementCategory === 'SOE'
+                      ? 'grid-cols-2'
+                      : 'grid-cols-3'
                 }`}
               >
                 {cornerBarShapeModalOptions.map((option) => (
@@ -4956,7 +5001,10 @@ export function DrawingViewer({
             <div className="flex justify-end border-t border-border px-6 py-3">
               <button
                 type="button"
-                onClick={() => setCornerBarShapeSelectModalOpen(false)}
+                onClick={() => {
+                  setCornerBarShapeSelectModalOpen(false)
+                  setPendingCornerBarPlacement(null)
+                }}
                 className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:bg-gray-50"
               >
                 閉じる

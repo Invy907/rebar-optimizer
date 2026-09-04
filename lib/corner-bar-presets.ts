@@ -196,15 +196,13 @@ export function getCornerBarShapeOptionsForCategory(
   if (category === 'SOE') {
     const shape = getCornerBarShape('STRAIGHT')
     if (!shape) return []
-    return [
-      {
-        key: 'STRAIGHT-0',
-        shapeType: 'STRAIGHT',
-        rotation: 0,
-        label: shape.label,
-        shape,
-      },
-    ]
+    return [0, 1].map((rotation) => ({
+      key: `STRAIGHT-${rotation}`,
+      shapeType: 'STRAIGHT',
+      rotation,
+      label: rotation === 0 ? '横' : '縦',
+      shape,
+    }))
   }
   return CORNER_BAR_SHAPES.map((shape) => ({
     key: shape.id,
@@ -407,6 +405,23 @@ export function clampCornerBarSizePx(sizePx: number): number {
 /** ドラッグした矩形から大きさを決める。長辺をそのまま形状の長辺にする */
 export function cornerBarSizePxFromDrag(dx: number, dy: number): number {
   return clampCornerBarSizePx(Math.max(Math.abs(dx), Math.abs(dy)))
+}
+
+/**
+ * ドラッグ矩形から付加筋の向き（0/1/2/3）を推定する。
+ * 添え筋（ストレート）は長辺方向に伸ばす。縦長ドラッグなら 90° 回転。
+ */
+export function cornerBarRotationFromDrag(
+  dx: number,
+  dy: number,
+  category: CornerBarCategory,
+  shapeType: CornerBarShapeType,
+  fallbackRotation = 0,
+): number {
+  if (category === 'SOE' && shapeType === 'STRAIGHT') {
+    return Math.abs(dy) > Math.abs(dx) ? 1 : 0
+  }
+  return normalizeCornerBarRotation(fallbackRotation)
 }
 
 /** クリックだけでは配置しない。ドラッグ量が下限以上のときだけ true */

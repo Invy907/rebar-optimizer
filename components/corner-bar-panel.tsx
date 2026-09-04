@@ -441,7 +441,11 @@ export function CornerBarPanel({
               <span className="text-[10px] text-muted">形状</span>
               <div
                 className={`mt-1 grid gap-1.5 ${
-                  placementCategory === 'CORNER' ? 'grid-cols-4' : 'grid-cols-3'
+                  placementCategory === 'CORNER'
+                    ? 'grid-cols-4'
+                    : placementCategory === 'SOE'
+                      ? 'grid-cols-2'
+                      : 'grid-cols-3'
                 }`}
               >
                 {placementShapeOptions.map((option) => {
