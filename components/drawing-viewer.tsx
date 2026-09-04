@@ -26,6 +26,7 @@ import {
   getCornerBarShapeOptionsForCategory,
   isCornerBarDragPlacement,
   applyStandardSegmentLengths,
+  buildCornerBarPrintSummary,
   makeCornerBarDraft,
   makeCornerBarSegments,
   cornerBarThumbPath,
@@ -155,6 +156,22 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+}
+
+function buildCornerBarPrintSummaryHtml(
+  summary: ReturnType<typeof buildCornerBarPrintSummary>,
+  left: number,
+  top: number,
+  scale: number,
+): string {
+  const rows = summary.detailRows
+    .map((row) => {
+      const color = getSegmentStrokeHex(normalizeSegmentColor(row.color), false)
+      const label = `${cornerBarCategoryLabel(row.category)} ${row.diameter}`
+      return `<div class="corner-summary-row"><span class="corner-summary-label-wrap"><span class="corner-summary-chip" style="background:${color};"></span><span class="corner-summary-label">${escapeHtml(label)}</span></span><span class="corner-summary-qty">${row.qty} 本</span></div>`
+    })
+    .join('')
+  return `<div class="summary corner-summary" style="left:${left}px;top:${top}px;--sum-scale:${scale};"><div class="corner-summary-rows">${rows}</div></div>`
 }
 
 function buildDrawingPrintSummaryGroups(
@@ -614,6 +631,9 @@ export function DrawingViewer({
   const segmentLabelDragMovedRef = useRef(false)
   const [printSummaryPos, setPrintSummaryPos] = useState<Point>({ x: 24, y: 24 })
   const [printSummaryScale, setPrintSummaryScale] = useState(1)
+  const [cornerPrintSummaryPos, setCornerPrintSummaryPos] = useState<Point>({ x: 24, y: 24 })
+  const [cornerPrintSummaryScale, setCornerPrintSummaryScale] = useState(1)
+  const [printPreviewLayer, setPrintPreviewLayer] = useState<DrawingLayer>('unit')
   const [printModalImageUrl, setPrintModalImageUrl] = useState<string | null>(null)
   /** 印刷用画像の実サイズ（図面部分だけを切り出すため canvas とは異なる） */
   const [printImageSize, setPrintImageSize] = useState<{ w: number; h: number } | null>(
@@ -658,38 +678,6 @@ export function DrawingViewer({
     // supabase は createClient() の参照が変わるため依存に含めない
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 上記
   }, [serverUnits.length])
-
-  useEffect(() => {
-    if (!summaryDragging) return
-
-    function handleMove(ev: MouseEvent) {
-      const container = printPreviewRef.current
-      const drag = summaryDragRef.current
-      if (!container || !drag) return
-      const rect = container.getBoundingClientRect()
-      const nextX = ev.clientX - rect.left - drag.x
-      const nextY = ev.clientY - rect.top - drag.y
-      const boxEl = summaryBoxRef.current
-      const boxW = (boxEl?.offsetWidth ?? 120) * printSummaryScale
-      const boxH = (boxEl?.offsetHeight ?? 80) * printSummaryScale
-      setPrintSummaryPos({
-        x: Math.max(0, Math.min(nextX, Math.max(0, rect.width - boxW))),
-        y: Math.max(0, Math.min(nextY, Math.max(0, rect.height - boxH))),
-      })
-    }
-
-    function handleUp() {
-      summaryDragRef.current = null
-      setSummaryDragging(false)
-    }
-
-    window.addEventListener('mousemove', handleMove)
-    window.addEventListener('mouseup', handleUp)
-    return () => {
-      window.removeEventListener('mousemove', handleMove)
-      window.removeEventListener('mouseup', handleUp)
-    }
-  }, [summaryDragging, printSummaryScale])
 
   useEffect(() => {
     if (!segmentDrag) return
@@ -876,6 +864,54 @@ export function DrawingViewer({
     () => buildDrawingPrintSummaryGroups(segments, effectiveUnits),
     [segments, effectiveUnits],
   )
+  const cornerBarPrintSummary = useMemo(
+    () => buildCornerBarPrintSummary(cornerBars, normalizeSegmentColor),
+    [cornerBars],
+  )
+  const printPreviewHasSummary =
+    printPreviewLayer === 'corner'
+      ? cornerBars.length > 0
+      : drawingPrintSummaryGroups.length > 0
+  const activePrintSummaryPos =
+    printPreviewLayer === 'corner' ? cornerPrintSummaryPos : printSummaryPos
+  const activePrintSummaryScale =
+    printPreviewLayer === 'corner' ? cornerPrintSummaryScale : printSummaryScale
+  const setActivePrintSummaryPos =
+    printPreviewLayer === 'corner' ? setCornerPrintSummaryPos : setPrintSummaryPos
+  const setActivePrintSummaryScale =
+    printPreviewLayer === 'corner' ? setCornerPrintSummaryScale : setPrintSummaryScale
+
+  useEffect(() => {
+    if (!summaryDragging) return
+
+    function handleMove(ev: MouseEvent) {
+      const container = printPreviewRef.current
+      const drag = summaryDragRef.current
+      if (!container || !drag) return
+      const rect = container.getBoundingClientRect()
+      const nextX = ev.clientX - rect.left - drag.x
+      const nextY = ev.clientY - rect.top - drag.y
+      const boxEl = summaryBoxRef.current
+      const boxW = (boxEl?.offsetWidth ?? 120) * activePrintSummaryScale
+      const boxH = (boxEl?.offsetHeight ?? 80) * activePrintSummaryScale
+      setActivePrintSummaryPos({
+        x: Math.max(0, Math.min(nextX, Math.max(0, rect.width - boxW))),
+        y: Math.max(0, Math.min(nextY, Math.max(0, rect.height - boxH))),
+      })
+    }
+
+    function handleUp() {
+      summaryDragRef.current = null
+      setSummaryDragging(false)
+    }
+
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleUp)
+    }
+  }, [summaryDragging, activePrintSummaryScale, setActivePrintSummaryPos])
 
   function computeNextSegmentLabel(): string {
     const last = segmentsSortedForLabels[segmentsSortedForLabels.length - 1]
@@ -4187,6 +4223,8 @@ export function DrawingViewer({
     const img = imgRef.current
     if (!canvas || !imgLoaded) return
 
+    setPrintPreviewLayer(layer)
+
     // 図面部分だけを切り出す処理（用紙に合わせる用）。いまは既定動作に戻しているため無効。
     // 有効化すると印刷画像の座標系が変わるため、要約ボックスの位置を再調整する必要がある。
     const CROP_TO_DRAWING = false
@@ -4229,25 +4267,36 @@ export function DrawingViewer({
     const rect = preview.getBoundingClientRect()
     const scaleX = rect.width > 0 ? printImgW / rect.width : 1
     const scaleY = rect.height > 0 ? printImgH / rect.height : 1
-    const summaryLeft = Math.round(printSummaryPos.x * scaleX)
-    const summaryTop = Math.round(printSummaryPos.y * scaleY)
-    const summaryScale = Math.max(0.7, Math.min(1.8, printSummaryScale))
+    const summaryPos =
+      printPreviewLayer === 'corner' ? cornerPrintSummaryPos : printSummaryPos
+    const summaryScaleRaw =
+      printPreviewLayer === 'corner' ? cornerPrintSummaryScale : printSummaryScale
+    const summaryLeft = Math.round(summaryPos.x * scaleX)
+    const summaryTop = Math.round(summaryPos.y * scaleY)
+    const summaryScale = Math.max(0.7, Math.min(1.8, summaryScaleRaw))
     const summaryHtml =
-      drawingPrintSummaryGroups.length > 0
-        ? `<div class="summary" style="left:${summaryLeft}px;top:${summaryTop}px;--sum-scale:${summaryScale};">${drawingPrintSummaryGroups
-            .map((group) => {
-              const color = getSegmentStrokeHex(group.color, false)
-              const rows = group.rows
-                .map((row) =>
-                  `<div class="summary-row" style="color:${color};">${escapeHtml(
-                    `${circledSummaryNumber(row.no)}${row.len.toLocaleString('ja-JP')} × ${row.count}`,
-                  )}</div>`,
-                )
-                .join('')
-              return `<section class="summary-group"><h2>${escapeHtml(group.name)}</h2>${rows}</section>`
-            })
-            .join('')}</div>`
-        : ''
+      printPreviewLayer === 'corner' && cornerBars.length > 0
+        ? buildCornerBarPrintSummaryHtml(
+            cornerBarPrintSummary,
+            summaryLeft,
+            summaryTop,
+            summaryScale,
+          )
+        : drawingPrintSummaryGroups.length > 0
+          ? `<div class="summary" style="left:${summaryLeft}px;top:${summaryTop}px;--sum-scale:${summaryScale};">${drawingPrintSummaryGroups
+              .map((group) => {
+                const color = getSegmentStrokeHex(group.color, false)
+                const rows = group.rows
+                  .map((row) =>
+                    `<div class="summary-row" style="color:${color};">${escapeHtml(
+                      `${circledSummaryNumber(row.no)}${row.len.toLocaleString('ja-JP')} × ${row.count}`,
+                    )}</div>`,
+                  )
+                  .join('')
+                return `<section class="summary-group"><h2>${escapeHtml(group.name)}</h2>${rows}</section>`
+              })
+              .join('')}</div>`
+          : ''
 
     // 選択した用紙に「用紙に合わせる」相当でぴったり収める。
     // ブラウザの印刷ダイアログの倍率は JS から変更できないため、
@@ -4353,6 +4402,70 @@ export function DrawingViewer({
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
       font-size: calc(18px * var(--sum-scale, 1));
       white-space: nowrap;
+    }
+    .corner-summary {
+      min-width: calc(150px * var(--sum-scale, 1));
+      padding: calc(8px * var(--sum-scale, 1)) calc(12px * var(--sum-scale, 1));
+      background: rgba(255, 255, 255, 0.85);
+      border: 1px solid rgba(203, 213, 225, 0.7);
+      border-radius: calc(6px * var(--sum-scale, 1));
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+    }
+    .corner-summary-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: calc(4px * var(--sum-scale, 1));
+    }
+    .corner-summary-pill {
+      border-radius: calc(4px * var(--sum-scale, 1));
+      padding: calc(2px * var(--sum-scale, 1)) calc(6px * var(--sum-scale, 1));
+      font-size: calc(11px * var(--sum-scale, 1));
+      color: #64748b;
+      background: #f1f5f9;
+      white-space: nowrap;
+    }
+    .corner-summary-pill-active {
+      color: #0f172a;
+      background: rgba(37, 99, 235, 0.1);
+    }
+    .corner-summary-divider {
+      margin: calc(8px * var(--sum-scale, 1)) 0;
+      border-top: 1px solid #e2e8f0;
+    }
+    .corner-summary-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: calc(8px * var(--sum-scale, 1));
+      font-size: calc(11px * var(--sum-scale, 1));
+      color: #64748b;
+      white-space: nowrap;
+    }
+    .corner-summary-row + .corner-summary-row {
+      margin-top: calc(2px * var(--sum-scale, 1));
+    }
+    .corner-summary-chip {
+      display: inline-block;
+      width: calc(12px * var(--sum-scale, 1));
+      height: calc(12px * var(--sum-scale, 1));
+      border-radius: calc(2px * var(--sum-scale, 1));
+      flex-shrink: 0;
+    }
+    .corner-summary-label-wrap {
+      display: flex;
+      align-items: center;
+      gap: calc(6px * var(--sum-scale, 1));
+      flex: 1;
+      min-width: 0;
+    }
+    .corner-summary-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .corner-summary-qty {
+      color: #0f172a;
+      flex-shrink: 0;
     }
     @media print {
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }${printFitCss}
@@ -4789,12 +4902,16 @@ export function DrawingViewer({
                       : '印刷ダイアログで用紙・向き・倍率を選べます'}
                   </span>
                 </div>
-                {drawingPrintSummaryGroups.length > 0 && (
+                {printPreviewHasSummary && (
                   <div className="mt-2 inline-flex items-center gap-2 rounded border border-border bg-slate-50 px-2 py-1 text-xs">
                     <span className="text-muted">サイズ</span>
                     <button
                       type="button"
-                      onClick={() => setPrintSummaryScale((prev) => Math.max(0.7, Number((prev - 0.1).toFixed(2))))}
+                      onClick={() =>
+                        setActivePrintSummaryScale((prev) =>
+                          Math.max(0.7, Number((prev - 0.1).toFixed(2))),
+                        )
+                      }
                       className="rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-white"
                       aria-label="decrease summary size"
                     >
@@ -4805,23 +4922,27 @@ export function DrawingViewer({
                       min={70}
                       max={180}
                       step={5}
-                      value={Math.round(printSummaryScale * 100)}
+                      value={Math.round(activePrintSummaryScale * 100)}
                       onChange={(e) => {
                         const next = Number(e.target.value) / 100
-                        setPrintSummaryScale(Math.max(0.7, Math.min(1.8, next)))
+                        setActivePrintSummaryScale(Math.max(0.7, Math.min(1.8, next)))
                       }}
                       aria-label="summary size"
                     />
                     <button
                       type="button"
-                      onClick={() => setPrintSummaryScale((prev) => Math.min(1.8, Number((prev + 0.1).toFixed(2))))}
+                      onClick={() =>
+                        setActivePrintSummaryScale((prev) =>
+                          Math.min(1.8, Number((prev + 0.1).toFixed(2))),
+                        )
+                      }
                       className="rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-white"
                       aria-label="increase summary size"
                     >
                       +
                     </button>
                     <span className="w-10 text-right font-mono text-[11px] text-slate-700">
-                      {Math.round(printSummaryScale * 100)}%
+                      {Math.round(activePrintSummaryScale * 100)}%
                     </span>
                   </div>
                 )}
@@ -4858,14 +4979,14 @@ export function DrawingViewer({
                   className="block max-h-[72vh] max-w-full select-none"
                   draggable={false}
                 />
-                {drawingPrintSummaryGroups.length > 0 && (
+                {printPreviewHasSummary && (
                   <div
                     ref={summaryBoxRef}
                     className="absolute z-20 min-w-[150px] cursor-move select-none rounded-md border border-slate-300/70 bg-white/85 px-3 py-2 shadow-sm backdrop-blur-[1px]"
                     style={{
-                      left: printSummaryPos.x,
-                      top: printSummaryPos.y,
-                      transform: `scale(${printSummaryScale})`,
+                      left: activePrintSummaryPos.x,
+                      top: activePrintSummaryPos.y,
+                      transform: `scale(${activePrintSummaryScale})`,
                       transformOrigin: 'top left',
                     }}
                     onMouseDown={(ev) => {
@@ -4879,29 +5000,56 @@ export function DrawingViewer({
                     }}
                     title="Drag to set print position"
                   >
-                    <div className="space-y-4">
-                      {drawingPrintSummaryGroups.map((group) => {
-                        const color = getSegmentStrokeHex(group.color, false)
-                        return (
-                          <section key={group.key}>
-                            <div className="text-sm font-bold leading-none text-slate-500">
-                              {group.name}
-                            </div>
-                            <div className="space-y-0.5 font-mono text-[13px] font-bold leading-tight">
-                              {group.rows.map((row) => (
-                                <div
-                                  key={`${group.key}-${row.no ?? 'none'}-${row.len}`}
-                                  style={{ color }}
-                                >
-                                  {circledSummaryNumber(row.no)}
-                                  {row.len.toLocaleString('ja-JP')} × {row.count}
-                                </div>
-                              ))}
-                            </div>
-                          </section>
-                        )
-                      })}
-                    </div>
+                    {printPreviewLayer === 'corner' ? (
+                      <div className="space-y-0.5">
+                        {cornerBarPrintSummary.detailRows.map((row) => (
+                          <div
+                            key={`${row.category}/${row.diameter}/${row.color}`}
+                            className="flex items-center justify-between gap-2 text-[10px] text-muted"
+                          >
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span
+                                className="h-3 w-3 shrink-0 rounded-sm"
+                                style={{
+                                  backgroundColor: getSegmentStrokeHex(
+                                    normalizeSegmentColor(row.color),
+                                    false,
+                                  ),
+                                }}
+                              />
+                              <span className="truncate">
+                                {cornerBarCategoryLabel(row.category)} {row.diameter}
+                              </span>
+                            </span>
+                            <span className="shrink-0 text-foreground">{row.qty} 本</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {drawingPrintSummaryGroups.map((group) => {
+                          const color = getSegmentStrokeHex(group.color, false)
+                          return (
+                            <section key={group.key}>
+                              <div className="text-sm font-bold leading-none text-slate-500">
+                                {group.name}
+                              </div>
+                              <div className="space-y-0.5 font-mono text-[13px] font-bold leading-tight">
+                                {group.rows.map((row) => (
+                                  <div
+                                    key={`${group.key}-${row.no ?? 'none'}-${row.len}`}
+                                    style={{ color }}
+                                  >
+                                    {circledSummaryNumber(row.no)}
+                                    {row.len.toLocaleString('ja-JP')} × {row.count}
+                                  </div>
+                                ))}
+                              </div>
+                            </section>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

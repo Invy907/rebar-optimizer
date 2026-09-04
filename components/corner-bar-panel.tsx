@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react'
 import type { DrawingCornerBar } from '@/lib/types/database'
 import {
   applyStandardSegmentLengths,
+  buildCornerBarPrintSummary,
   clampCornerBarSizePx,
   CORNER_BAR_CATEGORIES,
   CORNER_BAR_DIAMETERS,
@@ -86,36 +87,10 @@ export function CornerBarPanel({
   )
   const currentSizePx = clampCornerBarSizePx(selected?.size_px ?? DEFAULT_CORNER_BAR_SIZE_PX)
 
-  /** 筋種類ごとの本数。図面に 1 つ配置したものが 1 本なので配置数を数える */
-  const countByCategory = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const cb of cornerBars) {
-      map.set(cb.category, (map.get(cb.category) ?? 0) + 1)
-    }
-    return map
-  }, [cornerBars])
-
-  /** 筋種類 × 鉄筋径 × 色の集計 */
-  const countByCategoryDiameter = useMemo(() => {
-    const map = new Map<
-      string,
-      { category: string; diameter: string; color: SegmentColor; qty: number }
-    >()
-    for (const cb of cornerBars) {
-      const diameter = cb.diameter ?? '径未設定'
-      const color = normalizeSegmentColor(cb.color ?? 'red')
-      const key = `${cb.category}/${diameter}/${color}`
-      const prev = map.get(key)
-      if (prev) prev.qty += 1
-      else map.set(key, { category: cb.category, diameter, color, qty: 1 })
-    }
-    return [...map.values()].sort(
-      (a, b) =>
-        a.category.localeCompare(b.category) ||
-        a.diameter.localeCompare(b.diameter) ||
-        a.color.localeCompare(b.color),
-    )
-  }, [cornerBars])
+  const printSummary = useMemo(
+    () => buildCornerBarPrintSummary(cornerBars, normalizeSegmentColor),
+    [cornerBars],
+  )
 
   function patchDraft(patch: Partial<CornerBarPlacementDraft>) {
     if (!placementDraft) return
@@ -379,7 +354,8 @@ export function CornerBarPanel({
           </div>
         )}
 
-        {/* 配置設定: 筋種類・鉄筋径・向きを決めてから形状を選ぶ（ユニットのユニット選択と同様、編集中も表示） */}
+        {/* 配置設定: 選択中は非表示（編集パネルと混同しないよう） */}
+        {!selected && (
         <div className="border-b border-border p-3 space-y-2">
             <div className="grid grid-cols-2 gap-2">
               <label className="text-[10px] text-muted">
@@ -497,6 +473,7 @@ export function CornerBarPanel({
             </div>
 
         </div>
+        )}
 
         {/* Summary */}
         {cornerBars.length === 0 ? (
@@ -506,22 +483,19 @@ export function CornerBarPanel({
         ) : (
           <div className="border-t border-border px-4 py-3 space-y-2">
             <div className="flex flex-wrap gap-1">
-              {CORNER_BAR_CATEGORIES.map((c) => {
-                const n = countByCategory.get(c.id) ?? 0
-                return (
-                  <span
-                    key={c.id}
-                    className={`rounded px-1.5 py-0.5 text-[10px] ${
-                      n > 0 ? 'bg-primary/10 text-foreground' : 'bg-gray-100 text-muted'
-                    }`}
-                  >
-                    {c.label} <span className="font-semibold">{n}</span>
-                  </span>
-                )
-              })}
+              {printSummary.categoryCounts.map((c) => (
+                <span
+                  key={c.category}
+                  className={`rounded px-1.5 py-0.5 text-[10px] ${
+                    c.count > 0 ? 'bg-primary/10 text-foreground' : 'bg-gray-100 text-muted'
+                  }`}
+                >
+                  {c.label} <span className="font-semibold">{c.count}</span>
+                </span>
+              ))}
             </div>
             <div className="space-y-0.5 border-t border-border pt-1.5">
-              {countByCategoryDiameter.map((row) => (
+              {printSummary.detailRows.map((row) => (
                 <div
                   key={`${row.category}/${row.diameter}/${row.color}`}
                   className="flex items-center justify-between gap-2 text-[10px] text-muted"
@@ -529,7 +503,12 @@ export function CornerBarPanel({
                   <span className="flex min-w-0 items-center gap-1.5">
                     <span
                       className="h-3 w-3 shrink-0 rounded-sm"
-                      style={{ backgroundColor: getSegmentStrokeHex(row.color, false) }}
+                      style={{
+                        backgroundColor: getSegmentStrokeHex(
+                          normalizeSegmentColor(row.color),
+                          false,
+                        ),
+                      }}
                     />
                     <span className="truncate">
                       {cornerBarCategoryLabel(row.category)} {row.diameter}

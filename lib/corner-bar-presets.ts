@@ -2,7 +2,7 @@
  * 図面詳細画面の「コーナー筋」タブで扱う鉄筋オブジェクトのモデル。
  *
  * ユニット編集の派生ではなく、図面レベルの独立したオブジェクトとして扱う。
- * 将来 大コーナー・曲筋・玄関落とし筋 などが増えても構造を変えずに済むよう、
+ * 将来 曲筋・玄関落とし筋 などが増えても構造を変えずに済むよう、
  * 次の 2 軸を分離している。
  *
  *   category  … 筋種類（コーナー筋 / 添え筋 / 特殊コーナー筋 …）
@@ -30,7 +30,7 @@ export function measurementTypeLabel(value: MeasurementType | null | undefined):
 }
 
 /** 筋種類。UI ラベルは日本語、保存値は英字キー */
-export type CornerBarCategory = 'CORNER' | 'SOE' | 'BIG_CORNER' | 'SPECIAL_CORNER'
+export type CornerBarCategory = 'CORNER' | 'SOE' | 'SPECIAL_CORNER'
 
 export const CORNER_BAR_CATEGORIES: Array<{
   id: CornerBarCategory
@@ -38,11 +38,11 @@ export const CORNER_BAR_CATEGORIES: Array<{
 }> = [
   { id: 'CORNER', label: 'コーナー筋' },
   { id: 'SOE', label: '添え筋' },
-  { id: 'BIG_CORNER', label: '大コーナー' },
   { id: 'SPECIAL_CORNER', label: '特殊コーナー筋' },
 ]
 
 const LEGACY_CORNER_BAR_CATEGORY_LABELS: Record<string, string> = {
+  BIG_CORNER: '特殊コーナー筋',
   PARTIAL_REINFORCE: '部分補強筋',
   BENT: '曲筋',
   GENKAN_DROP: '玄関落とし筋',
@@ -583,6 +583,71 @@ export function cornerBarThumbPath(
       return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`
     })
     .join(' ')
+}
+
+// --- 印刷要約（パネル下部・印刷プレビューで共有） -------------------------
+
+export type CornerBarPrintSummaryCategoryCount = {
+  category: CornerBarCategory
+  label: string
+  count: number
+}
+
+export type CornerBarPrintSummaryDetailRow = {
+  category: string
+  diameter: string
+  color: string
+  qty: number
+}
+
+export type CornerBarPrintSummary = {
+  categoryCounts: CornerBarPrintSummaryCategoryCount[]
+  detailRows: CornerBarPrintSummaryDetailRow[]
+}
+
+type CornerBarForPrintSummary = {
+  category: string
+  diameter: string | null
+  color: string
+}
+
+/** 付加筋パネル下部・印刷要約ボックス用の集計 */
+export function buildCornerBarPrintSummary(
+  cornerBars: CornerBarForPrintSummary[],
+  normalizeColor: (color: string) => string = (c) => c,
+): CornerBarPrintSummary {
+  const countByCategory = new Map<string, number>()
+  for (const cb of cornerBars) {
+    countByCategory.set(cb.category, (countByCategory.get(cb.category) ?? 0) + 1)
+  }
+
+  const categoryCounts = CORNER_BAR_CATEGORIES.map((c) => ({
+    category: c.id,
+    label: c.label,
+    count: countByCategory.get(c.id) ?? 0,
+  })).filter((c) => c.count > 0)
+
+  const detailMap = new Map<
+    string,
+    { category: string; diameter: string; color: string; qty: number }
+  >()
+  for (const cb of cornerBars) {
+    const diameter = cb.diameter ?? '径未設定'
+    const color = normalizeColor(cb.color ?? 'red')
+    const key = `${cb.category}/${diameter}/${color}`
+    const prev = detailMap.get(key)
+    if (prev) prev.qty += 1
+    else detailMap.set(key, { category: cb.category, diameter, color, qty: 1 })
+  }
+
+  const detailRows = [...detailMap.values()].sort(
+    (a, b) =>
+      a.category.localeCompare(b.category) ||
+      a.diameter.localeCompare(b.diameter) ||
+      a.color.localeCompare(b.color),
+  )
+
+  return { categoryCounts, detailRows }
 }
 
 // --- 配置前の設定 -------------------------------------------------------
