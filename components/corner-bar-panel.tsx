@@ -17,6 +17,7 @@ import {
   cornerBarRotationLabel,
   cornerBarSegmentSumMm,
   cornerBarThumbPath,
+  changeCornerBarBarDiameter,
   DEFAULT_CORNER_BAR_DIAMETER,
   DEFAULT_CORNER_BAR_SIZE_PX,
   getCornerBarShape,
@@ -67,7 +68,7 @@ export function CornerBarPanel({
   onUndo,
 }: {
   cornerBars: DrawingCornerBar[]
-  /** 付加筋 集計結果ページへのリンク先 */
+  /** 結果ページへのリンク先。末尾に付加筋 集計結果が付く */
   summaryHref: string
   selectedCornerBarId: string | null
   /** 配置ツールが有効なときだけ配置設定を表示 */
@@ -164,16 +165,17 @@ export function CornerBarPanel({
     onUpdate(selected.id, updates)
   }
 
-  /** 径を変えたら、その径の標準寸法を辺に入れ直す */
+  /** 径を変えたら、その径の標準寸法を辺に入れ直す（標準が無い径は空にする） */
   function handleSelectedBarTypeChange(index: number, barType: string) {
     if (!selected || !selectedShape || !selectedBars) return
     const bar = selectedBars[index]
     if (!bar) return
-    const next = makeCornerBarBar(selectedShape, selected.category as CornerBarCategory, barType, {
-      id: bar.id,
-      quantity: bar.quantity,
-      segments: bar.segments,
-    })
+    const next = changeCornerBarBarDiameter(
+      selectedShape,
+      selected.category as CornerBarCategory,
+      bar,
+      barType,
+    )
     commitSelectedBars(selectedBars.map((b, i) => (i === index ? next : b)))
   }
 
@@ -234,11 +236,12 @@ export function CornerBarPanel({
     if (!placementDraft || !placementShape) return
     const bar = placementDraft.bars[index]
     if (!bar) return
-    const next = makeCornerBarBar(placementShape, placementDraft.category, barType, {
-      id: bar.id,
-      quantity: bar.quantity,
-      segments: bar.segments,
-    })
+    const next = changeCornerBarBarDiameter(
+      placementShape,
+      placementDraft.category,
+      bar,
+      barType,
+    )
     commitPlacementBars(placementDraft.bars.map((b, i) => (i === index ? next : b)))
   }
 
@@ -246,6 +249,25 @@ export function CornerBarPanel({
     if (!placementDraft) return
     commitPlacementBars(
       placementDraft.bars.map((b, i) => (i === index ? { ...b, quantity } : b)),
+    )
+  }
+
+  /** 配置前でも辺の寸法・基準を直せる。配置したらそのまま保存される */
+  function handlePlacementSegmentChange(
+    barIndex: number,
+    segIndex: number,
+    patch: Partial<CornerBarSegment>,
+  ) {
+    if (!placementDraft) return
+    commitPlacementBars(
+      placementDraft.bars.map((bar, i) =>
+        i === barIndex
+          ? {
+              ...bar,
+              segments: bar.segments.map((s, j) => (j === segIndex ? { ...s, ...patch } : s)),
+            }
+          : bar,
+      ),
     )
   }
 
@@ -413,45 +435,6 @@ export function CornerBarPanel({
               </select>
             </label>
 
-            {/* ここでは径と本数だけ決める。辺の寸法は標準値が入り、配置後に調整する */}
-            <CornerBarBarsField
-              category={placementCategory}
-              bars={placementBars}
-              showSegments={false}
-              disabled={!placementDraft}
-              onChangeBarType={handlePlacementBarTypeChange}
-              onChangeQuantity={handlePlacementQuantityChange}
-              onAdd={handleAddPlacementBar}
-              onRemove={handleRemovePlacementBar}
-            />
-            {!placementDraft && (
-              <p className="text-[10px] text-muted">
-                先に形状を選ぶと鉄筋を設定できます。
-              </p>
-            )}
-
-            <label className="text-[10px] text-muted">
-              色
-              <ColorSelect value={placementColor} onChange={onPlacementColorChange} />
-            </label>
-
-            {/* 配置する向き。これは「これから置くもの」にだけ効く */}
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-muted">向き</span>
-              <button
-                type="button"
-                onClick={() =>
-                  patchDraft({ rotation: nextCornerBarRotation(placementDraft?.rotation ?? 0) })
-                }
-                disabled={!placementDraft}
-                className="rounded border border-border bg-white px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-40"
-                title="90度ずつ回します"
-              >
-                ↻ {cornerBarRotationLabel(placementDraft?.rotation ?? 0)}
-              </button>
-              <span className="text-[10px] text-muted">これから配置するもの</span>
-            </div>
-
             {/* 添え筋＝ストレート、コーナー筋＝L形 4 向き。それ以外は全形状 */}
             <div>
               <span className="text-[10px] text-muted">形状</span>
@@ -512,6 +495,49 @@ export function CornerBarPanel({
               </div>
             </div>
 
+            {/* 配置する向き。これは「これから置くもの」にだけ効く */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-muted">向き</span>
+              <button
+                type="button"
+                onClick={() =>
+                  patchDraft({ rotation: nextCornerBarRotation(placementDraft?.rotation ?? 0) })
+                }
+                disabled={!placementDraft}
+                className="rounded border border-border bg-white px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-40"
+                title="90度ずつ回します"
+              >
+                ↻ {cornerBarRotationLabel(placementDraft?.rotation ?? 0)}
+              </button>
+              <span className="text-[10px] text-muted">これから配置するもの</span>
+            </div>
+
+            {/* 径と本数に加えて辺の寸法もここで決める。配置後も右パネルで直せる */}
+            <CornerBarBarsField
+              category={placementCategory}
+              bars={placementBars}
+              showSegments
+              disabled={!placementDraft}
+              onChangeBarType={handlePlacementBarTypeChange}
+              onChangeQuantity={handlePlacementQuantityChange}
+              onChangeSegment={handlePlacementSegmentChange}
+              onAdd={handleAddPlacementBar}
+              onRemove={handleRemovePlacementBar}
+            />
+            {!placementDraft ? (
+              <p className="text-[10px] text-muted">
+                先に形状を選ぶと鉄筋を設定できます。
+              </p>
+            ) : (
+              !isCornerBarBarsFullyDimensioned(placementDraft.bars) && (
+                <p className="text-[10px] text-amber-700">寸法が未入力の辺があります。</p>
+              )
+            )}
+
+            <label className="text-[10px] text-muted">
+              色
+              <ColorSelect value={placementColor} onChange={onPlacementColorChange} />
+            </label>
         </div>
         )}
 
@@ -527,7 +553,7 @@ export function CornerBarPanel({
               onClick={() => startGlobalLoading()}
               className="block rounded-md bg-primary px-2 py-1.5 text-center text-[11px] font-medium text-white hover:bg-primary-hover"
             >
-              集計結果を見る
+              結果ページを見る
             </Link>
             <div className="flex flex-wrap gap-1">
               {printSummary.categoryCounts.map((c) => (

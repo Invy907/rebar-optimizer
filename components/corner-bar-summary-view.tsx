@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useMemo } from 'react'
 import {
   aggregateAdditionalRebars,
@@ -149,49 +148,27 @@ function GroupSection({ group }: { group: AdditionalRebarGroup }) {
   )
 }
 
-export function CornerBarSummaryView({
+/**
+ * 付加筋 集計結果の本体。
+ *
+ * 切断最適化の結果ページの末尾に差し込んで使うので、戻るリンクや印刷ボタンは
+ * 持たない（ページ側のものをそのまま使う）。
+ */
+export function CornerBarSummarySections({
   placements,
-  backHref,
 }: {
   placements: AdditionalRebarPlacementLike[]
-  backHref: string
 }) {
   const summary = useMemo(() => aggregateAdditionalRebars(placements), [placements])
 
-  const backLink = (
-    <Link
-      href={backHref}
-      className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-gray-50"
-    >
-      図面に戻る
-    </Link>
-  )
-
   if (summary.groups.length === 0) {
     return (
-      <div className="rounded-lg border border-border bg-white p-8 text-center">
-        <p className="mb-5 text-base text-muted">付加筋がまだ配置されていません。</p>
-        <div className="flex justify-center">{backLink}</div>
-      </div>
+      <p className="text-sm text-muted">付加筋がまだ配置されていません。</p>
     )
   }
 
   return (
     <div className="corner-summary-print-root space-y-5">
-      <div className="flex flex-wrap items-center gap-2 print:hidden">
-        {backLink}
-        <button
-          type="button"
-          onClick={() => window.print()}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-        >
-          印刷
-        </button>
-        <span className="ml-auto text-sm text-muted">
-          合計 <span className="font-semibold text-foreground">{summary.totalQuantity.toLocaleString('ja-JP')}</span> 本
-        </span>
-      </div>
-
       {summary.groups.map((group) => (
         <GroupSection key={group.category} group={group} />
       ))}

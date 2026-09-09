@@ -549,6 +549,47 @@ export function makeCornerBarBar(
 }
 
 /**
+ * 径だけを変えた鉄筋 1 件を作る。
+ *
+ * 辺は新しい径の標準寸法で入れ替える。標準を持つ筋種類（コーナー筋・添え筋）で
+ * 標準が無い径（D22 / D25）を選んだときは空にする。前の径の値をそのまま残すと、
+ * 違う径の寸法が入ったままだと気づかずに配置されてしまうため。
+ * もともと標準を持たない筋種類は手入力なので、入力済みの値は残す。
+ */
+export function changeCornerBarBarDiameter(
+  shape: CornerBarShapeDef,
+  category: CornerBarCategory,
+  bar: CornerBarBarItem,
+  barType: string,
+): CornerBarBarItem {
+  const standard = getStandardSegmentLengthsMm(
+    category,
+    barType,
+    shape.id as CornerBarShapeType,
+  )
+  const clearWhenNoStandard = hasStandardSegmentLengths(category)
+  return {
+    id: bar.id,
+    barType,
+    quantity: normalizeBarQuantity(bar.quantity),
+    segments: shape.directions.map((_, i) => {
+      const prev = bar.segments[i]
+      return {
+        id: prev?.id ?? `s${i + 1}`,
+        lengthMm: standard?.[i] ?? (clearWhenNoStandard ? null : prev?.lengthMm ?? null),
+        measurementType: prev?.measurementType ?? null,
+        ...(Number.isFinite(Number(prev?.labelOffsetX))
+          ? { labelOffsetX: Number(prev?.labelOffsetX) }
+          : {}),
+        ...(Number.isFinite(Number(prev?.labelOffsetY))
+          ? { labelOffsetY: Number(prev?.labelOffsetY) }
+          : {}),
+      }
+    }),
+  }
+}
+
+/**
  * 保存済みの bars を形状に合わせて整える。
  * bars が空の古い行は diameter / segments から 1 件に組み立てる。
  */

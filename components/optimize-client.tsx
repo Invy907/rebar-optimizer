@@ -2,7 +2,8 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { DrawingSegment, Unit } from '@/lib/types/database'
+import type { DrawingCornerBar, DrawingSegment, Unit } from '@/lib/types/database'
+import { CornerBarSummarySections } from '@/components/corner-bar-summary-view'
 import { createClient } from '@/lib/supabase/client'
 import { getSegmentLabelMap } from '@/lib/segment-labels'
 import { optimize, type PieceInput, type OptimizationOutput } from '@/lib/optimizer'
@@ -93,6 +94,7 @@ export function OptimizeClient({
   initialPieceLengthAdjustmentMm = DEFAULT_PIECE_LENGTH_ADJUSTMENT_MM,
   autoRun = false,
   units: initialUnits = [],
+  cornerBars = [],
 }: {
   projectId: string
   segments: DrawingSegment[]
@@ -100,6 +102,8 @@ export function OptimizeClient({
   initialPieceLengthAdjustmentMm?: number
   autoRun?: boolean
   units?: Unit[]
+  /** 現場内の全図面の付加筋。切断最適化とは別に、結果の最後に集計して出す */
+  cornerBars?: DrawingCornerBar[]
 }) {
   const [units, setUnits] = useState(initialUnits)
   const segmentLabelById = getSegmentLabelMap(segments)
@@ -417,6 +421,14 @@ export function OptimizeClient({
             onShapeLengthSave={handleShapeLengthSave}
             manufactureTotalsByUnitId={manufactureTotalsByUnitId}
           />
+        </section>
+      )}
+
+      {/* 付加筋 集計結果。切断最適化の対象外なので、既存の結果の後ろに続けて出す */}
+      {cornerBars.length > 0 && !calculating && (
+        <section className="optimize-print-corner-bars space-y-4">
+          <h2 className="text-base font-semibold">付加筋 集計結果</h2>
+          <CornerBarSummarySections placements={cornerBars} />
         </section>
       )}
     </div>

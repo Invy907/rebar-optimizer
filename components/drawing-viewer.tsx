@@ -4784,7 +4784,7 @@ export function DrawingViewer({
       {layer === 'corner' ? (
       <CornerBarPanel
         cornerBars={cornerBars}
-        summaryHref={`/projects/${projectId}/drawings/${drawingId}/corner-bars`}
+        summaryHref={`/projects/${projectId}/optimize?run=1`}
         selectedCornerBarId={selectedCornerBarId}
         placementModeActive={cornerTool === 'place'}
         placementDraft={placementDraft}
