@@ -49,6 +49,7 @@ const SIZE_STEP = 1.25
 export function CornerBarPanel({
   cornerBars,
   selectedCornerBarId,
+  placementModeActive,
   placementDraft,
   placementColor,
   onPlacementColorChange,
@@ -62,6 +63,8 @@ export function CornerBarPanel({
 }: {
   cornerBars: DrawingCornerBar[]
   selectedCornerBarId: string | null
+  /** 配置ツールが有効なときだけ配置設定を表示 */
+  placementModeActive: boolean
   placementDraft: CornerBarPlacementDraft | null
   placementColor: SegmentColor
   onPlacementColorChange: (color: SegmentColor) => void
@@ -354,8 +357,8 @@ export function CornerBarPanel({
           </div>
         )}
 
-        {/* 配置設定: 選択中は非表示（編集パネルと混同しないよう） */}
-        {!selected && (
+        {/* 配置設定: 配置ツール中のみ（選択モードでは一覧・要約だけ） */}
+        {!selected && placementModeActive && (
         <div className="border-b border-border p-3 space-y-2">
             <div className="grid grid-cols-2 gap-2">
               <label className="text-[10px] text-muted">

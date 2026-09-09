@@ -1735,7 +1735,7 @@ export function DrawingViewer({
           ctx.restore()
         }
 
-        // 辺ごとの寸法を辺の外側に置く。寸法基準（芯々／内々）は選択中だけ添える
+        // 辺ごとの寸法を辺の外側に置く。寸法基準（芯々／内々）も常に表示
         ctx.save()
         ctx.font = `${12 / scale}px sans-serif`
         ctx.textAlign = 'center'
@@ -1749,7 +1749,7 @@ export function DrawingViewer({
           const text =
             seg.lengthMm == null
               ? '?'
-              : isSelected && seg.measurementType
+              : seg.measurementType
                 ? `${seg.lengthMm} ${basis}`
                 : String(seg.lengthMm)
 
@@ -4826,6 +4826,7 @@ export function DrawingViewer({
       <CornerBarPanel
         cornerBars={cornerBars}
         selectedCornerBarId={selectedCornerBarId}
+        placementModeActive={cornerTool === 'place'}
         placementDraft={placementDraft}
         placementColor={cornerPlacementColor}
         onPlacementColorChange={setCornerPlacementColor}
