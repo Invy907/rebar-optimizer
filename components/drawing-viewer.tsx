@@ -25,14 +25,12 @@ import {
   getCornerBarShape,
   getCornerBarShapeOptionsForCategory,
   isCornerBarDragPlacement,
-  applyStandardSegmentLengths,
   buildCornerBarPrintSummary,
+  cornerBarLegacyFieldsFromBars,
   makeCornerBarDraft,
   makeCornerBarSegments,
   cornerBarThumbPath,
   normalizeCornerBarRotation,
-  measurementTypeLabel,
-  normalizeCornerBarSegments,
   type CornerBarCategory,
   type CornerBarGeometry,
   type CornerBarPlacementDraft,
@@ -590,10 +588,7 @@ export function DrawingViewer({
     rotation: number,
   ) {
     const draft = makeCornerBarDraft(shapeType, {
-      ...(placementDraft ?? {
-        category: cornerBarPlacementCategory,
-        diameter: 'D13',
-      }),
+      ...(placementDraft ?? { category: cornerBarPlacementCategory }),
       rotation,
     })
     changePlacementDraft(draft)
@@ -1192,14 +1187,16 @@ export function DrawingViewer({
     [getSegmentLabelRenderInfo, scale],
   )
 
-  /** 保存済みのコーナー筋を、図面座標系の折れ線に展開する */
+  /**
+   * 保存済みの付加筋を、図面座標系の折れ線に展開する。
+   * 図面上の形は形状の既定比率と size_px だけで決まり、辺の寸法(mm)は使わない。
+   */
   const cornerBarGeometryOf = useCallback((cb: DrawingCornerBar): CornerBarGeometry | null => {
     const shape = getCornerBarShape(cb.shape_type)
     if (!shape) return null
-    const segments = normalizeCornerBarSegments(shape, cb.segments)
     return cornerBarCanvasGeometry(
       shape,
-      segments,
+      [],
       cb.x,
       cb.y,
       cb.rotation,
@@ -1282,14 +1279,15 @@ export function DrawingViewer({
           draft.rotation,
         )
       : normalizeCornerBarRotation(draft.rotation)
-    // 寸法は配置後に右パネルで入れる運用なので、辺だけ先に作る
+    // draft の bars は makeCornerBarDraft で形状に合わせて正規化済み
+    const bars = draft.bars
     const row = {
       drawing_id: drawingId,
       page_no: 1,
       category: draft.category,
       shape_type: shape.id,
-      diameter: draft.diameter,
-      segments: applyStandardSegmentLengths(shape, draft.category, draft.diameter),
+      bars,
+      ...cornerBarLegacyFieldsFromBars(bars),
       x: pt.x,
       y: pt.y,
       size_px: clampCornerBarSizePx(sizePx),
@@ -1320,6 +1318,7 @@ export function DrawingViewer({
       page_no: source.page_no,
       category: source.category,
       shape_type: source.shape_type,
+      bars: source.bars,
       diameter: source.diameter,
       segments: source.segments,
       x: source.x + offsetPx,
@@ -1684,10 +1683,8 @@ export function DrawingViewer({
 
     if (layer === 'corner') {
       cornerBars.forEach((cb) => {
-        const shapeDef = getCornerBarShape(cb.shape_type)
         const geometry = cornerBarGeometryOf(cb)
-        if (!shapeDef || !geometry) return
-        const barSegments = normalizeCornerBarSegments(shapeDef, cb.segments)
+        if (!geometry) return
         const isSelected = cb.id === selectedCornerBarId
         const strokeHex = getSegmentStrokeHex(cb.color, isSelected)
 
@@ -1721,7 +1718,6 @@ export function DrawingViewer({
         const xs = geometry.points.map((p) => p.x)
         const ys = geometry.points.map((p) => p.y)
         const cx = (Math.min(...xs) + Math.max(...xs)) / 2
-        const cy = (Math.min(...ys) + Math.max(...ys)) / 2
 
         // 曲げ位置が分かるように、選択中は中間の節点に印を打つ
         if (isSelected) {
@@ -1735,46 +1731,8 @@ export function DrawingViewer({
           ctx.restore()
         }
 
-        // 辺ごとの寸法を辺の外側に置く。寸法基準（芯々／内々）も常に表示
-        ctx.save()
-        ctx.font = `${12 / scale}px sans-serif`
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.lineWidth = 3 / scale
-        ctx.strokeStyle = 'rgba(255,255,255,0.92)'
-        cornerBarSegmentLines(geometry).forEach(({ index, p1, p2 }) => {
-          const seg = barSegments[index]
-          if (!seg) return
-          const basis = measurementTypeLabel(seg.measurementType)
-          const text =
-            seg.lengthMm == null
-              ? '?'
-              : seg.measurementType
-                ? `${seg.lengthMm} ${basis}`
-                : String(seg.lengthMm)
-
-          const mx = (p1.x + p2.x) / 2
-          const my = (p1.y + p2.y) / 2
-          const dx = p2.x - p1.x
-          const dy = p2.y - p1.y
-          const len = Math.hypot(dx, dy) || 1
-          // 辺に直交する向きのうち、形状の外側を向くほうへずらす
-          let nx = -dy / len
-          let ny = dx / len
-          if (nx * (mx - cx) + ny * (my - cy) < 0) {
-            nx = -nx
-            ny = -ny
-          }
-          const gap = 13 / scale
-          const lx = mx + nx * gap + (seg.labelOffsetX ?? 0)
-          const ly = my + ny * gap + (seg.labelOffsetY ?? 0)
-
-          ctx.strokeText(text, lx, ly)
-          ctx.fillStyle = seg.lengthMm == null ? '#b45309' : strokeHex
-          ctx.fillText(text, lx, ly)
-        })
-        ctx.restore()
-
+        // 寸法は径ごとに違うため図面には出さない。位置と形だけを描き、
+        // 実寸は右パネルで径ごとに確認・修正する
         if (cb.label) {
           const top = Math.min(...ys)
           ctx.save()
@@ -4085,6 +4043,7 @@ export function DrawingViewer({
           rotation: before.rotation,
           category: before.category,
           shape_type: before.shape_type,
+          bars: before.bars,
           diameter: before.diameter,
           segments: before.segments,
           color: before.color,
@@ -4825,6 +4784,7 @@ export function DrawingViewer({
       {layer === 'corner' ? (
       <CornerBarPanel
         cornerBars={cornerBars}
+        summaryHref={`/projects/${projectId}/drawings/${drawingId}/corner-bars`}
         selectedCornerBarId={selectedCornerBarId}
         placementModeActive={cornerTool === 'place'}
         placementDraft={placementDraft}
@@ -5112,7 +5072,8 @@ export function DrawingViewer({
                 className={`grid gap-2 ${
                   cornerBarPlacementCategory === 'CORNER'
                     ? 'grid-cols-4'
-                    : cornerBarPlacementCategory === 'SOE'
+                    : cornerBarPlacementCategory === 'SOE' ||
+                        cornerBarPlacementCategory === 'SPECIAL_CORNER'
                       ? 'grid-cols-2'
                       : 'grid-cols-3'
                 }`}

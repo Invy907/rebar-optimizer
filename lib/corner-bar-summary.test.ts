@@ -1,0 +1,218 @@
+import assert from 'node:assert'
+import {
+  aggregateAdditionalRebars,
+  type AdditionalRebarPlacementLike,
+} from './corner-bar-summary'
+import { cornerBarKakouchouMm } from './corner-bar-kakouchou'
+import type { CornerBarSegment, MeasurementType } from './corner-bar-presets'
+
+function test(name: string, fn: () => void) {
+  try {
+    fn()
+    console.log(`✓ ${name}`)
+  } catch (e) {
+    console.error(`✗ ${name}`)
+    throw e
+  }
+}
+
+function segs(
+  lengths: Array<number | null>,
+  measurement: MeasurementType | null = null,
+): CornerBarSegment[] {
+  return lengths.map((lengthMm, i) => ({
+    id: `s${i + 1}`,
+    lengthMm,
+    measurementType: measurement,
+  }))
+}
+
+function placement(
+  category: string,
+  shapeType: string,
+  bars: Array<{ barType: string; quantity: number; segments: CornerBarSegment[] }>,
+): AdditionalRebarPlacementLike {
+  return {
+    category,
+    shape_type: shapeType,
+    bars: bars.map((bar, i) => ({ id: `b${i + 1}`, ...bar })),
+  }
+}
+
+function diameterTotals(
+  summary: ReturnType<typeof aggregateAdditionalRebars>,
+  category: string,
+): Record<string, number> {
+  const group = summary.groups.find((g) => g.category === category)
+  assert.ok(group, `${category} のグループが無い`)
+  return Object.fromEntries(group.diameterTotals.map((d) => [d.diameter, d.quantity]))
+}
+
+// 1) ガイド §19 の例。配置の件数ではなく bars[].quantity の合計になること
+test('§19 例: 筋種類ごとに径別の本数を合算する', () => {
+  const summary = aggregateAdditionalRebars([
+    placement('CORNER', 'L', [
+      { barType: 'D13', quantity: 3, segments: segs([600, 600]) },
+      { barType: 'D10', quantity: 1, segments: segs([450, 450]) },
+    ]),
+    placement('CORNER', 'L', [{ barType: 'D13', quantity: 2, segments: segs([600, 600]) }]),
+    placement('SOE', 'STRAIGHT', [
+      { barType: 'D13', quantity: 4, segments: segs([1200]) },
+      { barType: 'D10', quantity: 2, segments: segs([900]) },
+    ]),
+    placement('SPECIAL_CORNER', 'L', [
+      { barType: 'D10', quantity: 1, segments: segs([700, 700]) },
+    ]),
+  ])
+
+  assert.deepEqual(diameterTotals(summary, 'CORNER'), { D10: 1, D13: 5 })
+  assert.deepEqual(diameterTotals(summary, 'SOE'), { D10: 2, D13: 4 })
+  assert.deepEqual(diameterTotals(summary, 'SPECIAL_CORNER'), { D10: 1 })
+  assert.equal(summary.totalQuantity, 3 + 1 + 2 + 4 + 2 + 1)
+
+  // 筋種類の並びは コーナー筋 → 添え筋 → 特殊コーナー筋
+  assert.deepEqual(
+    summary.groups.map((g) => g.category),
+    ['CORNER', 'SOE', 'SPECIAL_CORNER'],
+  )
+  assert.deepEqual(
+    summary.groups.map((g) => g.label),
+    ['コーナー筋', '添え筋', '特殊コーナー筋'],
+  )
+})
+
+// 2) 径別の並びは常に D10 → D13 → D16 → D19 → D22
+test('径の並びが D10 → D13 → D16 → D19 → D22 になる', () => {
+  const summary = aggregateAdditionalRebars([
+    placement('CORNER', 'L', [
+      { barType: 'D22', quantity: 1, segments: segs([600, 600]) },
+      { barType: 'D10', quantity: 30, segments: segs([450, 450]) },
+      { barType: 'D19', quantity: 2, segments: segs([900, 900]) },
+      { barType: 'D13', quantity: 56, segments: segs([600, 600]) },
+      { barType: 'D16', quantity: 4, segments: segs([750, 750]) },
+    ]),
+  ])
+
+  const group = summary.groups[0]!
+  assert.deepEqual(
+    group.diameterTotals.map((d) => d.diameter),
+    ['D10', 'D13', 'D16', 'D19', 'D22'],
+  )
+  assert.deepEqual(
+    group.diameterTotals.map((d) => d.quantity),
+    [30, 56, 4, 2, 1],
+  )
+})
+
+// 3) 参考資料の加工長。大コーナー 700×700 → 1380 / 曲筋 → 1710・1410
+test('参考資料の加工長（1380 / 1710 / 1410）と一致する', () => {
+  assert.equal(cornerBarKakouchouMm(segs([700, 700])), 1380)
+  assert.equal(cornerBarKakouchouMm(segs([600, 455, 115, 600])), 1710)
+  assert.equal(cornerBarKakouchouMm(segs([450, 455, 115, 450])), 1410)
+})
+
+test('寸法が未入力の辺があると加工長は null', () => {
+  assert.equal(cornerBarKakouchouMm(segs([600, null, 600])), null)
+  assert.equal(cornerBarKakouchouMm([]), null)
+})
+
+// 4) §9 同じ사양は 1 行に合算する（別配置でも）
+test('§9 別の配置でも仕様が同じなら 1 行にまとめる', () => {
+  const summary = aggregateAdditionalRebars([
+    placement('SPECIAL_CORNER', 'L', [
+      { barType: 'D10', quantity: 1, segments: segs([700, 700], 'SHIN_SHIN') },
+    ]),
+    placement('SPECIAL_CORNER', 'L', [
+      { barType: 'D10', quantity: 2, segments: segs([700, 700], 'SHIN_SHIN') },
+    ]),
+  ])
+
+  const rows = summary.groups[0]!.specRows
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]!.quantity, 3)
+  assert.equal(rows[0]!.dimsText, '700 × 700')
+  assert.equal(rows[0]!.dimsDetailText, '700（芯々）× 700（芯々）')
+  assert.equal(rows[0]!.uniformMeasurementType, 'SHIN_SHIN')
+  assert.equal(rows[0]!.segmentSumMm, 1400)
+  assert.equal(rows[0]!.kakouchouMm, 1380)
+})
+
+// 5) §10 数字が同じでも寸法基準が違えば別の行
+test('§10 数字が同じでも寸法基準が違えば合算しない', () => {
+  const summary = aggregateAdditionalRebars([
+    placement('CORNER', 'L', [
+      {
+        barType: 'D13',
+        quantity: 1,
+        segments: [
+          { id: 's1', lengthMm: 600, measurementType: 'SOTO_SOTO' },
+          { id: 's2', lengthMm: 600, measurementType: 'UCHI_UCHI' },
+        ],
+      },
+    ]),
+    placement('CORNER', 'L', [
+      { barType: 'D13', quantity: 1, segments: segs([600, 600], 'SHIN_SHIN') },
+    ]),
+  ])
+
+  const rows = summary.groups[0]!.specRows
+  assert.equal(rows.length, 2)
+  assert.deepEqual(
+    rows.map((r) => r.quantity),
+    [1, 1],
+  )
+  // 径別の合計は寸法基準に関わらず合算される
+  assert.deepEqual(diameterTotals(summary, 'CORNER'), { D13: 2 })
+  // 寸法基準が混在する行は uniformMeasurementType が null
+  const mixed = rows.find((r) => r.dimsDetailText.includes('外々'))
+  assert.ok(mixed)
+  assert.equal(mixed.uniformMeasurementType, null)
+  assert.equal(mixed.dimsDetailText, '600（外々）× 600（内々）')
+})
+
+test('§10 形状・segment 個数が違えば合算しない', () => {
+  const summary = aggregateAdditionalRebars([
+    placement('SPECIAL_CORNER', 'V_STEP2', [
+      { barType: 'D13', quantity: 2, segments: segs([600, 455, 115, 600], 'SHIN_SHIN') },
+    ]),
+    placement('SPECIAL_CORNER', 'V_OFFSET', [
+      { barType: 'D13', quantity: 1, segments: segs([600, 455, 115], 'SHIN_SHIN') },
+    ]),
+  ])
+
+  const rows = summary.groups[0]!.specRows
+  assert.equal(rows.length, 2)
+  assert.deepEqual(diameterTotals(summary, 'SPECIAL_CORNER'), { D13: 3 })
+
+  const four = rows.find((r) => r.segments.length === 4)!
+  assert.equal(four.dimsText, '600 × 455 × 115 × 600')
+  assert.equal(four.kakouchouMm, 1710)
+  assert.equal(four.quantity, 2)
+  assert.equal(four.shapeLabel, '2段階段')
+})
+
+// 6) 旧スキーマ（bars 無し、diameter / segments のみ）でも本数を落とさない
+test('旧スキーマの行は diameter を 1 本として数える', () => {
+  const summary = aggregateAdditionalRebars([
+    {
+      category: 'CORNER',
+      shape_type: 'L',
+      bars: [],
+      diameter: 'D13',
+      segments: segs([600, 600], 'SHIN_SHIN'),
+    },
+  ])
+
+  assert.deepEqual(diameterTotals(summary, 'CORNER'), { D13: 1 })
+  assert.equal(summary.groups[0]!.specRows[0]!.dimsText, '600 × 600')
+})
+
+test('本数 0 の鉄筋と空の配置は結果に出ない', () => {
+  const summary = aggregateAdditionalRebars([
+    placement('CORNER', 'L', [{ barType: 'D13', quantity: 0, segments: segs([600, 600]) }]),
+  ])
+  assert.deepEqual(summary.groups, [])
+  assert.equal(summary.totalQuantity, 0)
+})
+
+console.log('\nすべてのテストが通りました')

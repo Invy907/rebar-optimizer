@@ -1,7 +1,7 @@
 import type { SegmentColor } from '@/lib/segment-colors'
 import type { ExtendedShapeType, LocationType, UnitBar } from '@/lib/unit-types'
 import type { UnitDetailGeometry, UnitDetailSpec } from '@/lib/unit-detail-shape'
-import type { CornerBarSegment } from '@/lib/corner-bar-presets'
+import type { CornerBarBarItem, CornerBarSegment } from '@/lib/corner-bar-presets'
 
 export interface Project {
   id: string
@@ -46,14 +46,13 @@ export interface DrawingSegment {
 }
 
 /**
- * 図面詳細画面の「コーナー筋」タブに配置した鉄筋オブジェクト。
+ * 図面詳細画面の「付加筋」タブに配置した鉄筋オブジェクト。
  * ユニットとは独立した図面レベルのデータ。
  *
- * 寸法は「1 本 ＝ 長さ 1 個」では持たず、形状を構成する辺ごとに
- * 寸法値(mm)と寸法基準（芯々／内々／外々）を segments に順序どおり保持する。
- * category（筋種類）と shape_type（形状）は独立した属性。
- *
- * 数量は持たない。図面に 1 つ配置したものが 1 本で、集計は配置数で数える。
+ * 1 配置に複数の鉄筋径が入る。同じ位置の D10 と D13 では実寸が違うため、
+ * 本数・各辺の寸法・寸法基準（芯々／内々／外々）は bars の要素ごとに持つ。
+ * category（筋種類）と shape_type（形状）は配置に 1 つだけなので、
+ * 1 つの配置に別の筋種類が混ざることはない。
  */
 export interface DrawingCornerBar {
   id: string
@@ -63,8 +62,11 @@ export interface DrawingCornerBar {
   category: string
   /** CornerBarShapeType: STRAIGHT / L / U / Z / STEP / T */
   shape_type: string
+  /** 径ごとの本数と辺の寸法。要素の segments は形状の辺数と一致する */
+  bars: CornerBarBarItem[]
+  /** @deprecated bars に移行済み。bars[0] のミラーとして書くだけ */
   diameter: string | null
-  /** 配列の順序が辺1, 辺2, … に対応する */
+  /** @deprecated bars[i].segments に移行済み。bars[0] のミラーとして書くだけ */
   segments: CornerBarSegment[]
   /** 配置点（drawing_segments と同じ図面座標系。形状の bbox 中心を合わせる） */
   x: number

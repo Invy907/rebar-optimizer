@@ -3,34 +3,38 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import Link from 'next/link'
 import type { DrawingCornerBar } from '@/lib/types/database'
+import { startGlobalLoading } from '@/lib/global-loading'
 import {
-  applyStandardSegmentLengths,
   buildCornerBarPrintSummary,
   clampCornerBarSizePx,
   CORNER_BAR_CATEGORIES,
   CORNER_BAR_DIAMETERS,
   cornerBarCategoryLabel,
   cornerBarDiameterOptionLabel,
+  cornerBarLegacyFieldsFromBars,
   cornerBarRotationLabel,
   cornerBarSegmentSumMm,
   cornerBarThumbPath,
+  DEFAULT_CORNER_BAR_DIAMETER,
   DEFAULT_CORNER_BAR_SIZE_PX,
   getCornerBarShape,
   getCornerBarShapeOptionsForCategory,
-  isCategoryShapeFixed,
-  isCornerBarFullyDimensioned,
+  getNextCornerBarDiameter,
+  isCornerBarBarsFullyDimensioned,
+  makeCornerBarBar,
   makeCornerBarDraft,
-  makeCornerBarSegments,
   MEASUREMENT_TYPES,
+  nextCornerBarBarId,
   nextCornerBarRotation,
+  normalizeCornerBarBars,
   normalizeCornerBarRotation,
-  normalizeCornerBarSegments,
   resolveCategoryShape,
+  type CornerBarBarItem,
   type CornerBarCategory,
   type CornerBarPlacementDraft,
   type CornerBarSegment,
-  type CornerBarShapeType,
   type MeasurementType,
 } from '@/lib/corner-bar-presets'
 import {
@@ -48,6 +52,7 @@ const SIZE_STEP = 1.25
 
 export function CornerBarPanel({
   cornerBars,
+  summaryHref,
   selectedCornerBarId,
   placementModeActive,
   placementDraft,
@@ -62,6 +67,8 @@ export function CornerBarPanel({
   onUndo,
 }: {
   cornerBars: DrawingCornerBar[]
+  /** 付加筋 集計結果ページへのリンク先 */
+  summaryHref: string
   selectedCornerBarId: string | null
   /** 配置ツールが有効なときだけ配置設定を表示 */
   placementModeActive: boolean
@@ -81,11 +88,8 @@ export function CornerBarPanel({
     [cornerBars, selectedCornerBarId],
   )
   const selectedShape = selected ? getCornerBarShape(selected.shape_type) : null
-  const selectedSegments = useMemo(
-    () =>
-      selected && selectedShape
-        ? normalizeCornerBarSegments(selectedShape, selected.segments)
-        : null,
+  const selectedBars = useMemo(
+    () => (selected && selectedShape ? normalizeCornerBarBars(selectedShape, selected) : null),
     [selected, selectedShape],
   )
   const currentSizePx = clampCornerBarSizePx(selected?.size_px ?? DEFAULT_CORNER_BAR_SIZE_PX)
@@ -125,51 +129,140 @@ export function CornerBarPanel({
       }
       return
     }
-    if (placementDraft) patchDraft({ category })
+    // 形状も新しい筋種類に合わせる。形状が変わる場合、辺の寸法は入れ直す
+    if (placementDraft) {
+      onChangePlacementDraft(makeCornerBarDraft(shapeType, { ...placementDraft, category }))
+    }
+  }
+
+  /** 鉄筋リストを保存する。旧列 diameter / segments には bars[0] をミラーする */
+  function commitSelectedBars(bars: CornerBarBarItem[]) {
+    if (!selected) return
+    onUpdate(selected.id, { bars, ...cornerBarLegacyFieldsFromBars(bars) })
   }
 
   function handleSelectedCategoryChange(category: CornerBarCategory) {
-    if (!selected) return
+    if (!selected || !selectedBars) return
     const shapeType = resolveCategoryShape(category, selected.shape_type)
     const shape = getCornerBarShape(shapeType)
     if (!shape) return
-    const preserveSegments =
-      shapeType === selected.shape_type ? selectedSegments ?? undefined : undefined
+    // 形状が変わると辺の意味も変わるので、そのときだけ寸法を作り直す
+    const shapeChanged = shapeType !== selected.shape_type
+    const bars = selectedBars.map((bar) =>
+      makeCornerBarBar(shape, category, bar.barType, {
+        id: bar.id,
+        quantity: bar.quantity,
+        segments: shapeChanged ? undefined : bar.segments,
+      }),
+    )
     const updates: Partial<DrawingCornerBar> = {
       category,
       shape_type: shapeType,
-      segments: applyStandardSegmentLengths(
-        shape,
-        category,
-        selected.diameter ?? 'D13',
-        preserveSegments,
-      ),
+      bars,
+      ...cornerBarLegacyFieldsFromBars(bars),
     }
     onUpdate(selected.id, updates)
   }
 
-  function handleSelectedDiameterChange(diameter: string) {
-    if (!selected || !selectedShape || !selectedSegments) return
-    const category = selected.category as CornerBarCategory
-    onUpdate(selected.id, {
-      diameter: diameter || null,
-      segments: applyStandardSegmentLengths(
-        selectedShape,
-        category,
-        diameter || 'D13',
-        selectedSegments,
-      ),
+  /** 径を変えたら、その径の標準寸法を辺に入れ直す */
+  function handleSelectedBarTypeChange(index: number, barType: string) {
+    if (!selected || !selectedShape || !selectedBars) return
+    const bar = selectedBars[index]
+    if (!bar) return
+    const next = makeCornerBarBar(selectedShape, selected.category as CornerBarCategory, barType, {
+      id: bar.id,
+      quantity: bar.quantity,
+      segments: bar.segments,
     })
+    commitSelectedBars(selectedBars.map((b, i) => (i === index ? next : b)))
+  }
+
+  function handleSelectedQuantityChange(index: number, quantity: number) {
+    if (!selectedBars) return
+    commitSelectedBars(selectedBars.map((b, i) => (i === index ? { ...b, quantity } : b)))
+  }
+
+  /** 鉄筋 1 件の辺の寸法・基準を 1 つだけ差し替える。順序は必ず保つ */
+  function handleSelectedSegmentChange(
+    barIndex: number,
+    segIndex: number,
+    patch: Partial<CornerBarSegment>,
+  ) {
+    if (!selectedBars) return
+    commitSelectedBars(
+      selectedBars.map((bar, i) =>
+        i === barIndex
+          ? {
+              ...bar,
+              segments: bar.segments.map((s, j) => (j === segIndex ? { ...s, ...patch } : s)),
+            }
+          : bar,
+      ),
+    )
+  }
+
+  function handleAddSelectedBar() {
+    if (!selected || !selectedShape || !selectedBars) return
+    const barType = getNextCornerBarDiameter(selectedBars.map((b) => b.barType))
+    commitSelectedBars([
+      ...selectedBars,
+      makeCornerBarBar(selectedShape, selected.category as CornerBarCategory, barType, {
+        id: nextCornerBarBarId(selectedBars),
+      }),
+    ])
+  }
+
+  function handleRemoveSelectedBar(index: number) {
+    if (!selectedBars || selectedBars.length <= 1) return
+    commitSelectedBars(selectedBars.filter((_, i) => i !== index))
   }
 
   const placementCategory = (placementDraft?.category ?? 'CORNER') as CornerBarCategory
   const placementShapeOptions = getCornerBarShapeOptionsForCategory(placementCategory)
+  const placementShape = placementDraft ? getCornerBarShape(placementDraft.shapeType) : null
+  /** 形状未選択のうちは編集できないので、見た目だけ既定の 1 件を出す */
+  const placementBars: CornerBarBarItem[] = placementDraft?.bars?.length
+    ? placementDraft.bars
+    : [{ id: 'b1', barType: DEFAULT_CORNER_BAR_DIAMETER, quantity: 1, segments: [] }]
 
-  /** 辺の寸法・基準を 1 つだけ差し替える。順序は必ず保つ */
-  function patchSegment(index: number, patch: Partial<CornerBarSegment>) {
-    if (!selected || !selectedSegments) return
-    const next = selectedSegments.map((s, i) => (i === index ? { ...s, ...patch } : s))
-    onUpdate(selected.id, { segments: next })
+  function commitPlacementBars(bars: CornerBarBarItem[]) {
+    if (!placementDraft) return
+    onChangePlacementDraft({ ...placementDraft, bars })
+  }
+
+  function handlePlacementBarTypeChange(index: number, barType: string) {
+    if (!placementDraft || !placementShape) return
+    const bar = placementDraft.bars[index]
+    if (!bar) return
+    const next = makeCornerBarBar(placementShape, placementDraft.category, barType, {
+      id: bar.id,
+      quantity: bar.quantity,
+      segments: bar.segments,
+    })
+    commitPlacementBars(placementDraft.bars.map((b, i) => (i === index ? next : b)))
+  }
+
+  function handlePlacementQuantityChange(index: number, quantity: number) {
+    if (!placementDraft) return
+    commitPlacementBars(
+      placementDraft.bars.map((b, i) => (i === index ? { ...b, quantity } : b)),
+    )
+  }
+
+  function handleAddPlacementBar() {
+    if (!placementDraft || !placementShape) return
+    const barType = getNextCornerBarDiameter(placementDraft.bars.map((b) => b.barType))
+    commitPlacementBars([
+      ...placementDraft.bars,
+      makeCornerBarBar(placementShape, placementDraft.category, barType, {
+        id: nextCornerBarBarId(placementDraft.bars),
+      }),
+    ])
+  }
+
+  function handleRemovePlacementBar(index: number) {
+    if (!placementDraft || placementDraft.bars.length <= 1) return
+    commitPlacementBars(placementDraft.bars.filter((_, i) => i !== index))
   }
 
   return (
@@ -193,7 +286,7 @@ export function CornerBarPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {/* Selected corner bar editor */}
-        {selected && selectedShape && selectedSegments && (
+        {selected && selectedShape && selectedBars && (
           <div className="border-b border-border p-4 space-y-3 bg-blue-50/50">
             <div className="flex items-center justify-end gap-2">
                 <button
@@ -218,39 +311,20 @@ export function CornerBarPanel({
                 </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <label className="text-[10px] text-muted">
-                筋種類
-                <select
-                  value={selected.category}
-                  onChange={(e) =>
-                    handleSelectedCategoryChange(e.target.value as CornerBarCategory)
-                  }
-                  className="mt-0.5 w-full rounded border border-border bg-white px-1.5 py-1 text-xs outline-none focus:border-primary"
-                >
-                  {CORNER_BAR_CATEGORIES.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-[10px] text-muted">
-                鉄筋径
-                <select
-                  value={selected.diameter ?? ''}
-                  onChange={(e) => handleSelectedDiameterChange(e.target.value)}
-                  className="mt-0.5 w-full rounded border border-border bg-white px-1.5 py-1 text-xs outline-none focus:border-primary"
-                >
-                  <option value="">未設定</option>
-                  {CORNER_BAR_DIAMETERS.map((d) => (
-                    <option key={d} value={d}>
-                      {cornerBarDiameterOptionLabel(selected.category as CornerBarCategory, d)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            <label className="block text-[10px] text-muted">
+              筋種類
+              <select
+                value={selected.category}
+                onChange={(e) => handleSelectedCategoryChange(e.target.value as CornerBarCategory)}
+                className="mt-0.5 w-full rounded border border-border bg-white px-1.5 py-1 text-xs outline-none focus:border-primary"
+              >
+                {CORNER_BAR_CATEGORIES.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
             {/* この部材の向き。押すたびに図面上でも 90 度回る */}
             <div className="flex items-center gap-1.5">
@@ -267,56 +341,20 @@ export function CornerBarPanel({
               </button>
             </div>
 
-            {/* 各辺の寸法と基準。辺の順番は資料の表記順と一致させる */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-medium text-foreground">各辺の寸法</span>
-                <span className="text-[10px] text-muted">
-                  合計 {cornerBarSegmentSumMm(selectedSegments).toLocaleString('ja-JP')} mm
-                </span>
-              </div>
-              {selectedSegments.map((seg, idx) => (
-                <div key={seg.id} className="flex items-center gap-1.5">
-                  <span className="w-7 shrink-0 text-[10px] text-muted">辺{idx + 1}</span>
-                  <input
-                    type="number"
-                    min={1}
-                    placeholder="mm"
-                    value={seg.lengthMm ?? ''}
-                    onChange={(e) => {
-                      const raw = e.target.value
-                      if (raw === '') {
-                        patchSegment(idx, { lengthMm: null })
-                        return
-                      }
-                      const n = Number.parseInt(raw, 10)
-                      if (!Number.isFinite(n) || n <= 0) return
-                      patchSegment(idx, { lengthMm: n })
-                    }}
-                    className="min-w-0 flex-1 rounded border border-border bg-white px-1.5 py-1 text-xs outline-none focus:border-primary"
-                  />
-                  <select
-                    value={seg.measurementType ?? ''}
-                    onChange={(e) =>
-                      patchSegment(idx, {
-                        measurementType: (e.target.value || null) as MeasurementType | null,
-                      })
-                    }
-                    className="w-[68px] shrink-0 rounded border border-border bg-white px-1 py-1 text-xs outline-none focus:border-primary"
-                  >
-                    <option value="">基準</option>
-                    {MEASUREMENT_TYPES.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-              {!isCornerBarFullyDimensioned(selectedSegments) && (
-                <p className="text-[10px] text-amber-700">寸法が未入力の辺があります。</p>
-              )}
-            </div>
+            {/* 径ごとの本数と辺の寸法。同じ位置でも径によって実寸が違うため個別に持つ */}
+            <CornerBarBarsField
+              category={selected.category as CornerBarCategory}
+              bars={selectedBars}
+              showSegments
+              onChangeBarType={handleSelectedBarTypeChange}
+              onChangeQuantity={handleSelectedQuantityChange}
+              onChangeSegment={handleSelectedSegmentChange}
+              onAdd={handleAddSelectedBar}
+              onRemove={handleRemoveSelectedBar}
+            />
+            {!isCornerBarBarsFullyDimensioned(selectedBars) && (
+              <p className="text-[10px] text-amber-700">寸法が未入力の辺があります。</p>
+            )}
 
             {/* 図面上の大きさ。配置時のドラッグで決めた値を後から微調整する */}
             <div className="flex items-center gap-1.5">
@@ -360,38 +398,37 @@ export function CornerBarPanel({
         {/* 配置設定: 配置ツール中のみ（選択モードでは一覧・要約だけ） */}
         {!selected && placementModeActive && (
         <div className="border-b border-border p-3 space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              <label className="text-[10px] text-muted">
-                筋種類
-                <select
-                  value={placementCategory}
-                  onChange={(e) =>
-                    handlePlacementCategoryChange(e.target.value as CornerBarCategory)
-                  }
-                  className="mt-0.5 w-full rounded border border-border bg-white px-1.5 py-1 text-xs outline-none focus:border-primary"
-                >
-                  {CORNER_BAR_CATEGORIES.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-[10px] text-muted">
-                鉄筋径
-                <select
-                  value={placementDraft?.diameter ?? 'D13'}
-                  onChange={(e) => patchDraft({ diameter: e.target.value })}
-                  className="mt-0.5 w-full rounded border border-border bg-white px-1.5 py-1 text-xs outline-none focus:border-primary"
-                >
-                  {CORNER_BAR_DIAMETERS.map((d) => (
-                    <option key={d} value={d}>
-                      {cornerBarDiameterOptionLabel(placementCategory, d)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            <label className="block text-[10px] text-muted">
+              筋種類
+              <select
+                value={placementCategory}
+                onChange={(e) => handlePlacementCategoryChange(e.target.value as CornerBarCategory)}
+                className="mt-0.5 w-full rounded border border-border bg-white px-1.5 py-1 text-xs outline-none focus:border-primary"
+              >
+                {CORNER_BAR_CATEGORIES.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {/* ここでは径と本数だけ決める。辺の寸法は標準値が入り、配置後に調整する */}
+            <CornerBarBarsField
+              category={placementCategory}
+              bars={placementBars}
+              showSegments={false}
+              disabled={!placementDraft}
+              onChangeBarType={handlePlacementBarTypeChange}
+              onChangeQuantity={handlePlacementQuantityChange}
+              onAdd={handleAddPlacementBar}
+              onRemove={handleRemovePlacementBar}
+            />
+            {!placementDraft && (
+              <p className="text-[10px] text-muted">
+                先に形状を選ぶと鉄筋を設定できます。
+              </p>
+            )}
 
             <label className="text-[10px] text-muted">
               色
@@ -422,7 +459,7 @@ export function CornerBarPanel({
                 className={`mt-1 grid gap-1.5 ${
                   placementCategory === 'CORNER'
                     ? 'grid-cols-4'
-                    : placementCategory === 'SOE'
+                    : placementCategory === 'SOE' || placementCategory === 'SPECIAL_CORNER'
                       ? 'grid-cols-2'
                       : 'grid-cols-3'
                 }`}
@@ -485,6 +522,13 @@ export function CornerBarPanel({
           </p>
         ) : (
           <div className="border-t border-border px-4 py-3 space-y-2">
+            <Link
+              href={summaryHref}
+              onClick={() => startGlobalLoading()}
+              className="block rounded-md bg-primary px-2 py-1.5 text-center text-[11px] font-medium text-white hover:bg-primary-hover"
+            >
+              集計結果を見る
+            </Link>
             <div className="flex flex-wrap gap-1">
               {printSummary.categoryCounts.map((c) => (
                 <span
@@ -524,6 +568,138 @@ export function CornerBarPanel({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * 1 配置に入る鉄筋の一覧。径と本数は常に、辺の寸法は showSegments のときだけ編集する。
+ * 配置設定では形状未選択のあいだ disabled になる。
+ */
+function CornerBarBarsField({
+  category,
+  bars,
+  showSegments,
+  disabled = false,
+  onChangeBarType,
+  onChangeQuantity,
+  onChangeSegment,
+  onAdd,
+  onRemove,
+}: {
+  category: CornerBarCategory
+  bars: CornerBarBarItem[]
+  showSegments: boolean
+  disabled?: boolean
+  onChangeBarType: (index: number, barType: string) => void
+  onChangeQuantity: (index: number, quantity: number) => void
+  onChangeSegment?: (
+    barIndex: number,
+    segIndex: number,
+    patch: Partial<CornerBarSegment>,
+  ) => void
+  onAdd: () => void
+  onRemove: (index: number) => void
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-medium text-foreground">鉄筋（径と本数）</span>
+        <button
+          type="button"
+          onClick={onAdd}
+          disabled={disabled}
+          className="text-[11px] text-primary hover:underline disabled:opacity-40"
+        >
+          ＋ 追加
+        </button>
+      </div>
+
+      {bars.map((bar, barIdx) => (
+        <div key={bar.id} className="space-y-1.5 rounded border border-border bg-white p-1.5">
+          <div className="flex items-center gap-1.5">
+            <select
+              value={bar.barType}
+              disabled={disabled}
+              onChange={(e) => onChangeBarType(barIdx, e.target.value)}
+              className="min-w-0 flex-1 rounded border border-border bg-white px-1.5 py-1 text-xs outline-none focus:border-primary disabled:opacity-50"
+            >
+              {CORNER_BAR_DIAMETERS.map((d) => (
+                <option key={d} value={d}>
+                  {cornerBarDiameterOptionLabel(category, d)}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min={0}
+              value={bar.quantity}
+              disabled={disabled}
+              onChange={(e) => {
+                const n = Number.parseInt(e.target.value, 10)
+                onChangeQuantity(barIdx, Number.isFinite(n) && n >= 0 ? n : 0)
+              }}
+              className="w-12 shrink-0 rounded border border-border bg-white px-1.5 py-1 text-xs outline-none focus:border-primary disabled:opacity-50"
+            />
+            <span className="shrink-0 text-[10px] text-muted">本</span>
+            <button
+              type="button"
+              onClick={() => onRemove(barIdx)}
+              disabled={disabled || bars.length <= 1}
+              className="shrink-0 text-[11px] text-danger hover:underline disabled:opacity-30"
+              title={bars.length <= 1 ? '最後の1件は削除できません' : '削除'}
+            >
+              削除
+            </button>
+          </div>
+
+          {showSegments && onChangeSegment && bar.segments.length > 0 ? (
+            <div className="space-y-1 border-t border-border pt-1.5">
+              {bar.segments.map((seg, segIdx) => (
+                <div key={seg.id} className="flex items-center gap-1.5">
+                  <span className="w-7 shrink-0 text-[10px] text-muted">辺{segIdx + 1}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    placeholder="mm"
+                    value={seg.lengthMm ?? ''}
+                    onChange={(e) => {
+                      const raw = e.target.value
+                      if (raw === '') {
+                        onChangeSegment(barIdx, segIdx, { lengthMm: null })
+                        return
+                      }
+                      const n = Number.parseInt(raw, 10)
+                      if (!Number.isFinite(n) || n <= 0) return
+                      onChangeSegment(barIdx, segIdx, { lengthMm: n })
+                    }}
+                    className="min-w-0 flex-1 rounded border border-border bg-white px-1.5 py-1 text-xs outline-none focus:border-primary"
+                  />
+                  <select
+                    value={seg.measurementType ?? ''}
+                    onChange={(e) =>
+                      onChangeSegment(barIdx, segIdx, {
+                        measurementType: (e.target.value || null) as MeasurementType | null,
+                      })
+                    }
+                    className="w-[68px] shrink-0 rounded border border-border bg-white px-1 py-1 text-xs outline-none focus:border-primary"
+                  >
+                    <option value="">基準</option>
+                    {MEASUREMENT_TYPES.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+              <div className="text-right text-[10px] text-muted">
+                合計 {cornerBarSegmentSumMm(bar.segments).toLocaleString('ja-JP')} mm
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ))}
     </div>
   )
 }

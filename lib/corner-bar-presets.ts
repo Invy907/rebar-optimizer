@@ -59,7 +59,18 @@ export function cornerBarCategoryLabel(category: string): string {
 export const CORNER_BAR_DIAMETERS = ['D10', 'D13', 'D16', 'D19', 'D22', 'D25'] as const
 
 /** 形状トポロジー */
-export type CornerBarShapeType = 'STRAIGHT' | 'L' | 'U' | 'Z' | 'STEP' | 'T'
+export type CornerBarShapeType =
+  | 'STRAIGHT'
+  | 'L'
+  | 'U'
+  | 'Z'
+  | 'STEP'
+  | 'T'
+  | 'V_OFFSET'
+  | 'V_STEP2'
+  | 'V_STEP2_END'
+  | 'V_NOTCH'
+  | 'V_STEP3'
 
 /**
  * 形状定義。辺の向きだけを持ち、寸法は持たない。
@@ -133,6 +144,70 @@ export const CORNER_BAR_SHAPES: CornerBarShapeDef[] = [
     ],
     defaultLengths: [300, 300, 400],
   },
+  /** 特殊コーナー筋: 縦方向に段差（下→右→下） */
+  {
+    id: 'V_OFFSET',
+    label: 'オフセット',
+    directions: [
+      { x: 0, y: 1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+    ],
+    defaultLengths: [600, 300, 600],
+  },
+  /** 特殊コーナー筋: 縦方向 2 段（ㄴㄴ、最後の縦線なし） */
+  {
+    id: 'V_STEP2',
+    label: '2段階段',
+    directions: [
+      { x: 0, y: 1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 0 },
+    ],
+    defaultLengths: [200, 100, 200, 100],
+  },
+  /** 特殊コーナー筋: 縦方向 2 段（ㄴㄴ、最後に縦線あり） */
+  {
+    id: 'V_STEP2_END',
+    label: '2段階段（下）',
+    directions: [
+      { x: 0, y: 1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+    ],
+    defaultLengths: [200, 100, 200, 100, 200],
+  },
+  /** 特殊コーナー筋: 欠き込み（下→右→下→左→下） */
+  {
+    id: 'V_NOTCH',
+    label: '欠き込み',
+    directions: [
+      { x: 0, y: 1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: -1, y: 0 },
+      { x: 0, y: 1 },
+    ],
+    defaultLengths: [400, 300, 400, 300, 400],
+  },
+  /** 特殊コーナー筋: 縦方向 3 段階段。パレットからは外したが旧データ用に残す */
+  {
+    id: 'V_STEP3',
+    label: '3段階段',
+    directions: [
+      { x: 0, y: 1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+    ],
+    defaultLengths: [100, 100, 100, 100, 100, 100, 100],
+  },
 ]
 
 export function getCornerBarShape(shapeType: string): CornerBarShapeDef | null {
@@ -148,6 +223,14 @@ const CATEGORY_FIXED_SHAPE: Partial<Record<CornerBarCategory, CornerBarShapeType
   CORNER: 'L',
   SOE: 'STRAIGHT',
 }
+
+/** 特殊コーナー筋で選べる形状（資料の手書き図に合わせたもの） */
+export const SPECIAL_CORNER_SHAPE_TYPES: CornerBarShapeType[] = [
+  'V_OFFSET',
+  'V_STEP2',
+  'V_NOTCH',
+  'V_STEP2_END',
+]
 
 export function getFixedShapeForCategory(
   category: CornerBarCategory,
@@ -166,6 +249,11 @@ export function getCornerBarShapesForCategory(
   if (fixed) {
     const shape = getCornerBarShape(fixed)
     return shape ? [shape] : []
+  }
+  if (category === 'SPECIAL_CORNER') {
+    return SPECIAL_CORNER_SHAPE_TYPES.map((id) => getCornerBarShape(id)).filter(
+      (shape): shape is CornerBarShapeDef => shape != null,
+    )
   }
   return CORNER_BAR_SHAPES
 }
@@ -204,6 +292,21 @@ export function getCornerBarShapeOptionsForCategory(
       shape,
     }))
   }
+  if (category === 'SPECIAL_CORNER') {
+    return SPECIAL_CORNER_SHAPE_TYPES.flatMap((shapeType) => {
+      const shape = getCornerBarShape(shapeType)
+      if (!shape) return []
+      return [
+        {
+          key: shapeType,
+          shapeType,
+          rotation: 0,
+          label: shape.label,
+          shape,
+        },
+      ]
+    })
+  }
   return CORNER_BAR_SHAPES.map((shape) => ({
     key: shape.id,
     shapeType: shape.id,
@@ -219,6 +322,13 @@ export function resolveCategoryShape(
 ): CornerBarShapeType {
   const fixed = getFixedShapeForCategory(category)
   if (fixed) return fixed
+  // 特殊コーナー筋はパレットにある形状だけを持つ（ストレートなどが残らないように）
+  if (category === 'SPECIAL_CORNER') {
+    if (shapeType && SPECIAL_CORNER_SHAPE_TYPES.includes(shapeType as CornerBarShapeType)) {
+      return shapeType as CornerBarShapeType
+    }
+    return SPECIAL_CORNER_SHAPE_TYPES[0] ?? 'V_OFFSET'
+  }
   if (shapeType && getCornerBarShape(shapeType)) return shapeType as CornerBarShapeType
   return 'STRAIGHT'
 }
@@ -382,6 +492,177 @@ export function cornerBarSegmentSumMm(segments: CornerBarSegment[]): number {
 export function formatCornerBarDims(segments: CornerBarSegment[]): string {
   if (segments.length === 0) return ''
   return segments.map((s) => (s.lengthMm == null ? '—' : String(s.lengthMm))).join(' × ')
+}
+
+// --- 鉄筋（径ごとの本数と寸法） -----------------------------------------
+
+/**
+ * 1 配置に入る鉄筋 1 種類ぶん。
+ *
+ * 同じ位置に D10 と D13 を入れると実寸が違うため、寸法は径ごとに分けて持つ。
+ * segments の要素数は形状の辺数と一致させる（順序＝辺1, 辺2, …）。
+ *
+ * 筋種類（category）と形状（shapeType）は配置側が 1 つだけ持つので、
+ * 1 つの配置に別の筋種類が混ざることはない。
+ */
+export interface CornerBarBarItem {
+  id: string
+  /** D10 / D13 / D16 … */
+  barType: string
+  /** 本数 */
+  quantity: number
+  segments: CornerBarSegment[]
+}
+
+export const DEFAULT_CORNER_BAR_DIAMETER = 'D13'
+
+function normalizeBarQuantity(value: unknown): number {
+  if (value == null || value === '') return 1
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n) || n < 0) return 1
+  return n
+}
+
+/** 追加ボタン用。既存 id と衝突しない連番を返す */
+export function nextCornerBarBarId(bars: CornerBarBarItem[]): string {
+  let max = 0
+  for (const bar of bars) {
+    const matched = /^b(\d+)$/.exec(bar.id)
+    if (matched) max = Math.max(max, Number.parseInt(matched[1]!, 10))
+  }
+  return `b${max + 1}`
+}
+
+/** 径に対応する標準寸法を入れた鉄筋 1 件を作る */
+export function makeCornerBarBar(
+  shape: CornerBarShapeDef,
+  category: CornerBarCategory,
+  barType: string,
+  base?: Partial<Pick<CornerBarBarItem, 'id' | 'quantity' | 'segments'>>,
+): CornerBarBarItem {
+  return {
+    id: base?.id ?? 'b1',
+    barType,
+    quantity: normalizeBarQuantity(base?.quantity),
+    segments: applyStandardSegmentLengths(shape, category, barType, base?.segments),
+  }
+}
+
+/**
+ * 保存済みの bars を形状に合わせて整える。
+ * bars が空の古い行は diameter / segments から 1 件に組み立てる。
+ */
+export function normalizeCornerBarBars(
+  shape: CornerBarShapeDef,
+  source: { bars?: unknown; diameter?: string | null; segments?: unknown },
+): CornerBarBarItem[] {
+  const raw = Array.isArray(source.bars) ? source.bars : []
+  const normalized = raw
+    .map((item, i) => {
+      if (!item || typeof item !== 'object') return null
+      const rec = item as Partial<CornerBarBarItem>
+      const barType = typeof rec.barType === 'string' ? rec.barType.trim() : ''
+      if (!barType) return null
+      return {
+        id: typeof rec.id === 'string' && rec.id ? rec.id : `b${i + 1}`,
+        barType,
+        quantity: normalizeBarQuantity(rec.quantity),
+        segments: normalizeCornerBarSegments(shape, rec.segments),
+      }
+    })
+    .filter((bar): bar is CornerBarBarItem => bar != null)
+
+  if (normalized.length > 0) return normalized
+
+  // 旧モデル（配置 = 径 1 つ）からのフォールバック
+  const legacyDiameter = (source.diameter ?? '').trim() || DEFAULT_CORNER_BAR_DIAMETER
+  return [
+    {
+      id: 'b1',
+      barType: legacyDiameter,
+      quantity: 1,
+      segments: normalizeCornerBarSegments(shape, source.segments),
+    },
+  ]
+}
+
+/**
+ * 筋種類・形状が変わったとき、各鉄筋の辺を新しい形状に合わせ直す。
+ *
+ * 形状が変わると辺の意味そのものが変わるので、既存の寸法は引き継がない。
+ * 引き継いでしまうと、たとえば添え筋（ストレート 1200）から
+ * 特殊コーナー筋に変えたときに辺1 だけ 1200 が残ってしまう。
+ */
+export function remapCornerBarBarsToShape(
+  shape: CornerBarShapeDef,
+  category: CornerBarCategory,
+  bars: CornerBarBarItem[],
+  preserveSegments = true,
+): CornerBarBarItem[] {
+  return bars.map((bar) =>
+    makeCornerBarBar(shape, category, bar.barType, {
+      id: bar.id,
+      quantity: bar.quantity,
+      segments: preserveSegments ? bar.segments : undefined,
+    }),
+  )
+}
+
+/** 追加時の初期径。まだ使っていない径を順に選ぶ */
+export function getNextCornerBarDiameter(existingBarTypes: string[]): string {
+  const used = new Set(existingBarTypes.map((d) => d.trim().toUpperCase()))
+  for (const d of CORNER_BAR_DIAMETERS) {
+    if (!used.has(d)) return d
+  }
+  return CORNER_BAR_DIAMETERS[CORNER_BAR_DIAMETERS.length - 1]!
+}
+
+export function cornerBarBarsTotalQuantity(bars: CornerBarBarItem[]): number {
+  return bars.reduce((sum, bar) => sum + bar.quantity, 0)
+}
+
+/** 全ての鉄筋で全ての辺の寸法が入っているか（未入力の警告用） */
+export function isCornerBarBarsFullyDimensioned(bars: CornerBarBarItem[]): boolean {
+  return bars.length > 0 && bars.every((bar) => isCornerBarFullyDimensioned(bar.segments))
+}
+
+/**
+ * 旧列 diameter / segments に書き戻す値。
+ * アプリはもう読まないが、ロールバックしても表示が壊れないよう bars[0] をミラーする。
+ */
+export function cornerBarLegacyFieldsFromBars(bars: CornerBarBarItem[]): {
+  diameter: string | null
+  segments: CornerBarSegment[]
+} {
+  const first = bars[0]
+  return {
+    diameter: first?.barType ?? null,
+    segments: first?.segments ?? [],
+  }
+}
+
+/**
+ * 集計用に径と本数だけ取り出す。辺の寸法は見ないので形状定義が不要。
+ * bars が空の古い行は diameter を 1 本として数える。
+ */
+export function cornerBarBarQuantities(source: {
+  bars?: unknown
+  diameter?: string | null
+}): Array<{ barType: string; quantity: number }> {
+  const raw = Array.isArray(source.bars) ? source.bars : []
+  const out: Array<{ barType: string; quantity: number }> = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const rec = item as Partial<CornerBarBarItem>
+    const barType = typeof rec.barType === 'string' ? rec.barType.trim() : ''
+    if (!barType) continue
+    const quantity = normalizeBarQuantity(rec.quantity)
+    if (quantity <= 0) continue
+    out.push({ barType, quantity })
+  }
+  if (out.length > 0) return out
+  const legacyDiameter = (source.diameter ?? '').trim()
+  return [{ barType: legacyDiameter || '径未設定', quantity: 1 }]
 }
 
 // --- 図形化 -------------------------------------------------------------
@@ -607,18 +888,39 @@ export type CornerBarPrintSummary = {
 
 type CornerBarForPrintSummary = {
   category: string
-  diameter: string | null
+  diameter?: string | null
+  bars?: unknown
   color: string
 }
 
-/** 付加筋パネル下部・印刷要約ボックス用の集計 */
+/**
+ * 付加筋パネル下部・印刷要約ボックス用の集計。
+ * 配置数ではなく、径ごとの本数を合計する。
+ */
 export function buildCornerBarPrintSummary(
   cornerBars: CornerBarForPrintSummary[],
   normalizeColor: (color: string) => string = (c) => c,
 ): CornerBarPrintSummary {
   const countByCategory = new Map<string, number>()
+  const detailMap = new Map<
+    string,
+    { category: string; diameter: string; color: string; qty: number }
+  >()
   for (const cb of cornerBars) {
-    countByCategory.set(cb.category, (countByCategory.get(cb.category) ?? 0) + 1)
+    const color = normalizeColor(cb.color ?? 'red')
+    for (const bar of cornerBarBarQuantities(cb)) {
+      countByCategory.set(cb.category, (countByCategory.get(cb.category) ?? 0) + bar.quantity)
+      const key = `${cb.category}/${bar.barType}/${color}`
+      const prev = detailMap.get(key)
+      if (prev) prev.qty += bar.quantity
+      else
+        detailMap.set(key, {
+          category: cb.category,
+          diameter: bar.barType,
+          color,
+          qty: bar.quantity,
+        })
+    }
   }
 
   const categoryCounts = CORNER_BAR_CATEGORIES.map((c) => ({
@@ -626,19 +928,6 @@ export function buildCornerBarPrintSummary(
     label: c.label,
     count: countByCategory.get(c.id) ?? 0,
   })).filter((c) => c.count > 0)
-
-  const detailMap = new Map<
-    string,
-    { category: string; diameter: string; color: string; qty: number }
-  >()
-  for (const cb of cornerBars) {
-    const diameter = cb.diameter ?? '径未設定'
-    const color = normalizeColor(cb.color ?? 'red')
-    const key = `${cb.category}/${diameter}/${color}`
-    const prev = detailMap.get(key)
-    if (prev) prev.qty += 1
-    else detailMap.set(key, { category: cb.category, diameter, color, qty: 1 })
-  }
 
   const detailRows = [...detailMap.values()].sort(
     (a, b) =>
@@ -654,14 +943,15 @@ export function buildCornerBarPrintSummary(
 
 /**
  * パレットで選んでから図面をドラッグするまでの、配置待ちの設定。
- * 筋種類・形状・鉄筋径・向きをここで決め、辺の寸法は配置後に入れる。
+ * 筋種類・形状・鉄筋（径と本数）・向きをここで決める。
  *
- * 数量は持たない。図面に 1 つ描いたものが 1 本なので、集計は配置数で数える。
+ * 辺の寸法は径ごとの標準値を入れておき、細かい調整は配置後に右パネルで行う。
  */
 export interface CornerBarPlacementDraft {
   category: CornerBarCategory
   shapeType: CornerBarShapeType
-  diameter: string
+  /** 径ごとの本数と寸法。配置時にそのまま bars として保存する */
+  bars: CornerBarBarItem[]
   /** 0/1/2/3 = 0/90/180/270 度 */
   rotation: number
 }
@@ -670,10 +960,19 @@ export function makeCornerBarDraft(
   shapeType: CornerBarShapeType,
   base?: Partial<CornerBarPlacementDraft>,
 ): CornerBarPlacementDraft {
+  const category = base?.category ?? 'CORNER'
+  const shape = getCornerBarShape(shapeType)
+  // 形状を変えたときは径と本数だけ引き継ぎ、辺の寸法は入れ直す
+  const sameShape = base?.shapeType === shapeType
+  const bars = !shape
+    ? base?.bars ?? []
+    : base?.bars?.length
+      ? remapCornerBarBarsToShape(shape, category, base.bars, sameShape)
+      : [makeCornerBarBar(shape, category, DEFAULT_CORNER_BAR_DIAMETER, { id: 'b1' })]
   return {
-    category: base?.category ?? 'CORNER',
+    category,
     shapeType,
-    diameter: base?.diameter ?? 'D13',
+    bars,
     rotation: base?.rotation ?? 0,
   }
 }

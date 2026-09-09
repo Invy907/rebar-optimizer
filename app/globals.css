@@ -260,4 +260,39 @@ button,
     width: auto !important;
     min-width: 0 !important;
   }
+
+  /* 付加筋 集計結果: 筋種類ごとのセクションと表の行が途中で割れないようにする */
+  /* space-y-* のマージンではなく gap で詰めたいので flex に切り替える */
+  .corner-summary-print-root {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 12px !important;
+  }
+
+  .corner-summary-print-root > * {
+    margin: 0 !important;
+  }
+
+  .corner-summary-section {
+    break-inside: avoid;
+    border: 0 !important;
+    padding: 0 !important;
+  }
+
+  .corner-summary-print-root thead {
+    display: table-header-group;
+  }
+
+  .corner-summary-print-root tr {
+    break-inside: avoid;
+  }
+
+  .corner-summary-print-root table {
+    border-color: #64748b !important;
+  }
+
+  .corner-summary-print-root td,
+  .corner-summary-print-root th {
+    border-color: #64748b !important;
+  }
 }
