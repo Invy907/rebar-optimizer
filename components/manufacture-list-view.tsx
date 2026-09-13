@@ -8,7 +8,7 @@
 
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, type CSSProperties } from 'react'
 import type { DrawingSegment, Unit } from '@/lib/types/database'
 import { CustomerDatePicker } from '@/components/customer-date-picker'
 import { CustomerDateTimePicker } from '@/components/customer-datetime-picker'
@@ -30,15 +30,23 @@ const ROW_HEIGHT = 21
  *  （8 行 × 6 製作図 = 48 行 / ページ。データ行 7 + 合計行 1 が上限で、
  *   それを超える製作図はその分高くなり 1 ページ 6 未満になる） */
 const MIN_ROWS_PER_BLOCK = 8
-/** 列幅(px)。データ列だけ詰める（製作図は広いまま） */
-const COL_SHAPE = 384
+/** 列幅(px)。データ列だけ詰める */
+const COL_SHAPE = 260
 const COL_LEN = 118
 const COL_QTY = 46
 const COL_TATE = 54
-/** 印刷時に「製作」を置く、表の右外に残る余白の幅(px)。
- *  A4 縦・左右余白 10mm で使える幅は約 698px、表は 602px なので右に約 90px 残る。
+/** 印刷時に「製作」と自由記入メモを置く、表の右外に残る余白の幅(px)。
+ *  A4 縦・左右余白 10mm で使える幅は約 698px、表は 478px なので右に約 220px 残る。
  *  ここを超える長さは折り返して、ページ外にはみ出さないようにする */
-const PRODUCTION_BOX_WIDTH = 88
+const RIGHT_COL_WIDTH = 210
+/** 「製作」と自由記入メモを置く、ヘッダー上端からのオフセット(px)。
+ *  絶対配置なので、日付ブロックの高さを変えたらここも合わせる */
+const PRODUCTION_BOX_TOP = 96
+const MEMO_BOX_TOP = 150
+/** 自由記入メモの文字サイズ(px)。利用者が −/＋ で調整する */
+export const MEMO_FONT_PX_MIN = 9
+export const MEMO_FONT_PX_MAX = 24
+export const MEMO_FONT_PX_DEFAULT = 13
 import {
   compareSegmentColorOrder,
   getSegmentColorLabelJa,
@@ -46,6 +54,11 @@ import {
   normalizeSegmentColor,
   type SegmentColor,
 } from '@/lib/segment-colors'
+
+export function clampMemoFontPx(value: number): number {
+  if (!Number.isFinite(value)) return MEMO_FONT_PX_DEFAULT
+  return Math.min(MEMO_FONT_PX_MAX, Math.max(MEMO_FONT_PX_MIN, Math.round(value)))
+}
 
 type ManufactureRow = {
   key: string
@@ -255,6 +268,10 @@ export function ManufactureListView({
   onCustomerArrivalChange,
   customerProduction,
   onCustomerProductionChange,
+  customerMemo,
+  onCustomerMemoChange,
+  memoFontPx,
+  onMemoFontPxChange,
   legendPositions = {},
   onLegendPositionChange,
 }: {
@@ -273,6 +290,10 @@ export function ManufactureListView({
   onCustomerArrivalChange: (value: string) => void
   customerProduction: string
   onCustomerProductionChange: (value: string) => void
+  customerMemo: string
+  onCustomerMemoChange: (value: string) => void
+  memoFontPx: number
+  onMemoFontPxChange: (value: number) => void
   legendPositions?: ManufactureLegendPositions
   onLegendPositionChange?: (
     groupKey: string,
@@ -286,8 +307,8 @@ export function ManufactureListView({
   )
 
   const plainTextInputClass =
-    'min-w-0 border-0 bg-transparent px-0 py-0 text-lg outline-none placeholder:text-muted/50 focus:underline focus:decoration-primary/40 print:border-transparent print:bg-transparent print:text-lg'
-  const headerLabelClass = 'shrink-0 text-lg font-semibold text-foreground print:text-lg'
+    'min-w-0 border-0 bg-transparent px-0 py-0 text-2xl outline-none placeholder:text-muted/50 focus:underline focus:decoration-primary/40 print:border-transparent print:bg-transparent print:text-2xl'
+  const headerLabelClass = 'shrink-0 text-2xl font-semibold text-foreground print:text-2xl'
 
   if (groups.length === 0) {
     return (
@@ -302,10 +323,10 @@ export function ManufactureListView({
   const dataCell =
     'border border-slate-400 px-1 font-mono text-[15px] leading-none tabular-nums'
   return (
-    <div className="manufacture-list-root space-y-3 print:space-y-0.5">
+    <div className="manufacture-list-root relative space-y-3 print:space-y-0.5">
       <div className="manufacture-list-header relative flex items-start justify-between gap-4">
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-2 text-lg print:text-lg">
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-2 text-2xl print:text-2xl">
             <label className="inline-flex max-w-full items-center gap-1.5">
               <AutoWidthInput
                 value={customerCompany}
@@ -373,12 +394,13 @@ export function ManufactureListView({
         <div className="hidden shrink-0 items-start leading-tight print:flex">
           <div className="flex flex-col items-end">
             {formatReiwaDate(customerDate) ? (
-              <div className="text-base font-bold">{formatReiwaDate(customerDate)}</div>
+              <div className="text-xl font-bold">{formatReiwaDate(customerDate)}</div>
             ) : null}
             {formatArrivalDayTime(customerArrival) ? (
               <>
-                <div className="mt-0.5 text-[10px] leading-none">つみこみ</div>
-                <div className="text-base font-bold">
+                {/* 手書きメモの指示どおり「つみこみ」も日付と同じ大きさに揃える */}
+                <div className="mt-0.5 text-xl leading-none">つみこみ</div>
+                <div className="text-xl font-bold">
                   {formatArrivalDayTime(customerArrival)}
                 </div>
               </>
@@ -390,8 +412,8 @@ export function ManufactureListView({
             幅は表の右外の余白ぶんに固定し、長い文字列は折り返す */}
         {customerProduction ? (
           <div
-            className="absolute right-0 top-[72px] hidden flex-col items-center pt-0.5 leading-tight print:flex"
-            style={{ width: PRODUCTION_BOX_WIDTH }}
+            className="absolute right-0 hidden flex-col items-center pt-0.5 leading-tight print:flex"
+            style={{ width: RIGHT_COL_WIDTH, top: PRODUCTION_BOX_TOP }}
           >
             <span className="text-xs font-medium">製作</span>
             <span className="w-full whitespace-pre-wrap break-all text-[13px] font-bold leading-tight">
@@ -400,6 +422,58 @@ export function ManufactureListView({
           </div>
         ) : null}
       </div>
+
+      {/* 予定・注意事項などを自由に書き込む欄。幅は w-[210px] = RIGHT_COL_WIDTH。
+          「製作」と同じく絶対配置にしてヘッダーや表の高さに影響させない。
+          画面が狭いと表に重なるので、md 未満では絶対配置を外してヘッダーの下に流す */}
+      <div
+        className="rounded-md border border-dashed border-slate-300 bg-slate-50/80 px-2 py-1.5 shadow-sm focus-within:border-primary/50 focus-within:bg-primary/5 md:absolute md:right-0 md:w-[210px] print:hidden"
+        style={{ top: MEMO_BOX_TOP }}
+      >
+        <div className="mb-1 flex items-center justify-between gap-1 text-xs text-muted">
+          <span className="whitespace-nowrap">メモ</span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onMemoFontPxChange(clampMemoFontPx(memoFontPx - 1))}
+              disabled={memoFontPx <= MEMO_FONT_PX_MIN}
+              aria-label="メモの文字を小さくする"
+              className="flex h-5 w-5 items-center justify-center rounded border border-slate-300 bg-white leading-none text-foreground disabled:opacity-40"
+            >
+              −
+            </button>
+            <span className="w-9 text-center tabular-nums">{memoFontPx}px</span>
+            <button
+              type="button"
+              onClick={() => onMemoFontPxChange(clampMemoFontPx(memoFontPx + 1))}
+              disabled={memoFontPx >= MEMO_FONT_PX_MAX}
+              aria-label="メモの文字を大きくする"
+              className="flex h-5 w-5 items-center justify-center rounded border border-slate-300 bg-white leading-none text-foreground disabled:opacity-40"
+            >
+              ＋
+            </button>
+          </div>
+        </div>
+        <AutoGrowTextarea
+          value={customerMemo}
+          onChange={onCustomerMemoChange}
+          ariaLabel="メモ"
+          placeholder="予定・注意事項など"
+          className="w-full text-foreground"
+          textClass="leading-snug"
+          style={{ fontSize: memoFontPx }}
+        />
+      </div>
+
+      {/* 印刷では画面と同じ位置・同じ文字サイズでメモ本文だけを出す */}
+      {customerMemo.trim() ? (
+        <div
+          className="manufacture-memo-print absolute right-0 hidden whitespace-pre-wrap break-words leading-snug print:block"
+          style={{ width: RIGHT_COL_WIDTH, top: MEMO_BOX_TOP, fontSize: memoFontPx }}
+        >
+          {customerMemo}
+        </div>
+      ) : null}
 
       <div className="manufacture-list-table-wrap relative w-fit max-w-full">
         <div className="overflow-x-auto">
@@ -536,15 +610,22 @@ function AutoGrowTextarea({
   onChange,
   ariaLabel,
   className,
+  placeholder,
+  textClass = 'text-sm leading-5',
+  style,
 }: {
   value: string
   onChange: (value: string) => void
   ariaLabel: string
   className: string
+  placeholder?: string
+  /** 文字サイズ・行送り。style で fontSize を渡すときは leading も合わせる */
+  textClass?: string
+  style?: CSSProperties
 }) {
-  const sharedTextClass = 'whitespace-pre-wrap break-all text-sm leading-5'
+  const sharedTextClass = `whitespace-pre-wrap break-all ${textClass}`
   return (
-    <span className={`inline-grid min-w-0 ${className}`}>
+    <span className={`inline-grid min-w-0 ${className}`} style={style}>
       {/* 末尾の改行や空文字でも 1 行分の高さを確保するため zero-width space を足す */}
       <span
         aria-hidden
@@ -557,7 +638,8 @@ function AutoGrowTextarea({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         aria-label={ariaLabel}
-        className={`col-start-1 row-start-1 w-full resize-none overflow-hidden border-0 bg-transparent p-0 outline-none ${sharedTextClass}`}
+        placeholder={placeholder}
+        className={`col-start-1 row-start-1 w-full resize-none overflow-hidden border-0 bg-transparent p-0 outline-none placeholder:text-muted/50 ${sharedTextClass}`}
       />
     </span>
   )

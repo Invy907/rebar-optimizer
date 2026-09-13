@@ -10,6 +10,8 @@ import { OptimizationResultView } from '@/components/optimization-result-view'
 import {
   ManufactureListView,
   buildManufactureUnitTotals,
+  clampMemoFontPx,
+  MEMO_FONT_PX_DEFAULT,
   type ManufactureLegendPositions,
 } from '@/components/manufacture-list-view'
 import type { UnitShapeLegendPosition } from '@/components/unit-client'
@@ -121,6 +123,9 @@ export function OptimizeClient({
   const [customerArrival, setCustomerArrival] = useState('')
   /** 製作担当者 */
   const [customerProduction, setCustomerProduction] = useState('')
+  /** 予定・注意事項などの自由記入メモ（製作図リストの右側） */
+  const [customerMemo, setCustomerMemo] = useState('')
+  const [customerMemoFontPx, setCustomerMemoFontPx] = useState(MEMO_FONT_PX_DEFAULT)
   const [focusSegmentId, setFocusSegmentId] = useState<string | null>(
     initialFocusSegmentId ?? null,
   )
@@ -248,6 +253,8 @@ export function OptimizeClient({
         date?: string
         arrival?: string
         production?: string
+        memo?: string
+        memoFontPx?: number
       }
       setCustomerCompany(parsed.company ?? '')
       setCustomerAddress(parsed.address ?? '')
@@ -255,6 +262,12 @@ export function OptimizeClient({
       setCustomerDate(parsed.date ?? '')
       setCustomerArrival(parsed.arrival ?? '')
       setCustomerProduction(parsed.production ?? '')
+      setCustomerMemo(parsed.memo ?? '')
+      setCustomerMemoFontPx(
+        parsed.memoFontPx == null
+          ? MEMO_FONT_PX_DEFAULT
+          : clampMemoFontPx(parsed.memoFontPx),
+      )
     } catch {
       // Ignore malformed local data and continue with empty fields.
     }
@@ -272,6 +285,8 @@ export function OptimizeClient({
           date: customerDate,
           arrival: customerArrival,
           production: customerProduction,
+          memo: customerMemo,
+          memoFontPx: customerMemoFontPx,
         }),
       )
     } catch {
@@ -283,6 +298,8 @@ export function OptimizeClient({
     customerCompany,
     customerDate,
     customerInfoStorageKey,
+    customerMemo,
+    customerMemoFontPx,
     customerName,
     customerProduction,
   ])
@@ -381,6 +398,10 @@ export function OptimizeClient({
             onCustomerArrivalChange={setCustomerArrival}
             customerProduction={customerProduction}
             onCustomerProductionChange={setCustomerProduction}
+            customerMemo={customerMemo}
+            onCustomerMemoChange={setCustomerMemo}
+            memoFontPx={customerMemoFontPx}
+            onMemoFontPxChange={setCustomerMemoFontPx}
             legendPositions={
               manufactureLegendPositionState.storageKey === manufactureLegendStorageKey
                 ? manufactureLegendPositionState.positions
