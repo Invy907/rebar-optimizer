@@ -2,7 +2,7 @@
 
 'use client'
 
-import { useState, useMemo, useEffect, useRef, type ReactNode, type PointerEvent as SvgPointerEvent } from 'react'
+import { useState, useMemo, useEffect, useRef, type ReactNode, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as SvgPointerEvent } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import type { Unit, UnitRebarLayout } from '@/lib/types/database'
@@ -4760,8 +4760,22 @@ export type UnitShapeLegendPosition = {
   y: number
 }
 
-/** 鉄筋径ごとに独立した凡例位置 */
+/**
+ * 鉄筋径ごとに独立した凡例位置。
+ * ピッチ（@200）も同じ仕組みで動かすので、径と衝突しない予約キーで一緒に持つ。
+ */
 export type UnitShapeLegendPositions = Record<string, UnitShapeLegendPosition>
+
+/** ピッチ表示の位置を legendPositions に入れるときのキー。鉄筋径と衝突しない名前にする */
+export const UNIT_SHAPE_PITCH_KEY = '@pitch'
+
+/** 位置未保存の凡例を右上に縦積みするときの開始位置と間隔(px)。箱の高さに合わせる */
+const LEGEND_STACK_TOP = 12
+const LEGEND_STACK_GAP = 26
+
+/** 位置未保存のピッチの既定位置。形状は中央寄せで描かれるので、左端に寄せるほど
+ *  寸法の数字（160 など）から離れる。ドラッグで動かせる範囲の左端に合わせてある */
+const PITCH_DEFAULT_CLASS = 'left-0 top-1'
 
 export function UnitShapeThumbnail({
   unit,
@@ -4783,9 +4797,10 @@ export function UnitShapeThumbnail({
   shapeOnly?: boolean
   /** true のとき detail_geometry の二重線を無視し、単線で描く（optimize 結果表示用） */
   singleLineShape?: boolean
-  /** 大判プレビュー内の鉄筋径ごとの凡例中心位置。未指定の凡例は右上に置く */
+  /** 大判プレビュー内の鉄筋径ごとの凡例中心位置。未指定の凡例は右上に置く。
+   *  ピッチは UNIT_SHAPE_PITCH_KEY のキーで同じ器に入れる */
   legendPositions?: UnitShapeLegendPositions
-  /** 指定時は各鉄筋径の凡例を個別にドラッグ・矢印キーで移動できる */
+  /** 指定時は各鉄筋径の凡例とピッチを個別にドラッグ・矢印キーで移動できる */
   onLegendPositionChange?: (
     diameter: string,
     position: UnitShapeLegendPosition,
@@ -4794,7 +4809,7 @@ export function UnitShapeThumbnail({
   const shapeContainerRef = useRef<HTMLDivElement | null>(null)
   const diameterLegendRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const diameterLegendDragRef = useRef<{
-    diameter: string
+    overlayKey: string
     pointerId: number
     offsetX: number
     offsetY: number
@@ -4947,9 +4962,9 @@ export function UnitShapeThumbnail({
       : Math.max(1.5, lineStyle.strokeWidth - 0.5)
   const doubleLineBarLabel = getDoubleLineBarLabel(unit)
 
-  const getCurrentLegendPosition = (diameter: string): UnitShapeLegendPosition | null => {
+  const getCurrentLegendPosition = (overlayKey: string): UnitShapeLegendPosition | null => {
     const container = shapeContainerRef.current
-    const legend = diameterLegendRefs.current[diameter]
+    const legend = diameterLegendRefs.current[overlayKey]
     if (!container || !legend) return null
     const containerRect = container.getBoundingClientRect()
     const legendRect = legend.getBoundingClientRect()
@@ -4963,7 +4978,7 @@ export function UnitShapeThumbnail({
   const moveLegendFromPointer = (clientX: number, clientY: number) => {
     const drag = diameterLegendDragRef.current
     const container = shapeContainerRef.current
-    const legend = drag ? diameterLegendRefs.current[drag.diameter] : null
+    const legend = drag ? diameterLegendRefs.current[drag.overlayKey] : null
     if (!drag || !container || !legend || !onLegendPositionChange) return
 
     const containerRect = container.getBoundingClientRect()
@@ -4983,19 +4998,19 @@ export function UnitShapeThumbnail({
       Math.max(halfHeight, desiredCenterY),
     )
 
-    onLegendPositionChange(drag.diameter, {
+    onLegendPositionChange(drag.overlayKey, {
       x: centerX / containerRect.width,
       y: centerY / containerRect.height,
     })
   }
 
-  const nudgeLegend = (diameter: string, dx: number, dy: number) => {
+  const nudgeLegend = (overlayKey: string, dx: number, dy: number) => {
     if (!onLegendPositionChange) return
-    const current = legendPositions?.[diameter] ?? getCurrentLegendPosition(diameter)
+    const current = legendPositions?.[overlayKey] ?? getCurrentLegendPosition(overlayKey)
     if (!current) return
 
     const container = shapeContainerRef.current
-    const legend = diameterLegendRefs.current[diameter]
+    const legend = diameterLegendRefs.current[overlayKey]
     const containerRect = container?.getBoundingClientRect()
     const legendRect = legend?.getBoundingClientRect()
     const minX =
@@ -5007,19 +5022,92 @@ export function UnitShapeThumbnail({
         ? Math.min(0.5, legendRect.height / 2 / containerRect.height)
         : 0
 
-    onLegendPositionChange(diameter, {
+    onLegendPositionChange(overlayKey, {
       x: Math.min(1 - minX, Math.max(minX, current.x + dx)),
       y: Math.min(1 - minY, Math.max(minY, current.y + dy)),
     })
   }
+
+  /**
+   * 鉄筋径の凡例とピッチで同じドラッグ操作にするための共通ハンドラ。
+   * どちらも legendPositions に中心位置の比率として入る。
+   */
+  const overlayDragProps = (overlayKey: string) => ({
+    ref: (element: HTMLDivElement | null) => {
+      diameterLegendRefs.current[overlayKey] = element
+    },
+    tabIndex: onLegendPositionChange ? 0 : undefined,
+    onPointerDown: (event: SvgPointerEvent<HTMLDivElement>) => {
+      if (!onLegendPositionChange || event.button !== 0) return
+      const rect = event.currentTarget.getBoundingClientRect()
+      diameterLegendDragRef.current = {
+        overlayKey,
+        pointerId: event.pointerId,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+      }
+      event.currentTarget.setPointerCapture(event.pointerId)
+      event.preventDefault()
+    },
+    onPointerMove: (event: SvgPointerEvent<HTMLDivElement>) => {
+      if (diameterLegendDragRef.current?.pointerId !== event.pointerId) return
+      moveLegendFromPointer(event.clientX, event.clientY)
+    },
+    onPointerUp: (event: SvgPointerEvent<HTMLDivElement>) => {
+      if (diameterLegendDragRef.current?.pointerId !== event.pointerId) return
+      diameterLegendDragRef.current = null
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    },
+    onPointerCancel: (event: SvgPointerEvent<HTMLDivElement>) => {
+      if (diameterLegendDragRef.current?.pointerId !== event.pointerId) return
+      diameterLegendDragRef.current = null
+    },
+    onLostPointerCapture: () => {
+      diameterLegendDragRef.current = null
+    },
+    onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      const amount = event.shiftKey ? 0.05 : 0.01
+      if (event.key === 'ArrowLeft') nudgeLegend(overlayKey, -amount, 0)
+      else if (event.key === 'ArrowRight') nudgeLegend(overlayKey, amount, 0)
+      else if (event.key === 'ArrowUp') nudgeLegend(overlayKey, 0, -amount)
+      else if (event.key === 'ArrowDown') nudgeLegend(overlayKey, 0, amount)
+      else return
+      event.preventDefault()
+    },
+  })
+
+  /** 位置が保存されている場合の絶対配置スタイル（中心を比率で置く） */
+  const overlayPositionStyle = (position: UnitShapeLegendPosition) => ({
+    left: `${Math.min(1, Math.max(0, position.x)) * 100}%`,
+    top: `${Math.min(1, Math.max(0, position.y)) * 100}%`,
+    transform: 'translate(-50%, -50%)',
+  })
+
+  const draggableOverlayClass = onLegendPositionChange
+    ? 'touch-none cursor-grab select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 active:cursor-grabbing print:cursor-default'
+    : 'pointer-events-none'
+
+  const pitchPosition = legendPositions?.[UNIT_SHAPE_PITCH_KEY]
 
   return (
     <div
       ref={large ? shapeContainerRef : undefined}
       className={large ? (containerClassName ?? 'relative h-80 w-full') : 'contents'}
     >
+      {/* ピッチは寸法の数字と重なることがあるので、凡例と同じようにドラッグで逃がせるようにする */}
       {large && pitchMm != null && (
-        <div className="pointer-events-none absolute left-4 top-3 z-10 flex items-baseline gap-1 font-bold leading-none text-slate-800">
+        <div
+          {...overlayDragProps(UNIT_SHAPE_PITCH_KEY)}
+          className={`absolute z-10 flex items-baseline gap-1 font-bold leading-none text-slate-800 focus:z-20 active:z-20 ${
+            pitchPosition ? '' : PITCH_DEFAULT_CLASS
+          } ${draggableOverlayClass}`}
+          style={pitchPosition ? overlayPositionStyle(pitchPosition) : undefined}
+          role={onLegendPositionChange ? 'group' : undefined}
+          aria-label={onLegendPositionChange ? 'ピッチ表示。ドラッグで移動' : undefined}
+          title={onLegendPositionChange ? 'ドラッグして移動できます' : undefined}
+        >
           {doubleLineBarLabel ? (
             <span className="text-[13px] font-semibold">{doubleLineBarLabel}</span>
           ) : null}
@@ -5034,24 +5122,14 @@ export function UnitShapeThumbnail({
           return (
             <div
               key={diameter}
-              ref={(element) => {
-                diameterLegendRefs.current[diameter] = element
-              }}
-              className={`absolute z-10 flex items-center gap-1.5 rounded border border-slate-200 bg-white/85 px-1.5 py-1 shadow-sm focus:z-20 active:z-20 ${
-                legendPosition ? '' : 'right-4'
-              } ${
-                onLegendPositionChange
-                  ? 'touch-none cursor-grab select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 active:cursor-grabbing print:cursor-default'
-                  : 'pointer-events-none'
-              }`}
+              {...overlayDragProps(diameter)}
+              className={`absolute z-10 flex items-center gap-1 rounded border border-slate-200 bg-white/85 px-1 py-0.5 shadow-sm focus:z-20 active:z-20 ${
+                legendPosition ? '' : 'right-0.5'
+              } ${draggableOverlayClass}`}
               style={
                 legendPosition
-                  ? {
-                      left: `${Math.min(1, Math.max(0, legendPosition.x)) * 100}%`,
-                      top: `${Math.min(1, Math.max(0, legendPosition.y)) * 100}%`,
-                      transform: 'translate(-50%, -50%)',
-                    }
-                  : { top: 12 + index * 36 }
+                  ? overlayPositionStyle(legendPosition)
+                  : { top: LEGEND_STACK_TOP + index * LEGEND_STACK_GAP }
               }
               role={onLegendPositionChange ? 'group' : undefined}
               aria-label={
@@ -5060,51 +5138,11 @@ export function UnitShapeThumbnail({
                   : undefined
               }
               title={onLegendPositionChange ? `${diameter} をドラッグして移動できます` : undefined}
-              tabIndex={onLegendPositionChange ? 0 : undefined}
-              onPointerDown={(event) => {
-                if (!onLegendPositionChange || event.button !== 0) return
-                const legendRect = event.currentTarget.getBoundingClientRect()
-                diameterLegendDragRef.current = {
-                  diameter,
-                  pointerId: event.pointerId,
-                  offsetX: event.clientX - legendRect.left,
-                  offsetY: event.clientY - legendRect.top,
-                }
-                event.currentTarget.setPointerCapture(event.pointerId)
-                event.preventDefault()
-              }}
-              onPointerMove={(event) => {
-                if (diameterLegendDragRef.current?.pointerId !== event.pointerId) return
-                moveLegendFromPointer(event.clientX, event.clientY)
-              }}
-              onPointerUp={(event) => {
-                if (diameterLegendDragRef.current?.pointerId !== event.pointerId) return
-                diameterLegendDragRef.current = null
-                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                  event.currentTarget.releasePointerCapture(event.pointerId)
-                }
-              }}
-              onPointerCancel={(event) => {
-                if (diameterLegendDragRef.current?.pointerId !== event.pointerId) return
-                diameterLegendDragRef.current = null
-              }}
-              onLostPointerCapture={() => {
-                diameterLegendDragRef.current = null
-              }}
-              onKeyDown={(event) => {
-                const amount = event.shiftKey ? 0.05 : 0.01
-                if (event.key === 'ArrowLeft') nudgeLegend(diameter, -amount, 0)
-                else if (event.key === 'ArrowRight') nudgeLegend(diameter, amount, 0)
-                else if (event.key === 'ArrowUp') nudgeLegend(diameter, 0, -amount)
-                else if (event.key === 'ArrowDown') nudgeLegend(diameter, 0, amount)
-                else return
-                event.preventDefault()
-              }}
             >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+              <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
                 <RebarSymbol x={12} y={12} token={token} radius={radius} strokeWidth={1.8} />
               </svg>
-              <span className="min-w-7 text-left text-[10px] font-semibold leading-none text-slate-700">
+              <span className="text-left text-[9px] font-semibold leading-none text-slate-700">
                 {diameter}
               </span>
             </div>

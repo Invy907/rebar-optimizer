@@ -30,15 +30,18 @@ const ROW_HEIGHT = 21
  *  （8 行 × 6 製作図 = 48 行 / ページ。データ行 7 + 合計行 1 が上限で、
  *   それを超える製作図はその分高くなり 1 ページ 6 未満になる） */
 const MIN_ROWS_PER_BLOCK = 8
-/** 列幅(px)。データ列だけ詰める */
-const COL_SHAPE = 260
+/** 列幅(px)。データ列だけ詰める。
+ *  製作図は手書きフィードバックで「2cm ほど右に広く」と指示があり 260 → 336 にした
+ *  （2cm ＝ 96dpi でおよそ 76px） */
+const COL_SHAPE = 336
 const COL_LEN = 118
 const COL_QTY = 46
 const COL_TATE = 54
 /** 印刷時に「製作」と自由記入メモを置く、表の右外に残る余白の幅(px)。
- *  A4 縦・左右余白 10mm で使える幅は約 698px、表は 478px なので右に約 220px 残る。
- *  ここを超える長さは折り返して、ページ外にはみ出さないようにする */
-const RIGHT_COL_WIDTH = 210
+ *  A4 縦・左右余白 10mm で使える幅は約 698px、表は 554px なので右に約 144px 残る */
+const RIGHT_COL_WIDTH = 140
+/** ヘッダー（会社名・現場名）と表のあいだに空ける距離。印刷で 5mm ほど空ける指示 */
+const HEADER_TABLE_GAP_MM = 5
 /** 「製作」と自由記入メモを置く、ヘッダー上端からのオフセット(px)。
  *  絶対配置なので、日付ブロックの高さを変えたらここも合わせる */
 const PRODUCTION_BOX_TOP = 96
@@ -54,6 +57,47 @@ import {
   normalizeSegmentColor,
   type SegmentColor,
 } from '@/lib/segment-colors'
+
+/** 会社名・現場名の文字サイズ(px)の上限と下限。上限は手書き指示の「大きく」に合わせた値 */
+const HEADER_FONT_PX_MAX = 24
+const HEADER_FONT_PX_MIN = 12
+/**
+ * 印刷時にヘッダーの名前へ使える幅(px)。
+ * A4 で使える 698px から、右上の日付ブロック(約 145px)と列間(gap-x-4 × 2 ＋ gap-4 ＝ 48px)を引いた残り。
+ */
+const HEADER_TEXT_WIDTH_PX = 505
+
+/** 全角を 1em、半角を 0.5em として文字列の概算幅を出す */
+function estimateEmWidth(text: string): number {
+  let em = 0
+  for (const ch of text) {
+    // ASCII と半角カナだけ半分の幅として数える
+    em += /[\u0020-\u007e\uff61-\uff9f]/.test(ch) ? 0.5 : 1
+  }
+  return em
+}
+
+/**
+ * 会社名・顧客名・現場住所を 1 行に収める文字サイズ(px)。
+ *
+ * 長い名前だと 2 行目に折り返してしまうため、幅から逆算して必要なぶんだけ縮める
+ * （手書き指示：2 行目にならない様に。もう少し字が小さくても可）。
+ * 画面と印刷でずれないよう、実測ではなく印刷幅を基準にした固定計算にしている。
+ */
+function manufactureHeaderFontPx(company: string, name: string, address: string): number {
+  const em =
+    estimateEmWidth(company || '会社名') +
+    1 + // 様
+    estimateEmWidth(name || '顧客名') +
+    2 + // 様邸
+    estimateEmWidth(address || '現場住所') +
+    0.45 // 入力 3 つぶんの右パディング
+  if (em <= 0) return HEADER_FONT_PX_MAX
+  return Math.max(
+    HEADER_FONT_PX_MIN,
+    Math.min(HEADER_FONT_PX_MAX, Math.floor(HEADER_TEXT_WIDTH_PX / em)),
+  )
+}
 
 export function clampMemoFontPx(value: number): number {
   if (!Number.isFinite(value)) return MEMO_FONT_PX_DEFAULT
@@ -306,9 +350,12 @@ export function ManufactureListView({
     [segments, units, adjustmentMm],
   )
 
+  // 文字サイズは行全体に inline style で当てる（Tailwind の text-* だと画面と印刷で
+  // 別々の値になってしまい、1 行に収まる保証ができない）
+  const headerFontPx = manufactureHeaderFontPx(customerCompany, customerName, customerAddress)
   const plainTextInputClass =
-    'min-w-0 border-0 bg-transparent px-0 py-0 text-2xl outline-none placeholder:text-muted/50 focus:underline focus:decoration-primary/40 print:border-transparent print:bg-transparent print:text-2xl'
-  const headerLabelClass = 'shrink-0 text-2xl font-semibold text-foreground print:text-2xl'
+    'min-w-0 border-0 bg-transparent px-0 py-0 outline-none placeholder:text-muted/50 focus:underline focus:decoration-primary/40 print:border-transparent print:bg-transparent'
+  const headerLabelClass = 'shrink-0 font-semibold text-foreground'
 
   if (groups.length === 0) {
     return (
@@ -326,38 +373,42 @@ export function ManufactureListView({
     <div className="manufacture-list-root relative space-y-3 print:space-y-0.5">
       <div className="manufacture-list-header relative flex items-start justify-between gap-4">
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-2 text-2xl print:text-2xl">
-            <label className="inline-flex max-w-full items-center gap-1.5">
+          {/* 折り返すと 2 行目ができてしまうので nowrap にし、幅は文字サイズ側で合わせる */}
+          <div
+            className="flex flex-nowrap items-center gap-x-4 whitespace-nowrap"
+            style={{ fontSize: headerFontPx }}
+          >
+            <label className="inline-flex items-center gap-0.5">
               <AutoWidthInput
                 value={customerCompany}
                 onChange={onCustomerCompanyChange}
                 placeholder="会社名"
                 ariaLabel="会社名"
-                minCh={10}
+                minCh={3}
                 maxCh={56}
                 className={`${plainTextInputClass} font-semibold text-foreground`}
               />
               <span className={headerLabelClass}>様</span>
             </label>
-            <label className="inline-flex max-w-full items-center gap-1.5">
+            <label className="inline-flex items-center gap-0.5">
               <AutoWidthInput
                 value={customerName}
                 onChange={onCustomerNameChange}
                 placeholder="顧客名"
                 ariaLabel="顧客名"
-                minCh={8}
+                minCh={3}
                 maxCh={48}
                 className={`${plainTextInputClass} font-semibold text-foreground`}
               />
               <span className={headerLabelClass}>様邸</span>
             </label>
-            <label className="inline-flex max-w-full items-center gap-1.5">
+            <label className="inline-flex items-center gap-0.5">
               <AutoWidthInput
                 value={customerAddress}
                 onChange={onCustomerAddressChange}
                 placeholder="現場住所"
                 ariaLabel="現場住所"
-                minCh={12}
+                minCh={3}
                 maxCh={64}
                 className={`${plainTextInputClass} text-foreground`}
               />
@@ -423,11 +474,11 @@ export function ManufactureListView({
         ) : null}
       </div>
 
-      {/* 予定・注意事項などを自由に書き込む欄。幅は w-[210px] = RIGHT_COL_WIDTH。
+      {/* 予定・注意事項などを自由に書き込む欄。md 以上の幅は RIGHT_COL_WIDTH (140px) と揃える。
           「製作」と同じく絶対配置にしてヘッダーや表の高さに影響させない。
           画面が狭いと表に重なるので、md 未満では絶対配置を外してヘッダーの下に流す */}
       <div
-        className="rounded-md border border-dashed border-slate-300 bg-slate-50/80 px-2 py-1.5 shadow-sm focus-within:border-primary/50 focus-within:bg-primary/5 md:absolute md:right-0 md:w-[210px] print:hidden"
+        className="rounded-md border border-dashed border-slate-300 bg-slate-50/80 px-2 py-1.5 shadow-sm focus-within:border-primary/50 focus-within:bg-primary/5 md:absolute md:right-0 md:w-[140px] print:hidden"
         style={{ top: MEMO_BOX_TOP }}
       >
         <div className="mb-1 flex items-center justify-between gap-1 text-xs text-muted">
@@ -475,7 +526,12 @@ export function ManufactureListView({
         </div>
       ) : null}
 
-      <div className="manufacture-list-table-wrap relative w-fit max-w-full">
+      {/* 会社名のヘッダーと表のあいだを空ける（手書き指示：5mm ぐらい）。
+          margin だと親の space-y と競合するので padding で取る */}
+      <div
+        className="manufacture-list-table-wrap relative w-fit max-w-full"
+        style={{ paddingTop: `${HEADER_TABLE_GAP_MM}mm` }}
+      >
         <div className="overflow-x-auto">
         <table className="border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
           <colgroup>
@@ -671,9 +727,11 @@ function AutoWidthInput({
       className="auto-width-field inline-grid max-w-full"
       style={{ minWidth: `${minCh}ch`, maxWidth: `${maxCh}ch` }}
     >
+      {/* 右パディングはキャレットが「様」に触れない最小限だけ。
+          広いと名前と「様」のあいだが空きすぎる */}
       <span
         aria-hidden
-        className="invisible col-start-1 row-start-1 whitespace-pre py-0 pl-0 pr-[0.5em] text-inherit font-semibold"
+        className="invisible col-start-1 row-start-1 whitespace-pre py-0 pl-0 pr-[0.15em] text-inherit font-semibold"
       >
         {mirrorText}
       </span>
