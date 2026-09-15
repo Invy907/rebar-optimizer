@@ -131,7 +131,7 @@ test('§9 別の配置でも仕様が同じなら 1 行にまとめる', () => {
   assert.equal(rows.length, 1)
   assert.equal(rows[0]!.quantity, 3)
   assert.equal(rows[0]!.dimsText, '700 × 700')
-  assert.equal(rows[0]!.dimsDetailText, '700（芯々）× 700（芯々）')
+  assert.equal(rows[0]!.dimsDetailText, '700芯々 × 700芯々')
   assert.equal(rows[0]!.uniformMeasurementType, 'SHIN_SHIN')
   assert.equal(rows[0]!.segmentSumMm, 1400)
   assert.equal(rows[0]!.kakouchouMm, 1380)
@@ -167,7 +167,7 @@ test('§10 数字が同じでも寸法基準が違えば合算しない', () => 
   const mixed = rows.find((r) => r.dimsDetailText.includes('外々'))
   assert.ok(mixed)
   assert.equal(mixed.uniformMeasurementType, null)
-  assert.equal(mixed.dimsDetailText, '600（外々）× 600（内々）')
+  assert.equal(mixed.dimsDetailText, '600外々 × 600内々')
 })
 
 test('§10 形状・segment 個数が違えば合算しない', () => {

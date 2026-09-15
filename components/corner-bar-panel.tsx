@@ -15,8 +15,10 @@ import {
   cornerBarDiameterOptionLabel,
   cornerBarLegacyFieldsFromBars,
   cornerBarRotationLabel,
+  cornerBarSegmentLabelAnchors,
   cornerBarSegmentSumMm,
   cornerBarThumbPath,
+  cornerBarThumbPoints,
   changeCornerBarBarDiameter,
   DEFAULT_CORNER_BAR_DIAMETER,
   DEFAULT_CORNER_BAR_SIZE_PX,
@@ -36,6 +38,7 @@ import {
   type CornerBarCategory,
   type CornerBarPlacementDraft,
   type CornerBarSegment,
+  type CornerBarShapeDef,
   type MeasurementType,
 } from '@/lib/corner-bar-presets'
 import {
@@ -94,6 +97,10 @@ export function CornerBarPanel({
     [selected, selectedShape],
   )
   const currentSizePx = clampCornerBarSizePx(selected?.size_px ?? DEFAULT_CORNER_BAR_SIZE_PX)
+
+  /** 形状図で強調する辺。辺の入力欄と図を相互に対応づけるためだけの表示状態。
+      選択編集と配置設定は同時に出ないので 1 つで足りる */
+  const [activeSegIndex, setActiveSegIndex] = useState<number | null>(null)
 
   const printSummary = useMemo(
     () => buildCornerBarPrintSummary(cornerBars, normalizeSegmentColor),
@@ -363,11 +370,21 @@ export function CornerBarPanel({
               </button>
             </div>
 
+            {/* 「辺1」がどの辺かを図で示す。辺の入力欄と相互に強調し合う */}
+            <CornerBarSegmentFigure
+              shape={selectedShape}
+              rotation={selected.rotation}
+              activeIndex={activeSegIndex}
+              onActiveIndexChange={setActiveSegIndex}
+            />
+
             {/* 径ごとの本数と辺の寸法。同じ位置でも径によって実寸が違うため個別に持つ */}
             <CornerBarBarsField
               category={selected.category as CornerBarCategory}
               bars={selectedBars}
               showSegments
+              activeSegIndex={activeSegIndex}
+              onActiveSegIndexChange={setActiveSegIndex}
               onChangeBarType={handleSelectedBarTypeChange}
               onChangeQuantity={handleSelectedQuantityChange}
               onChangeSegment={handleSelectedSegmentChange}
@@ -512,12 +529,24 @@ export function CornerBarPanel({
               <span className="text-[10px] text-muted">これから配置するもの</span>
             </div>
 
+            {/* 配置前でも「辺1」がどの辺かを図で確かめられるようにする */}
+            {placementShape && placementDraft ? (
+              <CornerBarSegmentFigure
+                shape={placementShape}
+                rotation={placementDraft.rotation}
+                activeIndex={activeSegIndex}
+                onActiveIndexChange={setActiveSegIndex}
+              />
+            ) : null}
+
             {/* 径と本数に加えて辺の寸法もここで決める。配置後も右パネルで直せる */}
             <CornerBarBarsField
               category={placementCategory}
               bars={placementBars}
               showSegments
               disabled={!placementDraft}
+              activeSegIndex={activeSegIndex}
+              onActiveSegIndexChange={setActiveSegIndex}
               onChangeBarType={handlePlacementBarTypeChange}
               onChangeQuantity={handlePlacementQuantityChange}
               onChangeSegment={handlePlacementSegmentChange}
@@ -607,6 +636,8 @@ function CornerBarBarsField({
   bars,
   showSegments,
   disabled = false,
+  activeSegIndex,
+  onActiveSegIndexChange,
   onChangeBarType,
   onChangeQuantity,
   onChangeSegment,
@@ -617,6 +648,9 @@ function CornerBarBarsField({
   bars: CornerBarBarItem[]
   showSegments: boolean
   disabled?: boolean
+  /** 形状図と対応づけて強調する辺。辺の番号は鉄筋によらず同じ意味なので全カードで共有する */
+  activeSegIndex: number | null
+  onActiveSegIndexChange: (index: number | null) => void
   onChangeBarType: (index: number, barType: string) => void
   onChangeQuantity: (index: number, quantity: number) => void
   onChangeSegment?: (
@@ -681,14 +715,31 @@ function CornerBarBarsField({
 
           {showSegments && onChangeSegment && bar.segments.length > 0 ? (
             <div className="space-y-1 border-t border-border pt-1.5">
-              {bar.segments.map((seg, segIdx) => (
-                <div key={seg.id} className="flex items-center gap-1.5">
-                  <span className="w-7 shrink-0 text-[10px] text-muted">辺{segIdx + 1}</span>
+              {bar.segments.map((seg, segIdx) => {
+                const isActiveSeg = segIdx === activeSegIndex
+                return (
+                <div
+                  key={seg.id}
+                  onMouseEnter={() => onActiveSegIndexChange(segIdx)}
+                  onMouseLeave={() => onActiveSegIndexChange(null)}
+                  className={`flex items-center gap-1.5 rounded px-0.5 ${
+                    isActiveSeg ? 'bg-primary/10' : ''
+                  }`}
+                >
+                  <span
+                    className={`w-7 shrink-0 text-[10px] ${
+                      isActiveSeg ? 'font-semibold text-primary' : 'text-muted'
+                    }`}
+                  >
+                    辺{segIdx + 1}
+                  </span>
                   <input
                     type="number"
                     min={1}
                     placeholder="mm"
                     value={seg.lengthMm ?? ''}
+                    onFocus={() => onActiveSegIndexChange(segIdx)}
+                    onBlur={() => onActiveSegIndexChange(null)}
                     onChange={(e) => {
                       const raw = e.target.value
                       if (raw === '') {
@@ -718,7 +769,8 @@ function CornerBarBarsField({
                     ))}
                   </select>
                 </div>
-              ))}
+                )
+              })}
               <div className="text-right text-[10px] text-muted">
                 合計 {cornerBarSegmentSumMm(bar.segments).toLocaleString('ja-JP')} mm
               </div>
@@ -726,6 +778,113 @@ function CornerBarBarsField({
           ) : null}
         </div>
       ))}
+    </div>
+  )
+}
+
+const FIG_W = 220
+/** 縦長の階段形でも形が潰れない高さ。低くすると辺が詰まって番号バッジ同士が重なる
+ *  （H=132 では 2段階段のバッジ間が 8px しかなく、直径 16px のバッジが重なった） */
+const FIG_H = 200
+/** 番号バッジ（半径 8）と法線方向のずれ（13）が収まる余白 */
+const FIG_PAD = 24
+const FIG_LABEL_GAP = 13
+const FIG_BADGE_R = 8
+
+/**
+ * 辺の番号を書き込んだ形状図。「辺1」がどの辺なのかを目で確かめるためのもの。
+ *
+ * 配置の向き（rotation）を反映するので、図面上の見た目と同じ向きで出る。
+ * 辺が 1 本しかない形状（添え筋のストレート）は取り違えようがないので描かない。
+ */
+function CornerBarSegmentFigure({
+  shape,
+  rotation,
+  activeIndex,
+  onActiveIndexChange,
+}: {
+  shape: CornerBarShapeDef
+  rotation: number
+  activeIndex: number | null
+  onActiveIndexChange: (index: number | null) => void
+}) {
+  const points = cornerBarThumbPoints(shape, FIG_W, FIG_H, FIG_PAD, rotation)
+  if (points.length < 3) return null
+
+  const anchors = cornerBarSegmentLabelAnchors(points, FIG_LABEL_GAP)
+
+  return (
+    <div className="rounded border border-border bg-white p-1">
+      <svg
+        width="100%"
+        viewBox={`0 0 ${FIG_W} ${FIG_H}`}
+        role="img"
+        aria-label={`${shape.label}の辺の並び`}
+      >
+        {anchors.map((anchor) => {
+          const p1 = points[anchor.index]!
+          const p2 = points[anchor.index + 1]!
+          const isActive = anchor.index === activeIndex
+          return (
+            <line
+              key={anchor.index}
+              x1={p1.x}
+              y1={p1.y}
+              x2={p2.x}
+              y2={p2.y}
+              stroke={isActive ? '#2563eb' : '#94a3b8'}
+              strokeWidth={isActive ? 3.5 : 2.5}
+              strokeLinecap="round"
+            />
+          )
+        })}
+        {/* 曲げの位置が分かるように節点に小さな印を打つ */}
+        {points.slice(1, -1).map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r={2.5} fill="#0f172a" />
+        ))}
+        {/* 番号と当たり判定は最後に重ねる。細い線のままでは狙いにくいので判定だけ太くする */}
+        {anchors.map((anchor) => {
+          const p1 = points[anchor.index]!
+          const p2 = points[anchor.index + 1]!
+          const isActive = anchor.index === activeIndex
+          return (
+            <g
+              key={anchor.index}
+              onMouseEnter={() => onActiveIndexChange(anchor.index)}
+              onMouseLeave={() => onActiveIndexChange(null)}
+            >
+              <line
+                x1={p1.x}
+                y1={p1.y}
+                x2={p2.x}
+                y2={p2.y}
+                stroke="transparent"
+                strokeWidth={16}
+                strokeLinecap="round"
+              />
+              <circle
+                cx={anchor.x}
+                cy={anchor.y}
+                r={FIG_BADGE_R}
+                fill={isActive ? '#2563eb' : '#ffffff'}
+                stroke={isActive ? '#2563eb' : '#94a3b8'}
+                strokeWidth={1.5}
+              />
+              <text
+                x={anchor.x}
+                y={anchor.y}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={10}
+                fontWeight={600}
+                fill={isActive ? '#ffffff' : '#475569'}
+              >
+                {anchor.index + 1}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
     </div>
   )
 }

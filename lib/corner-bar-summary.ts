@@ -43,7 +43,7 @@ export interface AdditionalRebarSpecRow {
   segments: CornerBarSegment[]
   /** 「600 × 455 × 115 × 600」 */
   dimsText: string
-  /** 「600（外々）× 455（内々）× …」 ツールチップ用 */
+  /** 「600外々 × 455内々 × …」 寸法基準つきの表示用 */
   dimsDetailText: string
   /** 全ての辺が同じ寸法基準ならその値。混在・未設定なら null */
   uniformMeasurementType: MeasurementType | null
@@ -153,19 +153,16 @@ function flattenPlacementBars(
 }
 
 /**
- * 「600（外々）× 455（内々）× …」。寸法基準が未設定の辺は括弧を付けない。
- *
- * 全角括弧の後は既に余白があるので、区切りの前の空白を入れない。
+ * 「600外々 × 455内々 × …」。数字と基準ラベルを括弧なしで直結し、辺は「 × 」で区切る。
+ * 寸法基準が未設定の辺は数字のみ。
  */
 function formatDimsWithMeasurement(segments: CornerBarSegment[]): string {
   const parts = segments.map((s) => {
     const len = s.lengthMm == null ? '—' : String(s.lengthMm)
-    return s.measurementType ? `${len}（${measurementTypeLabel(s.measurementType)}）` : len
+    const label = s.measurementType ? measurementTypeLabel(s.measurementType) : ''
+    return label ? `${len}${label}` : len
   })
-  return parts.reduce(
-    (acc, part, i) => (i === 0 ? part : `${acc}${acc.endsWith('）') ? '' : ' '}× ${part}`),
-    '',
-  )
+  return parts.join(' × ')
 }
 
 function resolveUniformMeasurementType(

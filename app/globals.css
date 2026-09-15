@@ -162,6 +162,15 @@ button,
     gap: 14px !important;
   }
 
+  /* 画面用の space-y-6（margin-block-start）を消す。flex の gap と両方効くと
+     二重に空いてしまう（改ページを挟まない区間で特に目立つ）。
+     Tailwind の space-y は margin-top ではなく margin-block-start を使うので、
+     両方明示して確実に打ち消す。 */
+  .optimize-print-root > * {
+    margin: 0 !important;
+    margin-block: 0 !important;
+  }
+
   .optimize-print-manufacture {
     order: 1 !important;
     border: 0 !important;
@@ -177,6 +186,11 @@ button,
     line-height: 1.15 !important;
   }
 
+  /* 自由記入メモは表の右外に絶対配置している。途中で改ページされないようにする */
+  .manufacture-memo-print {
+    break-inside: avoid;
+  }
+
   /* 計算結果は製作図リストの後、次ページから印刷する。
      フック付は表カードの下に縦積み。
      セクション自体を中身の幅（＝表カード）に縮め、左寄せする。
@@ -190,9 +204,10 @@ button,
 
   /* 「鉄筋種類別の必要本数」と「フック付」を 1 ページに収めるため、
      余白・行の高さ・文字を詰め、各ボックスはページ途中で割らない。
-     両カードは同じ幅（セクション幅）にして右端を揃える。 */
+     付加筋 集計結果もこの 2 枚と同じカード（枠線・余白・幅）に揃える。 */
   .print-bar-summary,
-  .print-hook-summary {
+  .print-hook-summary,
+  .corner-summary-section {
     padding: 8px 10px !important;
     width: 100% !important;
     box-sizing: border-box !important;
@@ -261,10 +276,12 @@ button,
     min-width: 0 !important;
   }
 
-  /* 付加筋 集計結果は切断最適化の結果の後（最後）に、次ページから印刷する */
+  /* 付加筋 集計結果は切断最適化の結果のすぐ後ろに続けて印刷する。
+     同じ用紙に収まる分はそのまま続け、収まらない分だけ自然に次ページへ流れる
+     （break-before: page は指定しない。カード自体は下の break-inside: avoid で
+     途中で割れないようにする）。 */
   .optimize-print-corner-bars {
     order: 3 !important;
-    break-before: page;
     width: fit-content !important;
     align-self: flex-start !important;
   }
@@ -281,12 +298,6 @@ button,
     margin: 0 !important;
   }
 
-  .corner-summary-section {
-    break-inside: avoid;
-    border: 0 !important;
-    padding: 0 !important;
-  }
-
   .corner-summary-print-root thead {
     display: table-header-group;
   }
@@ -295,12 +306,24 @@ button,
     break-inside: avoid;
   }
 
+  /* 「鉄筋種類別の必要本数」と同じ密度に詰める（画面の text-lg のままだと大きすぎる） */
   .corner-summary-print-root table {
     border-color: #64748b !important;
+    width: auto !important;
+    font-size: 14px !important;
   }
 
   .corner-summary-print-root td,
   .corner-summary-print-root th {
     border-color: #64748b !important;
+    padding-top: 1px !important;
+    padding-bottom: 1px !important;
+  }
+
+  /* 画面では辺ごとの寸法基準を 1 行で見せている（セルが nowrap）。
+     ただし A4 の幅には収まらないので、印刷だけは折り返しを許す。
+     区切りの空白は「×」の後ろにあるので、折り返しても読む順番は崩れない。 */
+  .corner-summary-dims {
+    white-space: normal !important;
   }
 }

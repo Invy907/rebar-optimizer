@@ -880,14 +880,19 @@ export function cornerBarGeometryBounds(geometry: CornerBarGeometry): {
   }
 }
 
-/** パレットのサムネイル用 SVG path */
-export function cornerBarThumbPath(
+/**
+ * 指定した箱にぴったり収めた辺の頂点。points[i] → points[i+1] が辺 i。
+ *
+ * サムネイルの path と、寸法を書き込んだ図解のラベル位置を同じ座標系で
+ * 求めたいので、当てはめの計算をここに 1 つだけ置く。
+ */
+export function cornerBarThumbPoints(
   shape: CornerBarShapeDef,
   boxW: number,
   boxH: number,
   pad = 6,
   rotationSteps = 0,
-): string {
+): Array<{ x: number; y: number }> {
   const geometry = buildCornerBarGeometry(shape, makeCornerBarSegments(shape))
   const rotated = {
     points: geometry.points.map((p) => rotateCornerBarPoint(p, rotationSteps)),
@@ -898,12 +903,56 @@ export function cornerBarThumbPath(
   const scale = Math.min((boxW - pad * 2) / w, (boxH - pad * 2) / h)
   const offsetX = (boxW - w * scale) / 2
   const offsetY = (boxH - h * scale) / 2
-  return rotated.points
-    .map((p, i) => {
-      const x = offsetX + (p.x - b.minX) * scale
-      const y = offsetY + (p.y - b.minY) * scale
-      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`
-    })
+  return rotated.points.map((p) => ({
+    x: offsetX + (p.x - b.minX) * scale,
+    y: offsetY + (p.y - b.minY) * scale,
+  }))
+}
+
+/**
+ * 辺ごとのラベル位置。中点から形状の外側へ gap だけずらす。
+ *
+ * 番号バッジ（パネル）と寸法（結果ページの図解）で同じ置き方をしたいので、
+ * 外向きの判定をここに 1 つだけ置く。
+ */
+export function cornerBarSegmentLabelAnchors(
+  points: Array<{ x: number; y: number }>,
+  gap: number,
+): Array<{ index: number; x: number; y: number; mx: number; my: number }> {
+  if (points.length < 2) return []
+  const xs = points.map((p) => p.x)
+  const ys = points.map((p) => p.y)
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2
+  const cy = (Math.min(...ys) + Math.max(...ys)) / 2
+
+  return points.slice(0, -1).map((p1, i) => {
+    const p2 = points[i + 1]!
+    const mx = (p1.x + p2.x) / 2
+    const my = (p1.y + p2.y) / 2
+    const dx = p2.x - p1.x
+    const dy = p2.y - p1.y
+    const len = Math.hypot(dx, dy) || 1
+    // 辺に直交する向きのうち、形状の外を向くほうへラベルをずらす
+    let nx = -dy / len
+    let ny = dx / len
+    if (nx * (mx - cx) + ny * (my - cy) < 0) {
+      nx = -nx
+      ny = -ny
+    }
+    return { index: i, x: mx + nx * gap, y: my + ny * gap, mx, my }
+  })
+}
+
+/** パレットのサムネイル用 SVG path */
+export function cornerBarThumbPath(
+  shape: CornerBarShapeDef,
+  boxW: number,
+  boxH: number,
+  pad = 6,
+  rotationSteps = 0,
+): string {
+  return cornerBarThumbPoints(shape, boxW, boxH, pad, rotationSteps)
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
     .join(' ')
 }
 

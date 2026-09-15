@@ -2,7 +2,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { OptimizationOutput } from '@/lib/optimizer'
 import type { UnitCalculationRow, UnitCountRoundingMode } from '@/lib/unit-calculations'
 import type { Unit } from '@/lib/types/database'
@@ -126,17 +126,6 @@ export function OptimizationResultView({
     return 'ユニット別集計の対象が見つかりませんでした。'
   }, [unitSummaries, unitCalculationRows])
 
-  const handlePrint = useCallback(() => {
-    const originalTitle = document.title
-    document.title = ''
-    const restoreTitle = () => {
-      document.title = originalTitle
-      window.removeEventListener('afterprint', restoreTitle)
-    }
-    window.addEventListener('afterprint', restoreTitle)
-    window.print()
-  }, [])
-
   return (
     <div className="space-y-4">
       <div className="print-hook-summary rounded-lg border-2 border-primary bg-white p-5">
@@ -250,16 +239,6 @@ export function OptimizationResultView({
         ) : (
           <p className="text-xs text-muted">{noSummaryReason}</p>
         )}
-      </div>
-
-      <div className="flex justify-end gap-2 print:hidden">
-        <button
-          type="button"
-          onClick={handlePrint}
-          className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:bg-gray-50"
-        >
-          印刷
-        </button>
       </div>
     </div>
   )

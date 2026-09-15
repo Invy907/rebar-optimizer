@@ -11,6 +11,8 @@ import { OptimizationResultView } from '@/components/optimization-result-view'
 import {
   ManufactureListView,
   buildManufactureUnitTotals,
+  clampMemoFontPx,
+  MEMO_FONT_PX_DEFAULT,
   type ManufactureLegendPositions,
 } from '@/components/manufacture-list-view'
 import type { UnitShapeLegendPosition } from '@/components/unit-client'
@@ -125,6 +127,9 @@ export function OptimizeClient({
   const [customerArrival, setCustomerArrival] = useState('')
   /** 製作担当者 */
   const [customerProduction, setCustomerProduction] = useState('')
+  /** 予定・注意事項などの自由記入メモ（製作図リストの右側） */
+  const [customerMemo, setCustomerMemo] = useState('')
+  const [customerMemoFontPx, setCustomerMemoFontPx] = useState(MEMO_FONT_PX_DEFAULT)
   const [focusSegmentId, setFocusSegmentId] = useState<string | null>(
     initialFocusSegmentId ?? null,
   )
@@ -252,6 +257,8 @@ export function OptimizeClient({
         date?: string
         arrival?: string
         production?: string
+        memo?: string
+        memoFontPx?: number
       }
       setCustomerCompany(parsed.company ?? '')
       setCustomerAddress(parsed.address ?? '')
@@ -259,6 +266,12 @@ export function OptimizeClient({
       setCustomerDate(parsed.date ?? '')
       setCustomerArrival(parsed.arrival ?? '')
       setCustomerProduction(parsed.production ?? '')
+      setCustomerMemo(parsed.memo ?? '')
+      setCustomerMemoFontPx(
+        parsed.memoFontPx == null
+          ? MEMO_FONT_PX_DEFAULT
+          : clampMemoFontPx(parsed.memoFontPx),
+      )
     } catch {
       // Ignore malformed local data and continue with empty fields.
     }
@@ -276,6 +289,8 @@ export function OptimizeClient({
           date: customerDate,
           arrival: customerArrival,
           production: customerProduction,
+          memo: customerMemo,
+          memoFontPx: customerMemoFontPx,
         }),
       )
     } catch {
@@ -287,6 +302,8 @@ export function OptimizeClient({
     customerCompany,
     customerDate,
     customerInfoStorageKey,
+    customerMemo,
+    customerMemoFontPx,
     customerName,
     customerProduction,
   ])
@@ -353,8 +370,20 @@ export function OptimizeClient({
     })
   }
 
+  /** ページ最後の印刷ボタン。押した瞬間だけタイトルを消し、印刷ダイアログに出るファイル名をきれいにする */
+  const handlePrint = useCallback(() => {
+    const originalTitle = document.title
+    document.title = ''
+    const restoreTitle = () => {
+      document.title = originalTitle
+      window.removeEventListener('afterprint', restoreTitle)
+    }
+    window.addEventListener('afterprint', restoreTitle)
+    window.print()
+  }, [])
+
   return (
-    <div className="optimize-print-root space-y-6">
+    <div className="optimize-print-root space-y-4">
       {/* 計算中表示 */}
       {calculating && (
         <section className="rounded-lg border border-border bg-white p-8 text-center">
@@ -385,6 +414,10 @@ export function OptimizeClient({
             onCustomerArrivalChange={setCustomerArrival}
             customerProduction={customerProduction}
             onCustomerProductionChange={setCustomerProduction}
+            customerMemo={customerMemo}
+            onCustomerMemoChange={setCustomerMemo}
+            memoFontPx={customerMemoFontPx}
+            onMemoFontPxChange={setCustomerMemoFontPx}
             legendPositions={
               manufactureLegendPositionState.storageKey === manufactureLegendStorageKey
                 ? manufactureLegendPositionState.positions
@@ -427,9 +460,21 @@ export function OptimizeClient({
       {/* 付加筋 集計結果。切断最適化の対象外なので、既存の結果の後ろに続けて出す */}
       {cornerBars.length > 0 && !calculating && (
         <section className="optimize-print-corner-bars space-y-4">
-          <h2 className="text-base font-semibold">付加筋 集計結果</h2>
           <CornerBarSummarySections placements={cornerBars} />
         </section>
+      )}
+
+      {/* 印刷ボタン。このページの一番下に固定する */}
+      {result && !calculating && (
+        <div className="flex justify-end print:hidden">
+          <button
+            type="button"
+            onClick={handlePrint}
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:bg-gray-50"
+          >
+            印刷
+          </button>
+        </div>
       )}
     </div>
   )
