@@ -2,7 +2,7 @@
 
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import type { DrawingCornerBar } from '@/lib/types/database'
 import { startGlobalLoading } from '@/lib/global-loading'
@@ -107,40 +107,47 @@ export function CornerBarPanel({
     [cornerBars],
   )
 
+  /** 筋種類ごとの配置設定。別の筋種類に鉄筋を引き継がないようにしつつ、
+      戻ってきたときだけ前の設定を出す。画面を開いている間だけ覚える */
+  const draftByCategoryRef = useRef(
+    new Map<CornerBarCategory, CornerBarPlacementDraft | null>(),
+  )
+
   function patchDraft(patch: Partial<CornerBarPlacementDraft>) {
     if (!placementDraft) return
     onChangePlacementDraft({ ...placementDraft, ...patch })
   }
 
   function handlePlacementCategoryChange(category: CornerBarCategory) {
-    const shapeType = resolveCategoryShape(category, placementDraft?.shapeType)
-    if (category === 'SOE') {
+    // 今の筋種類の設定を残しておき、あとで戻ってきたときに出せるようにする
+    draftByCategoryRef.current.set(placementCategory, placementDraft)
+
+    if (draftByCategoryRef.current.has(category)) {
+      const saved = draftByCategoryRef.current.get(category) ?? null
       onChangePlacementDraft(
-        makeCornerBarDraft('STRAIGHT', {
-          ...(placementDraft ?? {}),
-          category,
-          rotation: 0,
-        }),
+        saved ? makeCornerBarDraft(resolveCategoryShape(category, saved.shapeType), saved) : null,
       )
       return
     }
-    if (category === 'CORNER') {
-      if (placementDraft) {
-        onChangePlacementDraft(
-          makeCornerBarDraft('L', {
-            ...placementDraft,
-            category,
-          }),
-        )
-      } else {
-        onChangePlacementDraft(null)
-      }
+
+    // 初めて選ぶ筋種類は、その筋種類の既定（D13 1 本 + 標準寸法）から始める。
+    // 前の筋種類の鉄筋（径・本数）は引き継がない
+    if (category === 'SOE') {
+      onChangePlacementDraft(makeCornerBarDraft('STRAIGHT', { category, rotation: 0 }))
       return
     }
-    // 形状も新しい筋種類に合わせる。形状が変わる場合、辺の寸法は入れ直す
-    if (placementDraft) {
-      onChangePlacementDraft(makeCornerBarDraft(shapeType, { ...placementDraft, category }))
+    // 形状未選択のうちは選ばせたままにする
+    if (!placementDraft) {
+      onChangePlacementDraft(null)
+      return
     }
+    // 形状も新しい筋種類に合わせる
+    onChangePlacementDraft(
+      makeCornerBarDraft(resolveCategoryShape(category), {
+        category,
+        rotation: placementDraft.rotation,
+      }),
+    )
   }
 
   /** 鉄筋リストを保存する。旧列 diameter / segments には bars[0] をミラーする */
