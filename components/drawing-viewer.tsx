@@ -123,6 +123,22 @@ function circledSummaryNumber(n: number | null): string {
   return n >= 1 && n <= chars.length ? chars[n - 1]! : `(${n})`
 }
 
+function drawingPrintSummaryDetailText(row: DrawingPrintSummaryRow): string {
+  return `${row.len.toLocaleString('ja-JP')} × ${row.count}`
+}
+
+function buildDrawingPrintSummaryRowHtml(
+  row: DrawingPrintSummaryRow,
+  color: string,
+): string {
+  const mark = circledSummaryNumber(row.no)
+  const detail = escapeHtml(drawingPrintSummaryDetailText(row))
+  const markHtml = mark
+    ? `<span class="summary-mark">${escapeHtml(mark)}</span>`
+    : ''
+  return `<div class="summary-row" style="color:${color};">${markHtml}<span class="summary-detail">${detail}</span></div>`
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -3473,11 +3489,7 @@ export function DrawingViewer({
             .map((group) => {
               const color = getSegmentStrokeHex(group.color, false)
               const rows = group.rows
-                .map((row) =>
-                  `<div class="summary-row" style="color:${color};">${escapeHtml(
-                    `${circledSummaryNumber(row.no)}${row.len.toLocaleString('ja-JP')} × ${row.count}`,
-                  )}</div>`,
-                )
+                .map((row) => buildDrawingPrintSummaryRowHtml(row, color))
                 .join('')
               return `<section class="summary-group"><h2>${escapeHtml(group.name)}</h2>${rows}</section>`
             })
@@ -3585,9 +3597,20 @@ export function DrawingViewer({
       line-height: 1.05;
     }
     .summary-row {
+      display: flex;
+      align-items: baseline;
+      gap: calc(4px * var(--sum-scale, 1));
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-      font-size: calc(18px * var(--sum-scale, 1));
       white-space: nowrap;
+    }
+    .summary-mark {
+      font-size: calc(22px * var(--sum-scale, 1));
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .summary-detail {
+      font-size: calc(18px * var(--sum-scale, 1));
+      line-height: 1.2;
     }
     @media print {
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }${printFitCss}
@@ -4038,16 +4061,26 @@ export function DrawingViewer({
                             <div className="text-sm font-bold leading-none text-slate-500">
                               {group.name}
                             </div>
-                            <div className="space-y-0.5 font-mono text-[13px] font-bold leading-tight">
-                              {group.rows.map((row) => (
-                                <div
-                                  key={`${group.key}-${row.no ?? 'none'}-${row.len}`}
-                                  style={{ color }}
-                                >
-                                  {circledSummaryNumber(row.no)}
-                                  {row.len.toLocaleString('ja-JP')} × {row.count}
-                                </div>
-                              ))}
+                            <div className="space-y-0.5 font-mono font-bold leading-tight">
+                              {group.rows.map((row) => {
+                                const mark = circledSummaryNumber(row.no)
+                                return (
+                                  <div
+                                    key={`${group.key}-${row.no ?? 'none'}-${row.len}`}
+                                    className="flex items-baseline gap-1"
+                                    style={{ color }}
+                                  >
+                                    {mark ? (
+                                      <span className="shrink-0 text-[15px] leading-none">
+                                        {mark}
+                                      </span>
+                                    ) : null}
+                                    <span className="text-[13px]">
+                                      {drawingPrintSummaryDetailText(row)}
+                                    </span>
+                                  </div>
+                                )
+                              })}
                             </div>
                           </section>
                         )

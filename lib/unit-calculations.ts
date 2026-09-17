@@ -164,16 +164,19 @@ export function getUnitIntervalLengthMm(unit: Unit | null | undefined): number {
   }, 0)
 }
 
-export function normalizeLengthForPitch(lengthMm: number): number {
-  if (!Number.isFinite(lengthMm) || lengthMm <= 0) return 0
-  return Math.round(lengthMm / 100) * 100
-}
-
-export function getPitchBaseCount(lengthMm: number, pitchMm: number): number {
+/**
+ * タテ筋本数 = floor(実寸 ÷ ピッチ) + 1
+ *
+ * 実寸（鉄筋長さ補正値を適用した長さ）に沿って両端にも配筋するので +1 する。
+ * 呼称ではなく実寸で割る点に注意（例: 呼称 2,275 / 実寸 2,245 / @250 は
+ * 呼称のままだと 10 本になってしまうが、正しくは 9 本）。
+ *
+ * 例: 実寸 4,065 / @250 -> floor(16.26) + 1 = 17
+ */
+export function getPitchBaseCount(actualLengthMm: number, pitchMm: number): number {
   if (!Number.isFinite(pitchMm) || pitchMm <= 0) return 0
-  const normalizedLengthMm = normalizeLengthForPitch(lengthMm)
-  if (normalizedLengthMm <= 0) return 0
-  return Math.round(normalizedLengthMm / pitchMm)
+  if (!Number.isFinite(actualLengthMm) || actualLengthMm <= 0) return 0
+  return Math.floor(actualLengthMm / pitchMm) + 1
 }
 
 function getSegmentCalculationBarCount(segment: DrawingSegment): number {
@@ -210,6 +213,7 @@ export function buildUnitCalculationRows(
   segments: DrawingSegment[],
   units: Unit[],
   roundingMode: UnitCountRoundingMode = 'round',
+  adjustmentMm = 0,
 ): UnitCalculationRow[] {
   void roundingMode
   return segments
@@ -219,8 +223,9 @@ export function buildUnitCalculationRows(
       const lengthMm = getSegmentEffectiveLengthMm(segment, units)
       const pitchMm = getUnitPitchMm(unit)
       const barCount = getSegmentCalculationBarCount(segment)
-      const normalizedLengthMm = normalizeLengthForPitch(lengthMm)
-      const baseCount = pitchMm && pitchMm > 0 ? getPitchBaseCount(lengthMm, pitchMm) : 0
+      // タテ筋本数は呼称ではなく実寸（鉄筋長さ補正値を適用した長さ）で数える
+      const actualLengthMm = lengthMm + (adjustmentMm || 0)
+      const baseCount = pitchMm && pitchMm > 0 ? getPitchBaseCount(actualLengthMm, pitchMm) : 0
       const computedCount = baseCount * barCount
       const unitSummaryCount = baseCount
       const intervalLengthMm = getUnitIntervalLengthMm(unit)
@@ -242,7 +247,7 @@ export function buildUnitCalculationRows(
         intervalTimesCount: intervalLengthMm * computedCount,
         formulaText:
           pitchMm && pitchMm > 0
-            ? `${lengthMm} -> ${normalizedLengthMm} -> ${normalizedLengthMm} ÷ ${pitchMm} = ${(normalizedLengthMm / pitchMm).toFixed(2)} -> ${baseCount}`
+            ? `${lengthMm}(呼称) -> ${actualLengthMm}(実寸) ÷ ${pitchMm} = ${(actualLengthMm / pitchMm).toFixed(2)} -> +1 -> ${baseCount}`
             : `${lengthMm} / ピッチ未設定`,
         unitShapeLengthMm,
         unitLShapeCount,
