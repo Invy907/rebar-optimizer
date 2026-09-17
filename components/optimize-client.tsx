@@ -196,14 +196,20 @@ export function OptimizeClient({
   )
 
   const unitCalculationRows = useMemo(
-    () => buildUnitCalculationRows(segments, units, unitCountRoundingMode),
-    [segments, unitCountRoundingMode, units],
+    () =>
+      buildUnitCalculationRows(
+        segments,
+        units,
+        unitCountRoundingMode,
+        pieceLengthAdjustmentMm,
+      ),
+    [pieceLengthAdjustmentMm, segments, unitCountRoundingMode, units],
   )
 
   /** 製作図リストの「計」行と材料取りで同じ数量・タテ筋合計を使う */
   const manufactureTotalsByUnitId = useMemo(
-    () => buildManufactureUnitTotals(segments, units),
-    [segments, units],
+    () => buildManufactureUnitTotals(segments, units, pieceLengthAdjustmentMm),
+    [pieceLengthAdjustmentMm, segments, units],
   )
 
   const handleShapeLengthSave = useCallback(

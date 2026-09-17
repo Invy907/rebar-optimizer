@@ -112,7 +112,7 @@ type ManufactureRow = {
   actualMm: number
   /** 数量（この長さの部材本数） */
   qty: number
-  /** タテ筋本数 = round(round(呼称/100)*100 / ピッチ)。ピッチ未設定は null */
+  /** タテ筋本数 = floor(実寸 / ピッチ) + 1。ピッチ未設定は null */
   tateCount: number | null
 }
 
@@ -248,14 +248,15 @@ export function buildManufactureGroups(
       existing.qty += 1
     } else {
       const pitch = acc.group.pitchMm
+      const actualMm = nominalMm + (adjustmentMm || 0)
       acc.byLength.set(nominalMm, {
         key: `${groupKey}:${nominalMm}`,
         nominalMm,
-        actualMm: nominalMm + (adjustmentMm || 0),
+        actualMm,
         qty: 1,
-        // 4095 → 4100(100mm丸め) → 4100 ÷ 200(ピッチ) = 20.5 → 21(四捨五入)
+        // 呼称 4095 → 実寸 4065 ÷ 250(ピッチ) = 16.26 → floor + 1 = 17(両端にも配筋する)
         tateCount:
-          pitch != null && pitch > 0 ? getPitchBaseCount(nominalMm, pitch) : null,
+          pitch != null && pitch > 0 ? getPitchBaseCount(actualMm, pitch) : null,
       })
     }
   }
@@ -279,14 +280,16 @@ export function buildManufactureGroups(
 /**
  * ユニット別の合計（数量 / タテ筋）。製作図リストの「計」行と材料取りで
  * 同じ値を使うため、集計は buildManufactureGroups の 1 か所に集約する。
- * 数量・タテ筋は鉄筋長さ補正値に依存しないため adjustmentMm は 0 で計算する。
+ * タテ筋は実寸（呼称 + 補正値）で数えるので、呼び出し側と同じ adjustmentMm を
+ * 渡さないと「計」と材料取りの本数が食い違う。
  */
 export function buildManufactureUnitTotals(
   segments: DrawingSegment[],
   units: Unit[],
+  adjustmentMm: number,
 ): Map<string, { qtyTotal: number; tateTotal: number }> {
   const totals = new Map<string, { qtyTotal: number; tateTotal: number }>()
-  for (const group of buildManufactureGroups(segments, units, 0)) {
+  for (const group of buildManufactureGroups(segments, units, adjustmentMm)) {
     if (!group.unit) continue
     totals.set(group.unit.id, {
       qtyTotal: group.qtyTotal,
