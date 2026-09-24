@@ -434,40 +434,48 @@ export function OptimizeClient({
         </section>
       )}
 
-      {/* 結果 */}
-      {result && !calculating && (
-        <section className="optimize-print-results space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold">材料取り</h2>
-          </div>
-          {barSummaryTable && barSummaryTable.length > 0 && (
-            <BarSummarySection
-              rows={barSummaryTable}
-              adjustmentMm={pieceLengthAdjustmentMm}
-            />
+      {/*
+        画面では従来どおり縦積み。印刷時だけこのまとまりを 2 列にして、
+        付加筋を材料取りの右側へ配置する。
+      */}
+      {!calculating && (result || cornerBars.length > 0) && (
+        <div className="optimize-print-summary-layout space-y-4">
+          {/* 結果 */}
+          {result && (
+            <section className="optimize-print-results space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-semibold">材料取り</h2>
+              </div>
+              {barSummaryTable && barSummaryTable.length > 0 && (
+                <BarSummarySection
+                  rows={barSummaryTable}
+                  adjustmentMm={pieceLengthAdjustmentMm}
+                />
+              )}
+
+              <OptimizationResultView
+                result={result}
+                stockLengthMm={DEFAULT_STOCK_LENGTH_MM}
+                projectId={projectId}
+                segmentLabelById={segmentLabelById}
+                segmentDrawingIdById={segmentDrawingIdById}
+                focusSegmentId={focusSegmentId ?? undefined}
+                unitCalculationRows={unitCalculationRows}
+                roundingMode={unitCountRoundingMode}
+                units={units}
+                onShapeLengthSave={handleShapeLengthSave}
+                manufactureTotalsByUnitId={manufactureTotalsByUnitId}
+              />
+            </section>
           )}
 
-          <OptimizationResultView
-            result={result}
-            stockLengthMm={DEFAULT_STOCK_LENGTH_MM}
-            projectId={projectId}
-            segmentLabelById={segmentLabelById}
-            segmentDrawingIdById={segmentDrawingIdById}
-            focusSegmentId={focusSegmentId ?? undefined}
-            unitCalculationRows={unitCalculationRows}
-            roundingMode={unitCountRoundingMode}
-            units={units}
-            onShapeLengthSave={handleShapeLengthSave}
-            manufactureTotalsByUnitId={manufactureTotalsByUnitId}
-          />
-        </section>
-      )}
-
-      {/* 付加筋 集計結果。切断最適化の対象外なので、既存の結果の後ろに続けて出す */}
-      {cornerBars.length > 0 && !calculating && (
-        <section className="optimize-print-corner-bars space-y-4">
-          <CornerBarSummarySections placements={cornerBars} />
-        </section>
+          {/* 付加筋 集計結果。画面では切断最適化の結果の後ろに続けて出す */}
+          {cornerBars.length > 0 && (
+            <section className="optimize-print-corner-bars space-y-4">
+              <CornerBarSummarySections placements={cornerBars} />
+            </section>
+          )}
+        </div>
       )}
 
       {/* 印刷ボタン。このページの一番下に固定する */}

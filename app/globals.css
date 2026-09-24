@@ -192,12 +192,28 @@ button,
   }
 
   /* 計算結果は製作図リストの後、次ページから印刷する。
-     フック付は表カードの下に縦積み。
+     材料取りは左列、付加筋は縮小して右列に置き、同じページに収める。 */
+  .optimize-print-summary-layout {
+    order: 2 !important;
+    display: grid !important;
+    grid-template-columns: max-content minmax(0, 1fr) !important;
+    align-items: start !important;
+    column-gap: 12px !important;
+    width: 100% !important;
+    break-before: page;
+    break-inside: avoid;
+  }
+
+  /* 画面用の space-y を印刷用 grid の列間余白と重ねない */
+  .optimize-print-summary-layout > * {
+    margin: 0 !important;
+    margin-block: 0 !important;
+  }
+
+  /* フック付は材料取り表の下に縦積み。
      セクション自体を中身の幅（＝表カード）に縮め、左寄せする。
      その上で両カードを width:100% にすると、幅が揃い右端も揃う。 */
   .optimize-print-results {
-    order: 2 !important;
-    break-before: page;
     width: fit-content !important;
     align-self: flex-start !important;
   }
@@ -276,14 +292,19 @@ button,
     min-width: 0 !important;
   }
 
-  /* 付加筋 集計結果は切断最適化の結果のすぐ後ろに続けて印刷する。
-     同じ用紙に収まる分はそのまま続け、収まらない分だけ自然に次ページへ流れる
-     （break-before: page は指定しない。カード自体は下の break-inside: avoid で
-     途中で割れないようにする）。 */
+  /* 付加筋カードは現在の印刷レイアウトを丸ごと縮小して材料取りの右へ置く。
+     見出しぶんだけ上を空け、左右のカード上端を揃える。zoom は文字・罫線・
+     形状図を同じ比率で縮めつつ、縮小後の寸法で grid を組ませられる。 */
   .optimize-print-corner-bars {
-    order: 3 !important;
-    width: fit-content !important;
-    align-self: flex-start !important;
+    min-width: 0 !important;
+    width: auto !important;
+    padding-top: 32px !important;
+    overflow: visible !important;
+  }
+
+  .optimize-print-corner-bars .corner-summary-print-root {
+    width: auto !important;
+    zoom: 0.65;
   }
 
   /* 筋種類ごとのセクションと表の行が途中で割れないようにする。

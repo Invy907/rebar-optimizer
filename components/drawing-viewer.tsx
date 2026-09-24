@@ -579,6 +579,8 @@ export function DrawingViewer({
     useState<PendingCornerBarPlacement | null>(null)
   /** 付加筋レイヤーの操作モード。ユニットレイヤーの tool と同じ役割 */
   const [cornerTool, setCornerTool] = useState<'select' | 'place'>('select')
+  /** 付加筋タブでユニット線分を隠し、付加筋だけを表示する */
+  const [cornerBarsOnlyView, setCornerBarsOnlyView] = useState(false)
   /** これから配置する付加筋の色（配置設定で選ぶ） */
   const [cornerPlacementColor, setCornerPlacementColor] = useState<SegmentColor>('red')
   /** 選択モードで空白をドラッグしたときのトースト */
@@ -1811,17 +1813,27 @@ export function DrawingViewer({
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    const screenOptions: DrawingPaintOptions = {
-      showSegments: true,
-      showCornerBars: true,
-      segmentEmphasis: 'full',
-      cornerEmphasis: 'full',
-      interactiveHighlight: true,
-      showUnitInteractionOverlay: layer === 'unit',
-    }
+    const screenOptions: DrawingPaintOptions =
+      layer === 'unit'
+        ? {
+            showSegments: true,
+            showCornerBars: false,
+            segmentEmphasis: 'full',
+            cornerEmphasis: 'hidden',
+            interactiveHighlight: true,
+            showUnitInteractionOverlay: true,
+          }
+        : {
+            showSegments: !cornerBarsOnlyView,
+            showCornerBars: true,
+            segmentEmphasis: cornerBarsOnlyView ? 'hidden' : 'full',
+            cornerEmphasis: 'full',
+            interactiveHighlight: true,
+            showUnitInteractionOverlay: false,
+          }
 
     paintDrawing(ctx, canvas.width, canvas.height, screenOptions)
-  }, [imgLoaded, layer, paintDrawing])
+  }, [imgLoaded, layer, cornerBarsOnlyView, paintDrawing])
 
   const captureDrawingForPrint = useCallback(
     (targetLayer: DrawingLayer): string | null => {
@@ -4636,6 +4648,15 @@ export function DrawingViewer({
                 title="図面をクリックして新しい部材を配置します (D)"
               >
                 配置
+              </button>
+              <button
+                type="button"
+                onClick={() => setCornerBarsOnlyView((prev) => !prev)}
+                className={toolButtonClass(cornerBarsOnlyView, 'bg-slate-700')}
+                title="ユニット線分を隠して付加筋だけ表示します"
+                aria-pressed={cornerBarsOnlyView}
+              >
+                付加筋のみ
               </button>
             </>
           )}

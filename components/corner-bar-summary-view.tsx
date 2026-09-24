@@ -13,6 +13,7 @@ import {
   cornerBarThumbPoints,
   getCornerBarShape,
   getStandardSegmentLengthsMm,
+  measurementTypeLabel,
   type CornerBarCategory,
   type CornerBarShapeType,
 } from '@/lib/corner-bar-presets'
@@ -93,9 +94,8 @@ interface SheetRow {
    */
   layout: 'inline' | 'stacked'
   /**
-   * 形状図のセル。資料と同じく 1 形状につき 1 つだけ描くので、
-   * ブロックの先頭行だけ図を持ち（rowSpan でまとめる）、続く行はセルを出さない。
-   * 寸法を書かない行（コーナー筋・添え筋）は空のセルを 1 つ置く。
+   * 形状図のセル。寸法が異なる鉄筋を見分けられるよう、特殊コーナー筋は
+   * 集計行ごとにその行専用の図を描く。寸法を書かない行は空のセルを置く。
    */
   figure: { node: ReactNode; rowSpan: number } | 'empty' | 'skip'
 }
@@ -198,14 +198,12 @@ function buildSheetRows(groups: AdditionalRebarGroup[]): SheetRow[] {
           result: <KakouchouResult row={row} />,
           layout: 'stacked',
           figure:
-            showShapeFigure && i === 0
+            showShapeFigure
               ? {
-                  node: <ShapeFigure shapeType={row.shapeType} rows={block.rows} />,
-                  rowSpan: block.rows.length,
+                  node: <ShapeFigure shapeType={row.shapeType} rows={[row]} />,
+                  rowSpan: 1,
                 }
-              : showShapeFigure
-                ? 'skip'
-                : 'empty',
+              : 'empty',
         })
       })
     }
@@ -239,7 +237,10 @@ const FIGURE_BADGE_R = 8
 const FIGURE_LABEL_CHAR_W = 7
 const FIGURE_LABEL_LINE_H = 14
 
-/** 全ての鉄筋で各辺の寸法が一致しているか。違えば寸法は書けない */
+/**
+ * 全ての鉄筋で各辺の寸法と寸法基準が一致しているか。
+ * どちらかが違う場合、図だけでは各行を区別できないので辺番号へ切り替える。
+ */
 function hasUniformSegments(
   rows: AdditionalRebarSpecRow[],
   segmentCount: number,
@@ -247,8 +248,14 @@ function hasUniformSegments(
   if (rows.length <= 1) return true
   for (let i = 0; i < segmentCount; i += 1) {
     const first = rows[0]?.segments[i]?.lengthMm ?? null
+    const firstMeasurement = rows[0]?.segments[i]?.measurementType ?? null
     for (const row of rows) {
-      if ((row.segments[i]?.lengthMm ?? null) !== first) return false
+      if (
+        (row.segments[i]?.lengthMm ?? null) !== first ||
+        (row.segments[i]?.measurementType ?? null) !== firstMeasurement
+      ) {
+        return false
+      }
     }
   }
   return true
@@ -259,6 +266,14 @@ function segmentLabelFor(rows: AdditionalRebarSpecRow[], index: number): string 
   return length == null ? '—' : String(length)
 }
 
+function segmentMeasurementLabelFor(
+  rows: AdditionalRebarSpecRow[],
+  index: number,
+): string {
+  const measurementType = rows[0]?.segments[index]?.measurementType
+  return measurementType ? measurementTypeLabel(measurementType) : ''
+}
+
 /**
  * 寸法ラベルを中点の外側に置いても、隣の辺のラベルと重ならないか。
  *
@@ -267,16 +282,22 @@ function segmentLabelFor(rows: AdditionalRebarSpecRow[], index: number): string 
  */
 function labelsFitWithoutOverlap(
   anchors: Array<{ index: number; x: number; y: number }>,
-  texts: string[],
+  textLines: string[][],
 ): boolean {
-  const halfWidth = texts.map((t) => (t.length * FIGURE_LABEL_CHAR_W) / 2 + 2)
+  const halfWidth = textLines.map((lines) => {
+    const longest = Math.max(...lines.map((line) => line.length), 1)
+    return (longest * FIGURE_LABEL_CHAR_W) / 2 + 2
+  })
+  const halfHeight = textLines.map((lines) =>
+    lines.length > 1 ? FIGURE_LABEL_LINE_H : FIGURE_LABEL_LINE_H / 2,
+  )
   for (let i = 0; i < anchors.length; i += 1) {
     for (let j = i + 1; j < anchors.length; j += 1) {
       const a = anchors[i]!
       const b = anchors[j]!
       if (
         Math.abs(a.x - b.x) < halfWidth[i]! + halfWidth[j]! &&
-        Math.abs(a.y - b.y) < FIGURE_LABEL_LINE_H
+        Math.abs(a.y - b.y) < halfHeight[i]! + halfHeight[j]!
       ) {
         return false
       }
@@ -304,10 +325,16 @@ function ShapeFigure({
 
   const anchors = cornerBarSegmentLabelAnchors(points, FIGURE_LABEL_GAP)
   const dimTexts = anchors.map((anchor) => segmentLabelFor(rows, anchor.index))
+  const measurementTexts = anchors.map((anchor) =>
+    segmentMeasurementLabelFor(rows, anchor.index),
+  )
+  const labelLines = dimTexts.map((dimension, index) =>
+    measurementTexts[index] ? [dimension, measurementTexts[index]!] : [dimension],
+  )
   // 寸法を書けるのは「全ての鉄筋が同寸法」かつ「ラベルが重ならない」ときだけ
   const uniform =
     hasUniformSegments(rows, shape.directions.length) &&
-    labelsFitWithoutOverlap(anchors, dimTexts)
+    labelsFitWithoutOverlap(anchors, labelLines)
 
   return (
     <div className="flex flex-col items-center">
@@ -341,13 +368,24 @@ function ShapeFigure({
             <text
               key={anchor.index}
               x={anchor.x}
-              y={anchor.y}
+              y={measurementTexts[i] ? anchor.y - 5 : anchor.y}
               textAnchor="middle"
               dominantBaseline="middle"
               fontSize={12}
               fill="#0f172a"
             >
-              {dimTexts[i]}
+              <tspan x={anchor.x}>{dimTexts[i]}</tspan>
+              {measurementTexts[i] ? (
+                <tspan
+                  x={anchor.x}
+                  dy={12}
+                  fontSize={9}
+                  fontWeight={400}
+                  fill="#0f172a"
+                >
+                  {measurementTexts[i]}
+                </tspan>
+              ) : null}
             </text>
           ) : (
             <g key={anchor.index}>
