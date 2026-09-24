@@ -14,7 +14,10 @@ import {
   cornerBarCategoryLabel,
   cornerBarDiameterOptionLabel,
   cornerBarLegacyFieldsFromBars,
+  cornerBarFlipLabel,
   cornerBarRotationLabel,
+  normalizeCornerBarFlip,
+  toggleCornerBarFlip,
   cornerBarSegmentLabelAnchors,
   cornerBarSegmentSumMm,
   cornerBarThumbPath,
@@ -175,6 +178,7 @@ export function CornerBarPanel({
       shape_type: shapeType,
       bars,
       ...cornerBarLegacyFieldsFromBars(bars),
+      flipped: category === 'SPECIAL_CORNER' ? normalizeCornerBarFlip(selected.flipped) : false,
     }
     onUpdate(selected.id, updates)
   }
@@ -362,25 +366,72 @@ export function CornerBarPanel({
               </select>
             </label>
 
-            {/* この部材の向き。押すたびに図面上でも 90 度回る */}
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-muted">向き</span>
-              <button
-                type="button"
-                onClick={() =>
-                  onUpdate(selected.id, { rotation: nextCornerBarRotation(selected.rotation) })
-                }
-                className="rounded border border-border bg-white px-2 py-1 text-xs hover:bg-gray-50"
-                title="90度ずつ回します"
-              >
-                ↻ {cornerBarRotationLabel(selected.rotation)}
-              </button>
+            {/* 向き・反転（特殊コーナー）・図面上の大きさ */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-muted">向き</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdate(selected.id, { rotation: nextCornerBarRotation(selected.rotation) })
+                  }
+                  className="rounded border border-border bg-white px-2 py-1 text-xs hover:bg-gray-50"
+                  title="90度ずつ回します"
+                >
+                  ↻ {cornerBarRotationLabel(selected.rotation)}
+                </button>
+              </div>
+              {selected.category === 'SPECIAL_CORNER' ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-muted">反転</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdate(selected.id, {
+                        flipped: toggleCornerBarFlip(selected.flipped ?? false),
+                      })
+                    }
+                    className="rounded border border-border bg-white px-2 py-1 text-xs hover:bg-gray-50"
+                    title="左右反転します"
+                  >
+                    ⇄ {cornerBarFlipLabel(selected.flipped ?? false)}
+                  </button>
+                </div>
+              ) : null}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-muted">大きさ</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdate(selected.id, {
+                      size_px: clampCornerBarSizePx(currentSizePx / SIZE_STEP),
+                    })
+                  }
+                  className="rounded border border-border bg-white px-2 py-0.5 text-xs hover:bg-gray-50"
+                  title="小さくする"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdate(selected.id, {
+                      size_px: clampCornerBarSizePx(currentSizePx * SIZE_STEP),
+                    })
+                  }
+                  className="rounded border border-border bg-white px-2 py-0.5 text-xs hover:bg-gray-50"
+                  title="大きくする"
+                >
+                  ＋
+                </button>
+              </div>
             </div>
 
             {/* 「辺1」がどの辺かを図で示す。辺の入力欄と相互に強調し合う */}
             <CornerBarSegmentFigure
               shape={selectedShape}
               rotation={selected.rotation}
+              flipped={normalizeCornerBarFlip(selected.flipped)}
               activeIndex={activeSegIndex}
               onActiveIndexChange={setActiveSegIndex}
             />
@@ -401,35 +452,6 @@ export function CornerBarPanel({
             {!isCornerBarBarsFullyDimensioned(selectedBars) && (
               <p className="text-[10px] text-amber-700">寸法が未入力の辺があります。</p>
             )}
-
-            {/* 図面上の大きさ。配置時のドラッグで決めた値を後から微調整する */}
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-muted">大きさ</span>
-              <button
-                type="button"
-                onClick={() =>
-                  onUpdate(selected.id, {
-                    size_px: clampCornerBarSizePx(currentSizePx / SIZE_STEP),
-                  })
-                }
-                className="rounded border border-border bg-white px-2 py-0.5 text-xs hover:bg-gray-50"
-                title="小さくする"
-              >
-                −
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  onUpdate(selected.id, {
-                    size_px: clampCornerBarSizePx(currentSizePx * SIZE_STEP),
-                  })
-                }
-                className="rounded border border-border bg-white px-2 py-0.5 text-xs hover:bg-gray-50"
-                title="大きくする"
-              >
-                ＋
-              </button>
-            </div>
 
             <label className="text-[10px] text-muted">
               色
@@ -519,20 +541,40 @@ export function CornerBarPanel({
               </div>
             </div>
 
-            {/* 配置する向き。これは「これから置くもの」にだけ効く */}
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-muted">向き</span>
-              <button
-                type="button"
-                onClick={() =>
-                  patchDraft({ rotation: nextCornerBarRotation(placementDraft?.rotation ?? 0) })
-                }
-                disabled={!placementDraft}
-                className="rounded border border-border bg-white px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-40"
-                title="90度ずつ回します"
-              >
-                ↻ {cornerBarRotationLabel(placementDraft?.rotation ?? 0)}
-              </button>
+            {/* 配置する向き・反転（特殊コーナー）。これから置くものにだけ効く */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-muted">向き</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    patchDraft({ rotation: nextCornerBarRotation(placementDraft?.rotation ?? 0) })
+                  }
+                  disabled={!placementDraft}
+                  className="rounded border border-border bg-white px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-40"
+                  title="90度ずつ回します"
+                >
+                  ↻ {cornerBarRotationLabel(placementDraft?.rotation ?? 0)}
+                </button>
+              </div>
+              {placementCategory === 'SPECIAL_CORNER' ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-muted">反転</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      patchDraft({
+                        flipped: toggleCornerBarFlip(placementDraft?.flipped ?? false),
+                      })
+                    }
+                    disabled={!placementDraft}
+                    className="rounded border border-border bg-white px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-40"
+                    title="左右反転します"
+                  >
+                    ⇄ {cornerBarFlipLabel(placementDraft?.flipped ?? false)}
+                  </button>
+                </div>
+              ) : null}
               <span className="text-[10px] text-muted">これから配置するもの</span>
             </div>
 
@@ -541,6 +583,7 @@ export function CornerBarPanel({
               <CornerBarSegmentFigure
                 shape={placementShape}
                 rotation={placementDraft.rotation}
+                flipped={normalizeCornerBarFlip(placementDraft.flipped)}
                 activeIndex={activeSegIndex}
                 onActiveIndexChange={setActiveSegIndex}
               />
@@ -801,21 +844,23 @@ const FIG_BADGE_R = 8
 /**
  * 辺の番号を書き込んだ形状図。「辺1」がどの辺なのかを目で確かめるためのもの。
  *
- * 配置の向き（rotation）を反映するので、図面上の見た目と同じ向きで出る。
+ * 配置の向き（rotation）と反転（flipped）を反映するので、図面上の見た目と同じ向きで出る。
  * 辺が 1 本しかない形状（添え筋のストレート）は取り違えようがないので描かない。
  */
 function CornerBarSegmentFigure({
   shape,
   rotation,
+  flipped = false,
   activeIndex,
   onActiveIndexChange,
 }: {
   shape: CornerBarShapeDef
   rotation: number
+  flipped?: boolean
   activeIndex: number | null
   onActiveIndexChange: (index: number | null) => void
 }) {
-  const points = cornerBarThumbPoints(shape, FIG_W, FIG_H, FIG_PAD, rotation)
+  const points = cornerBarThumbPoints(shape, FIG_W, FIG_H, FIG_PAD, rotation, flipped)
   if (points.length < 3) return null
 
   const anchors = cornerBarSegmentLabelAnchors(points, FIG_LABEL_GAP)

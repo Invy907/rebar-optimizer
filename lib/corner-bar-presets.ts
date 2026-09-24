@@ -333,7 +333,10 @@ export function resolveCategoryShape(
   return 'STRAIGHT'
 }
 
-/** コーナー筋 L 形の標準寸法（径ごと、辺1 × 辺2） */
+/**
+ * コーナー筋 L 形の標準寸法（径ごと、辺1 × 辺2）。
+ * D13 の 600×600 が UI・資料の基準。添え筋 D13=1200 はその 2 倍、他径は同比率。
+ */
 const CORNER_STANDARD_LENGTHS_MM: Record<string, readonly [number, number]> = {
   D13: [600, 600],
   D10: [450, 450],
@@ -713,11 +716,27 @@ export function cornerBarBarQuantities(source: {
  *
  * 実寸(mm)をそのまま図面座標に使うと、600mm が 600px になって図面に対して
  * 大きすぎる。寸法は資料どおりの数値として持ちたいだけなので、描画の大きさは
- * 配置時のドラッグ（size_px）だけで決め、mm はラベル・集計用のデータとして保持する。
+ * 配置時のクリック（既定 size_px）または選択タブの ± で決め、mm はラベル・集計用のデータとして保持する。
  */
 export const DEFAULT_CORNER_BAR_SIZE_PX = 110
-export const MIN_CORNER_BAR_SIZE_PX = 24
+/** クリック配置の既定 size_px（コーナー筋。既存データの size_px 未設定時のフォールバックは 110 のまま） */
+export const DEFAULT_CORNER_BAR_PLACEMENT_SIZE_PX = 33
+/** 添え筋はストレート 1 辺のため、コーナー既定の 1.5 倍で見やすくする */
+export const DEFAULT_SOE_PLACEMENT_SIZE_PX = 50
+/** 特殊コーナー筋は形状が複雑なため、コーナー既定の 2 倍 */
+export const DEFAULT_SPECIAL_CORNER_PLACEMENT_SIZE_PX =
+  DEFAULT_CORNER_BAR_PLACEMENT_SIZE_PX * 2
+export const MIN_CORNER_BAR_SIZE_PX = 20
 export const MAX_CORNER_BAR_SIZE_PX = 3000
+
+/** 図面クリック配置時の既定 size_px（筋種類ごと。後から選択タブの ± で調整） */
+export function getDefaultCornerBarSizePxForPlacement(
+  category: CornerBarCategory = 'CORNER',
+): number {
+  if (category === 'SOE') return DEFAULT_SOE_PLACEMENT_SIZE_PX
+  if (category === 'SPECIAL_CORNER') return DEFAULT_SPECIAL_CORNER_PLACEMENT_SIZE_PX
+  return DEFAULT_CORNER_BAR_PLACEMENT_SIZE_PX
+}
 
 export function clampCornerBarSizePx(sizePx: number): number {
   if (!Number.isFinite(sizePx)) return DEFAULT_CORNER_BAR_SIZE_PX
@@ -811,6 +830,38 @@ export function cornerBarRotationLabel(steps: number): string {
   return `${normalizeCornerBarRotation(steps) * 90}°`
 }
 
+export function normalizeCornerBarFlip(value: unknown): boolean {
+  return value === true || value === 1 || value === 'true'
+}
+
+/** 左右反転（ローカル座標の x を反転してから回転する） */
+export function mirrorCornerBarPointHorizontal(p: { x: number; y: number }): {
+  x: number
+  y: number
+} {
+  return { x: -p.x, y: p.y }
+}
+
+export function toggleCornerBarFlip(flipped: boolean): boolean {
+  return !normalizeCornerBarFlip(flipped)
+}
+
+export function cornerBarFlipLabel(flipped: boolean): string {
+  return normalizeCornerBarFlip(flipped) ? '反転' : '標準'
+}
+
+/** 反転 → 90° 単位回転の順で向きを決める */
+export function applyCornerBarOrientation(
+  p: { x: number; y: number },
+  rotationSteps: number,
+  flipped = false,
+): { x: number; y: number } {
+  const base = normalizeCornerBarFlip(flipped)
+    ? mirrorCornerBarPointHorizontal(p)
+    : p
+  return rotateCornerBarPoint(base, rotationSteps)
+}
+
 /** 90 度単位の回転（0/1/2/3 = 0/90/180/270 度、時計回り） */
 export function rotateCornerBarPoint(
   p: { x: number; y: number },
@@ -840,9 +891,12 @@ export function cornerBarCanvasGeometry(
   originY: number,
   rotationSteps = 0,
   sizePx: number = DEFAULT_CORNER_BAR_SIZE_PX,
+  flipped = false,
 ): CornerBarGeometry {
   const base = buildCornerBarGeometry(shape, segments, sizePx)
-  const rotated = base.points.map((p) => rotateCornerBarPoint(p, rotationSteps))
+  const rotated = base.points.map((p) =>
+    applyCornerBarOrientation(p, rotationSteps, flipped),
+  )
   const xs = rotated.map((p) => p.x)
   const ys = rotated.map((p) => p.y)
   const cx = (Math.min(...xs) + Math.max(...xs)) / 2
@@ -892,10 +946,13 @@ export function cornerBarThumbPoints(
   boxH: number,
   pad = 6,
   rotationSteps = 0,
+  flipped = false,
 ): Array<{ x: number; y: number }> {
   const geometry = buildCornerBarGeometry(shape, makeCornerBarSegments(shape))
   const rotated = {
-    points: geometry.points.map((p) => rotateCornerBarPoint(p, rotationSteps)),
+    points: geometry.points.map((p) =>
+      applyCornerBarOrientation(p, rotationSteps, flipped),
+    ),
   }
   const b = cornerBarGeometryBounds(rotated)
   const w = Math.max(1, b.maxX - b.minX)
@@ -950,8 +1007,9 @@ export function cornerBarThumbPath(
   boxH: number,
   pad = 6,
   rotationSteps = 0,
+  flipped = false,
 ): string {
-  return cornerBarThumbPoints(shape, boxW, boxH, pad, rotationSteps)
+  return cornerBarThumbPoints(shape, boxW, boxH, pad, rotationSteps, flipped)
     .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
     .join(' ')
 }
@@ -1032,7 +1090,7 @@ export function buildCornerBarPrintSummary(
 // --- 配置前の設定 -------------------------------------------------------
 
 /**
- * パレットで選んでから図面をドラッグするまでの、配置待ちの設定。
+ * パレットで選んでから図面をクリックするまでの、配置待ちの設定。
  * 筋種類・形状・鉄筋（径と本数）・向きをここで決める。
  *
  * 辺の寸法は径ごとの標準値を入れておき、細かい調整は配置後に右パネルで行う。
@@ -1044,6 +1102,8 @@ export interface CornerBarPlacementDraft {
   bars: CornerBarBarItem[]
   /** 0/1/2/3 = 0/90/180/270 度 */
   rotation: number
+  /** 特殊コーナー筋のみ: 左右反転 */
+  flipped?: boolean
 }
 
 export function makeCornerBarDraft(
@@ -1059,10 +1119,13 @@ export function makeCornerBarDraft(
     : base?.bars?.length
       ? remapCornerBarBarsToShape(shape, category, base.bars, sameShape)
       : [makeCornerBarBar(shape, category, DEFAULT_CORNER_BAR_DIAMETER, { id: 'b1' })]
+  const flipped =
+    category === 'SPECIAL_CORNER' ? normalizeCornerBarFlip(base?.flipped) : false
   return {
     category,
     shapeType,
     bars,
     rotation: base?.rotation ?? 0,
+    flipped,
   }
 }

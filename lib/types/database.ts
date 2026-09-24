@@ -71,10 +71,12 @@ export interface DrawingCornerBar {
   /** 配置点（drawing_segments と同じ図面座標系。形状の bbox 中心を合わせる） */
   x: number
   y: number
-  /** 図面上の大きさ（bbox の長辺, px）。配置時のドラッグで決める */
+  /** 図面上の大きさ（bbox の長辺, px）。クリック配置の既定値または選択タブの ± で決める */
   size_px: number
   /** 0/1/2/3 = 0/90/180/270 度（時計回り） */
   rotation: number
+  /** 特殊コーナー筋: 左右反転（回転の前に適用） */
+  flipped?: boolean
   color: SegmentColor
   label: string | null
   created_at: string

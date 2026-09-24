@@ -19,17 +19,16 @@ import {
   cornerBarRotationLabel,
   cornerBarSegmentLines,
   cornerBarShapeLabel,
-  cornerBarSizePxFromDrag,
   cornerBarRotationFromDrag,
   DEFAULT_CORNER_BAR_SIZE_PX,
+  getDefaultCornerBarSizePxForPlacement,
   getCornerBarShape,
   getCornerBarShapeOptionsForCategory,
-  isCornerBarDragPlacement,
   buildCornerBarPrintSummary,
   cornerBarLegacyFieldsFromBars,
   makeCornerBarDraft,
-  makeCornerBarSegments,
   cornerBarThumbPath,
+  normalizeCornerBarFlip,
   normalizeCornerBarRotation,
   type CornerBarCategory,
   type CornerBarGeometry,
@@ -333,6 +332,25 @@ type LastAction =
 /** コーナー筋レイヤーの表示・編集対象 */
 type DrawingLayer = 'unit' | 'corner'
 
+/** 画面・印刷キャプチャ共通の描画オプション */
+type DrawingPaintOptions = {
+  showSegments: boolean
+  showCornerBars: boolean
+  segmentEmphasis: 'full' | 'dim' | 'hidden'
+  cornerEmphasis: 'full' | 'dim' | 'hidden'
+  /** false のとき選択ハイライト・分割プレビュー等を省略（印刷用） */
+  interactiveHighlight: boolean
+  /** ユニット描画中・分割ホバー（ユニットタブの操作フィードバック） */
+  showUnitInteractionOverlay?: boolean
+}
+
+const REFERENCE_LAYER_ALPHA = 0.45
+
+function paintEmphasisAlpha(emphasis: 'full' | 'dim' | 'hidden'): number {
+  if (emphasis === 'hidden') return 0
+  return emphasis === 'dim' ? REFERENCE_LAYER_ALPHA : 1
+}
+
 type CornerBarDragState = {
   id: string
   origin: Point
@@ -340,18 +358,10 @@ type CornerBarDragState = {
   snapshot: DrawingCornerBar
 }
 
-/** パレットで形状を選んだあと、図面をドラッグして大きさを決めている最中の状態 */
-type CornerBarPlaceDragState = {
-  origin: Point
-  current: Point
-}
-
-/** 形状未選択のままドラッグしたあと、モーダルで形状を選んだら配置する待ち状態 */
+/** 形状未選択のままクリックしたあと、モーダルで形状を選んだら配置する待ち状態 */
 type PendingCornerBarPlacement = {
   center: Point
   sizePx: number
-  dx: number
-  dy: number
 }
 
 type SegmentDragState = {
@@ -561,12 +571,9 @@ export function DrawingViewer({
   const [layer, setLayer] = useState<DrawingLayer>('unit')
   const [cornerBars, setCornerBars] = useState<DrawingCornerBar[]>(initialCornerBars)
   const [selectedCornerBarId, setSelectedCornerBarId] = useState<string | null>(null)
-  /** パレットで選んだ形状と寸法。図面ドラッグでこの設定を配置する */
+  /** パレットで選んだ形状と寸法。図面クリックでこの設定を配置する */
   const [placementDraft, setPlacementDraft] = useState<CornerBarPlacementDraft | null>(null)
   const [cornerBarDrag, setCornerBarDrag] = useState<CornerBarDragState | null>(null)
-  const [cornerBarPlaceDrag, setCornerBarPlaceDrag] = useState<CornerBarPlaceDragState | null>(
-    null,
-  )
   const [cornerBarShapeSelectModalOpen, setCornerBarShapeSelectModalOpen] = useState(false)
   const [pendingCornerBarPlacement, setPendingCornerBarPlacement] =
     useState<PendingCornerBarPlacement | null>(null)
@@ -584,7 +591,7 @@ export function DrawingViewer({
     [cornerBarPlacementCategory],
   )
 
-  /** パレットで選んだ形状と寸法。配置ツールで図面ドラッグすると配置する */
+  /** パレットで選んだ形状と寸法。配置ツールで図面クリックすると配置する */
   function changePlacementDraft(draft: CornerBarPlacementDraft | null) {
     setPlacementDraft(draft)
   }
@@ -612,11 +619,20 @@ export function DrawingViewer({
     const pending = pendingCornerBarPlacement
     setPendingCornerBarPlacement(null)
     if (pending) {
-      void insertCornerBarAt(draft, pending.center, pending.sizePx, {
-        dx: pending.dx,
-        dy: pending.dy,
-      })
+      void insertCornerBarAt(draft, pending.center, pending.sizePx)
     }
+  }
+
+  function placeCornerBarAtCanvasPoint(pt: Point) {
+    const category = (placementDraft?.category ??
+      cornerBarPlacementCategory) as CornerBarCategory
+    const sizePx = getDefaultCornerBarSizePxForPlacement(category)
+    if (!placementDraft) {
+      setPendingCornerBarPlacement({ center: pt, sizePx })
+      setCornerBarShapeSelectModalOpen(true)
+      return
+    }
+    void insertCornerBarAt(placementDraft, pt, sizePx)
   }
   const cornerBarDragMovedRef = useRef(false)
   /** 付加筋の線上にマウスがあるときだけカーソルを変える（配置待ちでも十字と区別） */
@@ -1217,6 +1233,7 @@ export function DrawingViewer({
       cb.y,
       cb.rotation,
       cb.size_px ?? DEFAULT_CORNER_BAR_SIZE_PX,
+      normalizeCornerBarFlip(cb.flipped),
     )
   }, [])
 
@@ -1266,7 +1283,6 @@ export function DrawingViewer({
     setSegmentDrag(null)
     setSegmentLabelDrag(null)
     setCornerBarDrag(null)
-    setCornerBarPlaceDrag(null)
     setCornerBarHovering(false)
     if (next === 'corner') {
       setSelectedSegmentIds([])
@@ -1308,6 +1324,10 @@ export function DrawingViewer({
       y: pt.y,
       size_px: clampCornerBarSizePx(sizePx),
       rotation,
+      flipped:
+        draft.category === 'SPECIAL_CORNER'
+          ? normalizeCornerBarFlip(draft.flipped)
+          : false,
       color: cornerPlacementColor,
       label: null as string | null,
     }
@@ -1341,6 +1361,7 @@ export function DrawingViewer({
       y: source.y + offsetPx,
       size_px: source.size_px,
       rotation: source.rotation,
+      flipped: normalizeCornerBarFlip(source.flipped),
       color: source.color,
       label: source.label,
     }
@@ -1394,59 +1415,6 @@ export function DrawingViewer({
     }
     setLastAction({ type: 'corner-update', before: drag.snapshot })
   }
-
-  /** 形状を選んだあと、図面をドラッグした矩形の大きさで配置する */
-  useEffect(() => {
-    if (!cornerBarPlaceDrag) return
-
-    const origin = cornerBarPlaceDrag.origin
-
-    function pointFromClient(clientX: number, clientY: number): Point {
-      const canvas = canvasRef.current
-      if (!canvas) return { x: 0, y: 0 }
-      const rect = canvas.getBoundingClientRect()
-      const xr = (clientX - rect.left - offset.x) / scale
-      const yr = (clientY - rect.top - offset.y) / scale
-      const img = imgRef.current
-      if (!img) return { x: xr, y: yr }
-      const w = img.width
-      const h = img.height
-      const steps = ((rotationSteps % 4) + 4) % 4
-      if (steps === 0) return { x: xr, y: yr }
-      if (steps === 1) return { x: yr, y: h - xr }
-      if (steps === 2) return { x: w - xr, y: h - yr }
-      return { x: w - yr, y: xr }
-    }
-
-    function handleMove(ev: MouseEvent) {
-      const pt = pointFromClient(ev.clientX, ev.clientY)
-      setCornerBarPlaceDrag((prev) => (prev ? { ...prev, current: pt } : prev))
-    }
-
-    function handleUp(ev: MouseEvent) {
-      const pt = pointFromClient(ev.clientX, ev.clientY)
-      const dx = pt.x - origin.x
-      const dy = pt.y - origin.y
-      setCornerBarPlaceDrag(null)
-      if (!isCornerBarDragPlacement(dx, dy)) return
-      const center = { x: origin.x + dx / 2, y: origin.y + dy / 2 }
-      const sizePx = cornerBarSizePxFromDrag(dx, dy)
-      if (!placementDraft) {
-        setPendingCornerBarPlacement({ center, sizePx, dx, dy })
-        setCornerBarShapeSelectModalOpen(true)
-        return
-      }
-      void insertCornerBarAt(placementDraft, center, sizePx, { dx, dy })
-    }
-
-    window.addEventListener('mousemove', handleMove)
-    window.addEventListener('mouseup', handleUp)
-    return () => {
-      window.removeEventListener('mousemove', handleMove)
-      window.removeEventListener('mouseup', handleUp)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cornerBarPlaceDrag, placementDraft, offset.x, offset.y, scale, rotationSteps])
 
   useEffect(() => {
     if (!selectModeEmptyDrag) return
@@ -1548,29 +1516,41 @@ export function DrawingViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cornerBarDrag, offset.x, offset.y, scale, rotationSteps])
 
-  const drawCanvas = useCallback(() => {
-    const canvas = canvasRef.current
-    const img = imgRef.current
-    if (!canvas || !img || !imgLoaded) return
+  const paintDrawing = useCallback(
+    (
+      ctx: CanvasRenderingContext2D,
+      canvasWidth: number,
+      canvasHeight: number,
+      options: DrawingPaintOptions,
+    ) => {
+      const img = imgRef.current
+      if (!img || !imgLoaded) return
 
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+      ctx.clearRect(0, 0, canvasWidth, canvasHeight)
+      ctx.save()
+      ctx.translate(offset.x, offset.y)
+      ctx.scale(scale, scale)
+      applyRotationTransform(ctx, img.width, img.height, rotationSteps)
+      ctx.drawImage(img, 0, 0)
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    ctx.save()
-    ctx.translate(offset.x, offset.y)
-    ctx.scale(scale, scale)
-    applyRotationTransform(ctx, img.width, img.height, rotationSteps)
-    ctx.drawImage(img, 0, 0)
+      const segmentAlpha = paintEmphasisAlpha(options.segmentEmphasis)
+      const cornerAlpha = paintEmphasisAlpha(options.cornerEmphasis)
+      const visibleSegments =
+        options.showSegments && options.segmentEmphasis !== 'hidden' ? segments : []
 
-    // コーナー筋タブではユニット線分を描かず、配置したコーナー筋だけを表示する
-    const visibleSegments = layer === 'unit' ? segments : []
-
-    visibleSegments.forEach((seg) => {
-      const isSelected = selectedSegmentIds.includes(seg.id)
+      if (visibleSegments.length > 0 && segmentAlpha > 0) {
+        ctx.save()
+        if (segmentAlpha < 1) ctx.globalAlpha = segmentAlpha
+        visibleSegments.forEach((seg) => {
+      const isSelected =
+        options.interactiveHighlight &&
+        options.segmentEmphasis === 'full' &&
+        selectedSegmentIds.includes(seg.id)
       const isSpacing = seg.bar_type === 'SPACING' && seg.quantity === 0
       const isLastSplit =
-        !!lastSplitMarker && lastSplitMarker.segmentIds.includes(seg.id)
+        options.segmentEmphasis === 'full' &&
+        !!lastSplitMarker &&
+        lastSplitMarker.segmentIds.includes(seg.id)
       ctx.beginPath()
       ctx.moveTo(seg.x1, seg.y1)
       ctx.lineTo(seg.x2, seg.y2)
@@ -1690,18 +1670,22 @@ export function DrawingViewer({
       }
       ctx.textAlign = 'left'
       ctx.textBaseline = 'alphabetic'
-    })
+        })
 
-    // 鉄筋線分の両端に、線に直交する短いキャップ（「I」形の耳）を描画
-    if (visibleSegments.length > 0) {
-      drawRebarSegmentEndCaps(ctx, visibleSegments, scale, effectiveUnits)
-    }
+        drawRebarSegmentEndCaps(ctx, visibleSegments, scale, effectiveUnits)
+        ctx.restore()
+      }
 
-    if (layer === 'corner') {
+      if (options.showCornerBars && options.cornerEmphasis !== 'hidden' && cornerAlpha > 0) {
+        ctx.save()
+        if (cornerAlpha < 1) ctx.globalAlpha = cornerAlpha
       cornerBars.forEach((cb) => {
         const geometry = cornerBarGeometryOf(cb)
         if (!geometry) return
-        const isSelected = cb.id === selectedCornerBarId
+        const isSelected =
+          options.interactiveHighlight &&
+          options.cornerEmphasis === 'full' &&
+          cb.id === selectedCornerBarId
         const strokeHex = getSegmentStrokeHex(cb.color, isSelected)
 
         const tracePath = () => {
@@ -1763,58 +1747,15 @@ export function DrawingViewer({
           ctx.restore()
         }
       })
-
-      // 配置ドラッグ中: 矩形と（形状が選ばれていれば）プレビューを表示
-      if (cornerBarPlaceDrag) {
-        const dx = cornerBarPlaceDrag.current.x - cornerBarPlaceDrag.origin.x
-        const dy = cornerBarPlaceDrag.current.y - cornerBarPlaceDrag.origin.y
-        if (isCornerBarDragPlacement(dx, dy)) {
-          ctx.save()
-          ctx.strokeStyle = 'rgba(37, 99, 235, 0.45)'
-          ctx.lineWidth = 1 / scale
-          ctx.setLineDash([5 / scale, 4 / scale])
-          ctx.strokeRect(cornerBarPlaceDrag.origin.x, cornerBarPlaceDrag.origin.y, dx, dy)
-          ctx.setLineDash([])
-          if (placementDraft) {
-            const shapeDef = getCornerBarShape(placementDraft.shapeType)
-            if (shapeDef) {
-              const center = {
-                x: cornerBarPlaceDrag.origin.x + dx / 2,
-                y: cornerBarPlaceDrag.origin.y + dy / 2,
-              }
-              const previewRotation = cornerBarRotationFromDrag(
-                dx,
-                dy,
-                placementDraft.category,
-                placementDraft.shapeType,
-                placementDraft.rotation,
-              )
-              const preview = cornerBarCanvasGeometry(
-                shapeDef,
-                makeCornerBarSegments(shapeDef),
-                center.x,
-                center.y,
-                previewRotation,
-                cornerBarSizePxFromDrag(dx, dy),
-              )
-              ctx.beginPath()
-              preview.points.forEach((p, i) => {
-                if (i === 0) ctx.moveTo(p.x, p.y)
-                else ctx.lineTo(p.x, p.y)
-              })
-              ctx.strokeStyle = getSegmentStrokeHex(cornerPlacementColor, true)
-              ctx.lineWidth = 2 / scale
-              ctx.lineCap = 'round'
-              ctx.lineJoin = 'round'
-              ctx.stroke()
-            }
-          }
-          ctx.restore()
-        }
+        ctx.restore()
       }
-    }
 
-    if (splitArmedSegmentId && splitHoverPoint) {
+    if (
+      options.showUnitInteractionOverlay &&
+      options.interactiveHighlight &&
+      splitArmedSegmentId &&
+      splitHoverPoint
+    ) {
       ctx.beginPath()
       ctx.arc(splitHoverPoint.x, splitHoverPoint.y, 6 / scale, 0, Math.PI * 2)
       ctx.fillStyle = 'rgba(37, 99, 235, 0.25)'
@@ -1824,7 +1765,13 @@ export function DrawingViewer({
       ctx.stroke()
     }
 
-    if (drawing && startPoint && currentPoint) {
+    if (
+      options.showUnitInteractionOverlay &&
+      options.interactiveHighlight &&
+      drawing &&
+      startPoint &&
+      currentPoint
+    ) {
       ctx.beginPath()
       ctx.moveTo(startPoint.x, startPoint.y)
       ctx.lineTo(currentPoint.x, currentPoint.y)
@@ -1836,30 +1783,80 @@ export function DrawingViewer({
     }
 
     ctx.restore()
-  }, [
-    segments,
-    selectedSegmentIds,
-    drawing,
-    startPoint,
-    currentPoint,
-    imgLoaded,
-    scale,
-    offset,
-    splitArmedSegmentId,
-    splitHoverPoint,
-    lastSplitMarker,
-    rotationSteps,
-    effectiveUnits,
-    unitById,
-    getSegmentLabelRenderInfo,
-    layer,
-    cornerBars,
-    selectedCornerBarId,
-    cornerBarGeometryOf,
-    cornerBarPlaceDrag,
-    placementDraft,
-    cornerPlacementColor,
-  ])
+    },
+    [
+      segments,
+      selectedSegmentIds,
+      drawing,
+      startPoint,
+      currentPoint,
+      imgLoaded,
+      scale,
+      offset,
+      splitArmedSegmentId,
+      splitHoverPoint,
+      lastSplitMarker,
+      rotationSteps,
+      effectiveUnits,
+      getSegmentLabelRenderInfo,
+      cornerBars,
+      selectedCornerBarId,
+      cornerBarGeometryOf,
+    ],
+  )
+
+  const drawCanvas = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !imgLoaded) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const screenOptions: DrawingPaintOptions = {
+      showSegments: true,
+      showCornerBars: true,
+      segmentEmphasis: 'full',
+      cornerEmphasis: 'full',
+      interactiveHighlight: true,
+      showUnitInteractionOverlay: layer === 'unit',
+    }
+
+    paintDrawing(ctx, canvas.width, canvas.height, screenOptions)
+  }, [imgLoaded, layer, paintDrawing])
+
+  const captureDrawingForPrint = useCallback(
+    (targetLayer: DrawingLayer): string | null => {
+      const canvas = canvasRef.current
+      if (!canvas || !imgLoaded) return null
+      const off = document.createElement('canvas')
+      off.width = canvas.width
+      off.height = canvas.height
+      const ctx = off.getContext('2d')
+      if (!ctx) return null
+
+      const printOptions: DrawingPaintOptions =
+        targetLayer === 'unit'
+          ? {
+              showSegments: true,
+              showCornerBars: false,
+              segmentEmphasis: 'full',
+              cornerEmphasis: 'hidden',
+              interactiveHighlight: false,
+              showUnitInteractionOverlay: false,
+            }
+          : {
+              showSegments: false,
+              showCornerBars: true,
+              segmentEmphasis: 'hidden',
+              cornerEmphasis: 'full',
+              interactiveHighlight: false,
+              showUnitInteractionOverlay: false,
+            }
+
+      paintDrawing(ctx, off.width, off.height, printOptions)
+      return off.toDataURL('image/png')
+    },
+    [imgLoaded, paintDrawing],
+  )
 
   useEffect(() => {
     drawCanvas()
@@ -1955,10 +1952,6 @@ export function DrawingViewer({
           return
         }
         if (layer === 'corner') {
-          if (cornerBarPlaceDrag) {
-            setCornerBarPlaceDrag(null)
-            return
-          }
           if (cornerTool === 'place') {
             setCornerTool('select')
             return
@@ -2182,7 +2175,6 @@ export function DrawingViewer({
     layer,
     placementDraft,
     cornerTool,
-    cornerBarPlaceDrag,
     selectedCornerBarId,
     cornerBarShapeSelectModalOpen,
   ])
@@ -2401,7 +2393,7 @@ export function DrawingViewer({
       }
       if (cornerTool === 'place') {
         setSelectedCornerBarId(null)
-        setCornerBarPlaceDrag({ origin: pt, current: pt })
+        placeCornerBarAtCanvasPoint(pt)
       } else {
         setSelectedCornerBarId(null)
         setSelectModeEmptyDrag({ origin: pt })
@@ -2528,10 +2520,8 @@ export function DrawingViewer({
       return
     }
     if (layer === 'corner') {
-      if (!cornerBarPlaceDrag) {
-        const pt = screenToCanvas(e)
-        setCornerBarHovering(!!findCornerBarAtPoint(pt, 10 / scale))
-      }
+      const pt = screenToCanvas(e)
+      setCornerBarHovering(!!findCornerBarAtPoint(pt, 10 / scale))
       return
     }
     if (tool === 'select' && splitArmedSegmentId) {
@@ -4057,6 +4047,7 @@ export function DrawingViewer({
           y: before.y,
           size_px: before.size_px,
           rotation: before.rotation,
+          flipped: normalizeCornerBarFlip(before.flipped),
           category: before.category,
           shape_type: before.shape_type,
           bars: before.bars,
@@ -4199,6 +4190,13 @@ export function DrawingViewer({
     if (!canvas || !imgLoaded) return
 
     setPrintPreviewLayer(layer)
+
+    const captured = captureDrawingForPrint(layer)
+    if (captured) {
+      setPrintImageSize({ w: canvas.width, h: canvas.height })
+      setPrintModalImageUrl(captured)
+      return
+    }
 
     // 図面部分だけを切り出す処理（用紙に合わせる用）。いまは既定動作に戻しているため無効。
     // 有効化すると印刷画像の座標系が変わるため、要約ボックスの位置を再調整する必要がある。
@@ -4635,7 +4633,7 @@ export function DrawingViewer({
                 type="button"
                 onClick={enterCornerPlaceMode}
                 className={toolButtonClass(cornerTool === 'place')}
-                title="図面をドラッグして新しい部材を配置します (D)"
+                title="図面をクリックして新しい部材を配置します (D)"
               >
                 配置
               </button>
@@ -4760,7 +4758,7 @@ export function DrawingViewer({
               : layer === 'corner'
                 ? cornerBarDrag
                   ? 'move'
-                  : cornerTool === 'place' || cornerBarPlaceDrag
+                  : cornerTool === 'place'
                     ? 'crosshair'
                     : cornerBarHovering
                       ? 'pointer'
