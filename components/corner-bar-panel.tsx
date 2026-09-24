@@ -5,7 +5,6 @@
 import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import type { DrawingCornerBar } from '@/lib/types/database'
-import { startGlobalLoading } from '@/lib/global-loading'
 import {
   buildCornerBarPrintSummary,
   clampCornerBarSizePx,
@@ -30,6 +29,7 @@ import {
   getNextCornerBarDiameter,
   isCornerBarBarsFullyDimensioned,
   makeCornerBarBar,
+  defaultPlacementDraftForCategory,
   makeCornerBarDraft,
   MEASUREMENT_TYPES,
   nextCornerBarBarId,
@@ -63,11 +63,15 @@ export function CornerBarPanel({
   selectedCornerBarId,
   placementModeActive,
   placementDraft,
+  activePlacementCategory,
+  onActivePlacementCategoryChange,
   placementColor,
   onPlacementColorChange,
   onChangePlacementDraft,
   onSelectCornerBar,
   onUpdate,
+  onPatchCornerBarBars,
+  onGoToSummary,
   onDelete,
   onDuplicate,
   canUndo,
@@ -80,11 +84,20 @@ export function CornerBarPanel({
   /** 配置ツールが有効なときだけ配置設定を表示 */
   placementModeActive: boolean
   placementDraft: CornerBarPlacementDraft | null
+  /** 配置 draft が null でもプルダウン表示用の筋種類 */
+  activePlacementCategory: CornerBarCategory
+  onActivePlacementCategoryChange: (category: CornerBarCategory) => void
   placementColor: SegmentColor
   onPlacementColorChange: (color: SegmentColor) => void
   onChangePlacementDraft: (draft: CornerBarPlacementDraft | null) => void
   onSelectCornerBar: (id: string | null) => void
   onUpdate: (id: string, updates: Partial<DrawingCornerBar>) => void
+  /** 保存時は常に最新の bars から patch を当てる（入力競合対策） */
+  onPatchCornerBarBars: (
+    id: string,
+    patch: (bars: CornerBarBarItem[]) => CornerBarBarItem[],
+  ) => void
+  onGoToSummary: (href: string) => void
   onDelete: (id: string) => void
   onDuplicate: (id: string) => void
   canUndo?: boolean
@@ -122,41 +135,27 @@ export function CornerBarPanel({
   }
 
   function handlePlacementCategoryChange(category: CornerBarCategory) {
-    // 今の筋種類の設定を残しておき、あとで戻ってきたときに出せるようにする
-    draftByCategoryRef.current.set(placementCategory, placementDraft)
+    onActivePlacementCategoryChange(category)
 
-    if (draftByCategoryRef.current.has(category)) {
-      const saved = draftByCategoryRef.current.get(category) ?? null
+    const cacheKey = (placementDraft?.category ?? activePlacementCategory) as CornerBarCategory
+    draftByCategoryRef.current.set(cacheKey, placementDraft)
+
+    const saved = draftByCategoryRef.current.get(category)
+    if (saved) {
       onChangePlacementDraft(
-        saved ? makeCornerBarDraft(resolveCategoryShape(category, saved.shapeType), saved) : null,
+        makeCornerBarDraft(resolveCategoryShape(category, saved.shapeType), saved),
       )
       return
     }
 
-    // 初めて選ぶ筋種類は、その筋種類の既定（D13 1 本 + 標準寸法）から始める。
-    // 前の筋種類の鉄筋（径・本数）は引き継がない
-    if (category === 'SOE') {
-      onChangePlacementDraft(makeCornerBarDraft('STRAIGHT', { category, rotation: 0 }))
-      return
-    }
-    // 形状未選択のうちは選ばせたままにする
-    if (!placementDraft) {
-      onChangePlacementDraft(null)
-      return
-    }
-    // 形状も新しい筋種類に合わせる
-    onChangePlacementDraft(
-      makeCornerBarDraft(resolveCategoryShape(category), {
-        category,
-        rotation: placementDraft.rotation,
-      }),
-    )
+    const rotation = placementDraft?.rotation ?? 0
+    onChangePlacementDraft(defaultPlacementDraftForCategory(category, rotation))
   }
 
-  /** 鉄筋リストを保存する。旧列 diameter / segments には bars[0] をミラーする */
-  function commitSelectedBars(bars: CornerBarBarItem[]) {
+  /** 鉄筋リストを保存する。patch は DB 直前の最新 bars に適用される */
+  function commitSelectedBars(patch: (bars: CornerBarBarItem[]) => CornerBarBarItem[]) {
     if (!selected) return
-    onUpdate(selected.id, { bars, ...cornerBarLegacyFieldsFromBars(bars) })
+    onPatchCornerBarBars(selected.id, patch)
   }
 
   function handleSelectedCategoryChange(category: CornerBarCategory) {
@@ -194,12 +193,12 @@ export function CornerBarPanel({
       bar,
       barType,
     )
-    commitSelectedBars(selectedBars.map((b, i) => (i === index ? next : b)))
+    commitSelectedBars((bars) => bars.map((b, i) => (i === index ? next : b)))
   }
 
   function handleSelectedQuantityChange(index: number, quantity: number) {
     if (!selectedBars) return
-    commitSelectedBars(selectedBars.map((b, i) => (i === index ? { ...b, quantity } : b)))
+    commitSelectedBars((bars) => bars.map((b, i) => (i === index ? { ...b, quantity } : b)))
   }
 
   /** 鉄筋 1 件の辺の寸法・基準を 1 つだけ差し替える。順序は必ず保つ */
@@ -208,9 +207,8 @@ export function CornerBarPanel({
     segIndex: number,
     patch: Partial<CornerBarSegment>,
   ) {
-    if (!selectedBars) return
-    commitSelectedBars(
-      selectedBars.map((bar, i) =>
+    commitSelectedBars((bars) =>
+      bars.map((bar, i) =>
         i === barIndex
           ? {
               ...bar,
@@ -224,20 +222,20 @@ export function CornerBarPanel({
   function handleAddSelectedBar() {
     if (!selected || !selectedShape || !selectedBars) return
     const barType = getNextCornerBarDiameter(selectedBars.map((b) => b.barType))
-    commitSelectedBars([
-      ...selectedBars,
+    commitSelectedBars((bars) => [
+      ...bars,
       makeCornerBarBar(selectedShape, selected.category as CornerBarCategory, barType, {
-        id: nextCornerBarBarId(selectedBars),
+        id: nextCornerBarBarId(bars),
       }),
     ])
   }
 
   function handleRemoveSelectedBar(index: number) {
     if (!selectedBars || selectedBars.length <= 1) return
-    commitSelectedBars(selectedBars.filter((_, i) => i !== index))
+    commitSelectedBars((bars) => bars.filter((_, i) => i !== index))
   }
 
-  const placementCategory = (placementDraft?.category ?? 'CORNER') as CornerBarCategory
+  const placementCategory = activePlacementCategory
   const placementShapeOptions = getCornerBarShapeOptionsForCategory(placementCategory)
   const placementShape = placementDraft ? getCornerBarShape(placementDraft.shapeType) : null
   /** 形状未選択のうちは編集できないので、見た目だけ既定の 1 件を出す */
@@ -509,7 +507,10 @@ export function CornerBarPanel({
                           isActive
                             ? null
                             : makeCornerBarDraft(option.shapeType, {
-                                ...(placementDraft ?? { category: placementCategory }),
+                                ...(placementDraft ?? {
+                                  category: placementCategory,
+                                }),
+                                category: placementCategory,
                                 rotation: option.rotation,
                               }),
                         )
@@ -629,7 +630,10 @@ export function CornerBarPanel({
           <div className="border-t border-border px-4 py-3 space-y-2">
             <Link
               href={summaryHref}
-              onClick={() => startGlobalLoading()}
+              onClick={(e) => {
+                e.preventDefault()
+                onGoToSummary(summaryHref)
+              }}
               className="block rounded-md bg-primary px-2 py-1.5 text-center text-[11px] font-medium text-white hover:bg-primary-hover"
             >
               結果ページを見る

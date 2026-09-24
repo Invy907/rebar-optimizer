@@ -28,8 +28,10 @@ import {
   cornerBarLegacyFieldsFromBars,
   makeCornerBarDraft,
   cornerBarThumbPath,
+  normalizeCornerBarBars,
   normalizeCornerBarFlip,
   normalizeCornerBarRotation,
+  type CornerBarBarItem,
   type CornerBarCategory,
   type CornerBarGeometry,
   type CornerBarPlacementDraft,
@@ -570,9 +572,18 @@ export function DrawingViewer({
   /** ユニット線分レイヤーと、コーナー筋レイヤーをタブで切り替える */
   const [layer, setLayer] = useState<DrawingLayer>('unit')
   const [cornerBars, setCornerBars] = useState<DrawingCornerBar[]>(initialCornerBars)
+  const cornerBarsRef = useRef(cornerBars)
+  useEffect(() => {
+    cornerBarsRef.current = cornerBars
+  }, [cornerBars])
+  /** 同一付加筋 id の DB 更新を直列化（bars の上書き競合を防ぐ） */
+  const cornerBarSaveChainsRef = useRef(new Map<string, Promise<void>>())
+  const pendingCornerBarSaveCountRef = useRef(0)
   const [selectedCornerBarId, setSelectedCornerBarId] = useState<string | null>(null)
   /** パレットで選んだ形状と寸法。図面クリックでこの設定を配置する */
   const [placementDraft, setPlacementDraft] = useState<CornerBarPlacementDraft | null>(null)
+  const [activePlacementCategory, setActivePlacementCategory] =
+    useState<CornerBarCategory>('CORNER')
   const [cornerBarDrag, setCornerBarDrag] = useState<CornerBarDragState | null>(null)
   const [cornerBarShapeSelectModalOpen, setCornerBarShapeSelectModalOpen] = useState(false)
   const [pendingCornerBarPlacement, setPendingCornerBarPlacement] =
@@ -587,7 +598,8 @@ export function DrawingViewer({
   const [selectModeEmptyDrag, setSelectModeEmptyDrag] = useState<{ origin: Point } | null>(null)
   const [selectModeCannotDrawToastOpen, setSelectModeCannotDrawToastOpen] = useState(false)
 
-  const cornerBarPlacementCategory = (placementDraft?.category ?? 'CORNER') as CornerBarCategory
+  const cornerBarPlacementCategory = (placementDraft?.category ??
+    activePlacementCategory) as CornerBarCategory
   const cornerBarShapeModalOptions = useMemo(
     () => getCornerBarShapeOptionsForCategory(cornerBarPlacementCategory),
     [cornerBarPlacementCategory],
@@ -596,6 +608,9 @@ export function DrawingViewer({
   /** パレットで選んだ形状と寸法。配置ツールで図面クリックすると配置する */
   function changePlacementDraft(draft: CornerBarPlacementDraft | null) {
     setPlacementDraft(draft)
+    if (draft?.category) {
+      setActivePlacementCategory(draft.category as CornerBarCategory)
+    }
   }
 
   function enterCornerPlaceMode() {
@@ -677,6 +692,48 @@ export function DrawingViewer({
 
   const supabase = createClient()
   const router = useRouter()
+
+  /** ルーターキャッシュで古い initialCornerBars が渡っても DB と揃える */
+  const reloadDrawingDataFromDb = useCallback(async () => {
+    if (pendingCornerBarSaveCountRef.current > 0) return
+
+    const [cornerResult, segmentResult] = await Promise.all([
+      supabase
+        .from('drawing_corner_bars')
+        .select('*')
+        .eq('drawing_id', drawingId)
+        .order('created_at', { ascending: true })
+        .returns<DrawingCornerBar[]>(),
+      supabase
+        .from('drawing_segments')
+        .select('*')
+        .eq('drawing_id', drawingId)
+        .order('created_at', { ascending: true })
+        .returns<DrawingSegment[]>(),
+    ])
+
+    if (pendingCornerBarSaveCountRef.current > 0) return
+
+    if (!cornerResult.error && cornerResult.data) {
+      cornerBarsRef.current = cornerResult.data
+      setCornerBars(cornerResult.data)
+    }
+    if (!segmentResult.error && segmentResult.data) {
+      setSegments(segmentResult.data)
+    }
+  }, [drawingId, supabase])
+
+  useEffect(() => {
+    void reloadDrawingDataFromDb()
+  }, [reloadDrawingDataFromDb])
+
+  useEffect(() => {
+    function onPageShow(ev: PageTransitionEvent) {
+      if (ev.persisted) void reloadDrawingDataFromDb()
+    }
+    window.addEventListener('pageshow', onPageShow)
+    return () => window.removeEventListener('pageshow', onPageShow)
+  }, [reloadDrawingDataFromDb])
 
   /** サーバーで空でも、ブラウザのセッションで再取得（RLS/SSR差異のフォロー） */
   const [clientUnits, setClientUnits] = useState<Unit[] | null>(null)
@@ -1381,17 +1438,83 @@ export function DrawingViewer({
     setLastAction({ type: 'corner-create', cornerBar: data })
   }
 
-  async function updateCornerBar(id: string, updates: Partial<DrawingCornerBar>) {
-    const before = cornerBars.find((cb) => cb.id === id)
-    if (!before) return
+  function replaceCornerBarLocal(id: string, next: DrawingCornerBar) {
+    cornerBarsRef.current = cornerBarsRef.current.map((cb) => (cb.id === id ? next : cb))
+    setCornerBars([...cornerBarsRef.current])
+  }
+
+  async function persistCornerBarUpdate(
+    id: string,
+    updates: Partial<DrawingCornerBar>,
+  ): Promise<boolean> {
+    const before = cornerBarsRef.current.find((cb) => cb.id === id)
+    if (!before) return false
     const next = { ...before, ...updates }
-    setCornerBars((prev) => prev.map((cb) => (cb.id === id ? next : cb)))
+    replaceCornerBarLocal(id, next)
     const { error } = await supabase.from('drawing_corner_bars').update(updates).eq('id', id)
     if (error) {
-      setCornerBars((prev) => prev.map((cb) => (cb.id === id ? before : cb)))
-      return
+      replaceCornerBarLocal(id, before)
+      alert('付加筋の保存に失敗しました。')
+      return false
     }
     setLastAction({ type: 'corner-update', before })
+    return true
+  }
+
+  function enqueueCornerBarUpdate(
+    id: string,
+    buildUpdates: (latest: DrawingCornerBar) => Partial<DrawingCornerBar> | null,
+  ): Promise<void> {
+    const prev = cornerBarSaveChainsRef.current.get(id) ?? Promise.resolve()
+    const job = prev.then(async () => {
+      pendingCornerBarSaveCountRef.current += 1
+      try {
+        const latest = cornerBarsRef.current.find((cb) => cb.id === id)
+        if (!latest) return
+        const updates = buildUpdates(latest)
+        if (!updates || Object.keys(updates).length === 0) return
+        await persistCornerBarUpdate(id, updates)
+      } finally {
+        pendingCornerBarSaveCountRef.current -= 1
+      }
+    })
+    cornerBarSaveChainsRef.current.set(id, job)
+    return job
+  }
+
+  async function flushCornerBarSaveQueue() {
+    for (let pass = 0; pass < 20; pass += 1) {
+      while (pendingCornerBarSaveCountRef.current > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 16))
+      }
+      const tails = [...cornerBarSaveChainsRef.current.values()]
+      if (tails.length === 0) return
+      await Promise.all(tails)
+    }
+  }
+
+  function updateCornerBar(id: string, updates: Partial<DrawingCornerBar>) {
+    void enqueueCornerBarUpdate(id, () => updates)
+  }
+
+  function patchCornerBarBars(
+    id: string,
+    patch: (bars: CornerBarBarItem[]) => CornerBarBarItem[],
+  ) {
+    void enqueueCornerBarUpdate(id, (latest) => {
+      const shape = getCornerBarShape(latest.shape_type)
+      if (!shape) return null
+      const currentBars = normalizeCornerBarBars(shape, latest)
+      const bars = patch(currentBars)
+      return { bars, ...cornerBarLegacyFieldsFromBars(bars) }
+    })
+  }
+
+  async function goToCornerBarSummary(href: string) {
+    startGlobalLoading()
+    await flushCornerBarSaveQueue()
+    router.refresh()
+    router.push(href)
   }
 
   async function deleteCornerBar(id: string) {
@@ -4830,11 +4953,15 @@ export function DrawingViewer({
         selectedCornerBarId={selectedCornerBarId}
         placementModeActive={cornerTool === 'place'}
         placementDraft={placementDraft}
+        activePlacementCategory={activePlacementCategory}
+        onActivePlacementCategoryChange={setActivePlacementCategory}
         placementColor={cornerPlacementColor}
         onPlacementColorChange={setCornerPlacementColor}
         onChangePlacementDraft={changePlacementDraft}
         onSelectCornerBar={selectCornerBar}
-        onUpdate={(id, updates) => void updateCornerBar(id, updates)}
+        onUpdate={(id, updates) => updateCornerBar(id, updates)}
+        onPatchCornerBarBars={patchCornerBarBars}
+        onGoToSummary={(href) => void goToCornerBarSummary(href)}
         onDelete={(id) => void deleteCornerBar(id)}
         onDuplicate={(id) => void duplicateCornerBar(id)}
         canUndo={!!lastAction}

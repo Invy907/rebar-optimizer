@@ -12,17 +12,14 @@ import {
   cornerBarSegmentLabelAnchors,
   cornerBarThumbPoints,
   getCornerBarShape,
-  getStandardSegmentLengthsMm,
   measurementTypeLabel,
-  type CornerBarCategory,
-  type CornerBarShapeType,
 } from '@/lib/corner-bar-presets'
 
 /**
  * 手書きの拾い出し資料と同じ考え方で仕分ける。
  *
- * ・標準寸法どおりのコーナー筋・添え筋 → 径ごとの本数だけの行
- * ・特殊コーナー筋と、標準寸法から外れたもの → 寸法と加工長つきの行
+ * ・コーナー筋・添え筋 → 径・寸法と本数（加工長行は出さない）
+ * ・特殊コーナー筋 → 寸法と加工長つきの行
  *
  * 全ての行を 1 つの <table> に入れる。カテゴリーごとに別の <table> にすると、
  * 見出し文字列の幅が違うせいで列がガタガタになる（表の列幅は table ごとに
@@ -47,20 +44,6 @@ function hasStandardSizes(category: string): boolean {
   return category === 'CORNER' || category === 'SOE'
 }
 
-
-/**
- * その径の標準寸法と全ての辺が一致するか。
- * 寸法基準（芯々 / 内々 / 外々）は寸法そのものではないので見ない。
- */
-function matchesStandardDims(row: AdditionalRebarSpecRow): boolean {
-  const standard = getStandardSegmentLengthsMm(
-    row.category as CornerBarCategory,
-    row.diameter,
-    row.shapeType as CornerBarShapeType,
-  )
-  if (!standard || standard.length !== row.segments.length) return false
-  return row.segments.every((s, i) => s.lengthMm != null && s.lengthMm === standard[i])
-}
 
 /**
  * 表の 1 行。資料の書き方に合わせて 3 つのかたまりだけを持つ。
@@ -130,65 +113,48 @@ function buildSheetRows(groups: AdditionalRebarGroup[]): SheetRow[] {
   const rows: SheetRow[] = []
 
   for (const group of groups) {
-    const standardKeys = new Set(
-      hasStandardSizes(group.category)
-        ? group.specRows.filter(matchesStandardDims).map((r) => r.key)
-        : [],
-    )
-
-    // 標準寸法どおりのものも D13（600芯々 × …）のように寸法を出す（図は付けない）
-    const standardRows = group.specRows
-      .filter((r) => standardKeys.has(r.key))
-      .sort(
+    if (hasStandardSizes(group.category)) {
+      const sorted = [...group.specRows].sort(
         (a, b) =>
           compareDiameterDesc(a.diameter, b.diameter) ||
           a.dimsText.localeCompare(b.dimsText),
       )
-    standardRows.forEach((row, i) => {
-      rows.push({
-        key: row.key,
-        label: group.label,
-        isGroupStart: i === 0,
-        spec: <SpecWithDiameter row={row} />,
-        result: <QuantityText quantity={row.quantity} />,
-        layout: 'inline',
-        figure: 'empty',
+      sorted.forEach((row, i) => {
+        rows.push({
+          key: row.key,
+          label: group.label,
+          isGroupStart: i === 0,
+          spec: <SpecWithDiameter row={row} />,
+          result: <QuantityText quantity={row.quantity} />,
+          layout: 'inline',
+          figure: 'empty',
+        })
       })
-    })
+      continue
+    }
 
-    // 残りは寸法を書き出す。標準寸法を持たない径（D22 / D25）もこちらに入る
-    const dimsRows = group.specRows
-      .filter((r) => !standardKeys.has(r.key))
-      .sort(
-        (a, b) =>
-          compareDiameterDesc(a.diameter, b.diameter) ||
-          (b.kakouchouMm ?? -1) - (a.kakouchouMm ?? -1) ||
-          a.dimsText.localeCompare(b.dimsText),
-      )
+    const dimsRows = [...group.specRows].sort(
+      (a, b) =>
+        compareDiameterDesc(a.diameter, b.diameter) ||
+        (b.kakouchouMm ?? -1) - (a.kakouchouMm ?? -1) ||
+        a.dimsText.localeCompare(b.dimsText),
+    )
     if (dimsRows.length === 0) continue
 
-    // 資料の「大コーナー」「曲筋」に当たるので、標準寸法を持つ筋種類は「特寸」、
-    // それ以外は形状ごとに見出しを分ける
     const blocks: Array<{ heading: string; rows: AdditionalRebarSpecRow[] }> = []
-    if (hasStandardSizes(group.category)) {
-      blocks.push({ heading: `${group.label} 特寸`, rows: dimsRows })
-    } else {
-      const byShape = new Map<string, AdditionalRebarSpecRow[]>()
-      for (const row of dimsRows) {
-        const list = byShape.get(row.shapeType)
-        if (list) list.push(row)
-        else byShape.set(row.shapeType, [row])
-      }
-      for (const list of byShape.values()) {
-        // 形状名は図で示すので、見出しには筋種類だけ出す
-        blocks.push({ heading: group.label, rows: list })
-      }
+    const byShape = new Map<string, AdditionalRebarSpecRow[]>()
+    for (const row of dimsRows) {
+      const list = byShape.get(row.shapeType)
+      if (list) list.push(row)
+      else byShape.set(row.shapeType, [row])
+    }
+    for (const list of byShape.values()) {
+      blocks.push({ heading: group.label, rows: list })
     }
 
     const showShapeFigure = group.category === 'SPECIAL_CORNER'
 
     for (const block of blocks) {
-      // 寸法基準は辺ごとに括弧で書くので、見出しに「※芯々」はもう付けない
       block.rows.forEach((row, i) => {
         rows.push({
           key: row.key,

@@ -4,6 +4,7 @@ import {
   DEFAULT_CORNER_BAR_PLACEMENT_SIZE_PX,
   DEFAULT_SOE_PLACEMENT_SIZE_PX,
   DEFAULT_SPECIAL_CORNER_PLACEMENT_SIZE_PX,
+  defaultPlacementDraftForCategory,
   getDefaultCornerBarSizePxForPlacement,
   getStandardSegmentLengthsMm,
   makeCornerBarDraft,
@@ -42,6 +43,12 @@ test('SOE STRAIGHT D13 standard mm is 1200 (2 × corner leg)', () => {
 test('flip mirrors x before rotation', () => {
   assert.deepEqual(applyCornerBarOrientation({ x: 10, y: 0 }, 0, true), { x: -10, y: 0 })
   assert.deepEqual(applyCornerBarOrientation({ x: 10, y: 0 }, 1, true), { x: 0, y: -10 })
+})
+
+test('defaultPlacementDraftForCategory SPECIAL_CORNER uses first palette shape', () => {
+  const draft = defaultPlacementDraftForCategory('SPECIAL_CORNER')
+  assert.equal(draft.category, 'SPECIAL_CORNER')
+  assert.equal(draft.shapeType, 'V_OFFSET')
 })
 
 test('makeCornerBarDraft L CORNER D13 fills 600 × 600 on segments', () => {

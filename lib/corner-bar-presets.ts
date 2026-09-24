@@ -1141,3 +1141,20 @@ export function makeCornerBarDraft(
     flipped,
   }
 }
+
+/** 筋種類を切り替えたとき、形状未選択でも使える既定の配置設定 */
+export function defaultPlacementDraftForCategory(
+  category: CornerBarCategory,
+  rotation = 0,
+): CornerBarPlacementDraft {
+  if (category === 'SOE') {
+    return makeCornerBarDraft('STRAIGHT', { category, rotation })
+  }
+  if (category === 'SPECIAL_CORNER') {
+    return makeCornerBarDraft(resolveCategoryShape('SPECIAL_CORNER'), {
+      category,
+      rotation,
+    })
+  }
+  return makeCornerBarDraft('L', { category: 'CORNER', rotation })
+}
