@@ -385,12 +385,24 @@ function formatStandardDimsLabel(category: CornerBarCategory, diameter: string):
   return null
 }
 
-/** 鉄筋径プルダウン表示。コーナー筋・添え筋は標準寸法を括弧付きで示す */
+/**
+ * 鉄筋径プルダウン表示。コーナー筋・添え筋は寸法を括弧付きで示す。
+ * 編集中の辺を渡した場合は標準寸法ではなく、現在入力されている寸法を表示する。
+ */
 export function cornerBarDiameterOptionLabel(
   category: CornerBarCategory,
   diameter: string,
+  currentSegments?: CornerBarSegment[],
 ): string {
   if (!hasStandardSegmentLengths(category)) return diameter
+  if (
+    currentSegments &&
+    currentSegments.length > 0 &&
+    currentSegments.every((segment) => segment.lengthMm != null && segment.lengthMm > 0)
+  ) {
+    const dims = currentSegments.map((segment) => segment.lengthMm).join(' × ')
+    return `${diameter}(${dims})`
+  }
   const dims = formatStandardDimsLabel(category, diameter)
   return dims ? `${diameter}(${dims})` : diameter
 }

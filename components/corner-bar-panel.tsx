@@ -736,7 +736,11 @@ function CornerBarBarsField({
             >
               {CORNER_BAR_DIAMETERS.map((d) => (
                 <option key={d} value={d}>
-                  {cornerBarDiameterOptionLabel(category, d)}
+                  {cornerBarDiameterOptionLabel(
+                    category,
+                    d,
+                    d === bar.barType ? bar.segments : undefined,
+                  )}
                 </option>
               ))}
             </select>
@@ -777,11 +781,15 @@ function CornerBarBarsField({
                   }`}
                 >
                   <span
-                    className={`w-7 shrink-0 text-[10px] ${
-                      isActiveSeg ? 'font-semibold text-primary' : 'text-muted'
+                    aria-label={`辺${segIdx + 1}`}
+                    title={`辺${segIdx + 1}`}
+                    className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border-[1.5px] text-[10px] font-semibold leading-none ${
+                      isActiveSeg
+                        ? 'border-primary bg-primary text-white'
+                        : 'border-slate-400 bg-white text-slate-600'
                     }`}
                   >
-                    辺{segIdx + 1}
+                    {segIdx + 1}
                   </span>
                   <input
                     type="number"
