@@ -165,18 +165,17 @@ export function getUnitIntervalLengthMm(unit: Unit | null | undefined): number {
 }
 
 /**
- * タテ筋本数 = floor(実寸 ÷ ピッチ) + 1
+ * タテ筋本数（呼称 ÷ ピッチ、小数 0.25 未満は切り捨て・0.25 以上は +1）
  *
- * 実寸（鉄筋長さ補正値を適用した長さ）に沿って両端にも配筋するので +1 する。
- * 呼称ではなく実寸で割る点に注意（例: 呼称 2,275 / 実寸 2,245 / @250 は
- * 呼称のままだと 10 本になってしまうが、正しくは 9 本）。
- *
- * 例: 実寸 4,065 / @250 -> floor(16.26) + 1 = 17
+ * 例: 3,640 ÷ 200 = 18.20 → 18 本 / 2,275 ÷ 200 = 11.375 → 12 本
  */
-export function getPitchBaseCount(actualLengthMm: number, pitchMm: number): number {
+export function getPitchBaseCount(nominalLengthMm: number, pitchMm: number): number {
   if (!Number.isFinite(pitchMm) || pitchMm <= 0) return 0
-  if (!Number.isFinite(actualLengthMm) || actualLengthMm <= 0) return 0
-  return Math.floor(actualLengthMm / pitchMm) + 1
+  if (!Number.isFinite(nominalLengthMm) || nominalLengthMm <= 0) return 0
+  const quotient = nominalLengthMm / pitchMm
+  const integerPart = Math.floor(quotient)
+  const fractionalPart = quotient - integerPart
+  return fractionalPart >= 0.25 ? integerPart + 1 : integerPart
 }
 
 function getSegmentCalculationBarCount(segment: DrawingSegment): number {
@@ -223,9 +222,8 @@ export function buildUnitCalculationRows(
       const lengthMm = getSegmentEffectiveLengthMm(segment, units)
       const pitchMm = getUnitPitchMm(unit)
       const barCount = getSegmentCalculationBarCount(segment)
-      // タテ筋本数は呼称ではなく実寸（鉄筋長さ補正値を適用した長さ）で数える
       const actualLengthMm = lengthMm + (adjustmentMm || 0)
-      const baseCount = pitchMm && pitchMm > 0 ? getPitchBaseCount(actualLengthMm, pitchMm) : 0
+      const baseCount = pitchMm && pitchMm > 0 ? getPitchBaseCount(lengthMm, pitchMm) : 0
       const computedCount = baseCount * barCount
       const unitSummaryCount = baseCount
       const intervalLengthMm = getUnitIntervalLengthMm(unit)
@@ -247,7 +245,7 @@ export function buildUnitCalculationRows(
         intervalTimesCount: intervalLengthMm * computedCount,
         formulaText:
           pitchMm && pitchMm > 0
-            ? `${lengthMm}(呼称) -> ${actualLengthMm}(実寸) ÷ ${pitchMm} = ${(actualLengthMm / pitchMm).toFixed(2)} -> +1 -> ${baseCount}`
+            ? `${lengthMm}(呼称) ÷ ${pitchMm} = ${(lengthMm / pitchMm).toFixed(2)} -> ${baseCount}(0.25丸め)`
             : `${lengthMm} / ピッチ未設定`,
         unitShapeLengthMm,
         unitLShapeCount,

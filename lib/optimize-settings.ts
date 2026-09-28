@@ -4,6 +4,11 @@ export function pieceAdjustmentStorageKey(projectId: string) {
   return `optimize-piece-adjustment:${projectId}`
 }
 
+/** 製作図リストのタテ筋手入力（行 key → 本数） */
+export function tateCountOverrideStorageKey(projectId: string) {
+  return `optimize-tate-count-overrides:${projectId}`
+}
+
 export function parsePieceLengthAdjustment(
   value: string | undefined | null,
 ): number {
