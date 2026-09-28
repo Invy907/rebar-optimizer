@@ -18,6 +18,7 @@ import type { UnitShapeLegendPosition } from '@/components/unit-client'
 import {
   DEFAULT_PIECE_LENGTH_ADJUSTMENT_MM,
   pieceAdjustmentStorageKey,
+  tateCountOverrideStorageKey,
 } from '@/lib/optimize-settings'
 import {
   getSegmentBars,
@@ -191,6 +192,59 @@ export function OptimizeClient({
     [projectId],
   )
 
+  const tateOverrideStorageKey = useMemo(
+    () => tateCountOverrideStorageKey(projectId),
+    [projectId],
+  )
+  const [tateCountOverrides, setTateCountOverrides] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const raw = window.localStorage.getItem(tateOverrideStorageKey)
+      if (!raw) {
+        setTateCountOverrides({})
+        return
+      }
+      const parsed = JSON.parse(raw) as unknown
+      if (!parsed || typeof parsed !== 'object') {
+        setTateCountOverrides({})
+        return
+      }
+      const next: Record<string, number> = {}
+      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+        const n = Number(value)
+        if (Number.isFinite(n) && n >= 0) next[key] = Math.floor(n)
+      }
+      setTateCountOverrides(next)
+    } catch {
+      setTateCountOverrides({})
+    }
+  }, [tateOverrideStorageKey])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(tateOverrideStorageKey, JSON.stringify(tateCountOverrides))
+    } catch {
+      // ignore
+    }
+  }, [tateCountOverrides, tateOverrideStorageKey])
+
+  const handleTateCountOverrideChange = useCallback((rowKey: string, value: number | null) => {
+    setTateCountOverrides((prev) => {
+      if (value == null) {
+        if (!(rowKey in prev)) return prev
+        const next = { ...prev }
+        delete next[rowKey]
+        return next
+      }
+      const n = Math.max(0, Math.floor(value))
+      if (prev[rowKey] === n) return prev
+      return { ...prev, [rowKey]: n }
+    })
+  }, [])
+
   const unitCalculationRows = useMemo(
     () =>
       buildUnitCalculationRows(
@@ -204,8 +258,14 @@ export function OptimizeClient({
 
   /** 製作図リストの「計」行と材料取りで同じ数量・タテ筋合計を使う */
   const manufactureTotalsByUnitId = useMemo(
-    () => buildManufactureUnitTotals(segments, units, pieceLengthAdjustmentMm),
-    [pieceLengthAdjustmentMm, segments, units],
+    () =>
+      buildManufactureUnitTotals(
+        segments,
+        units,
+        pieceLengthAdjustmentMm,
+        tateCountOverrides,
+      ),
+    [pieceLengthAdjustmentMm, segments, tateCountOverrides, units],
   )
 
   const handleShapeLengthSave = useCallback(
@@ -414,6 +474,8 @@ export function OptimizeClient({
                 : {}
             }
             onLegendPositionChange={handleManufactureLegendPositionChange}
+            tateCountOverrides={tateCountOverrides}
+            onTateCountOverrideChange={handleTateCountOverrideChange}
           />
         </section>
       )}

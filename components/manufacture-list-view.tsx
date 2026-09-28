@@ -112,8 +112,10 @@ type ManufactureRow = {
   actualMm: number
   /** 数量（この長さの部材本数） */
   qty: number
-  /** タテ筋本数 = floor(実寸 / ピッチ) + 1。ピッチ未設定は null */
+  /** タテ筋本数（呼称 ÷ ピッチ、手入力で上書き可）。ピッチ未設定は null */
   tateCount: number | null
+  /** 自動計算値（手入力リセット用） */
+  autoTateCount: number | null
 }
 
 type ManufactureGroup = {
@@ -249,14 +251,15 @@ export function buildManufactureGroups(
     } else {
       const pitch = acc.group.pitchMm
       const actualMm = nominalMm + (adjustmentMm || 0)
+      const autoTateCount =
+        pitch != null && pitch > 0 ? getPitchBaseCount(nominalMm, pitch) : null
       acc.byLength.set(nominalMm, {
         key: `${groupKey}:${nominalMm}`,
         nominalMm,
         actualMm,
         qty: 1,
-        // 呼称 4095 → 実寸 4065 ÷ 250(ピッチ) = 16.26 → floor + 1 = 17(両端にも配筋する)
-        tateCount:
-          pitch != null && pitch > 0 ? getPitchBaseCount(actualMm, pitch) : null,
+        tateCount: autoTateCount,
+        autoTateCount,
       })
     }
   }
@@ -283,13 +286,36 @@ export function buildManufactureGroups(
  * タテ筋は実寸（呼称 + 補正値）で数えるので、呼び出し側と同じ adjustmentMm を
  * 渡さないと「計」と材料取りの本数が食い違う。
  */
+/** 製作図リストの行 key に対するタテ筋手入力を反映し、計行を再計算する */
+export function applyManufactureTateCountOverrides(
+  groups: ManufactureGroup[],
+  overrides: Readonly<Record<string, number>>,
+): ManufactureGroup[] {
+  if (Object.keys(overrides).length === 0) return groups
+  return groups.map((group) => {
+    const rows = group.rows.map((row) => {
+      const raw = overrides[row.key]
+      if (raw == null || !Number.isFinite(raw)) return row
+      const n = Math.max(0, Math.floor(raw))
+      return { ...row, tateCount: n }
+    })
+    const tateTotal = rows.reduce((sum, r) => sum + r.qty * (r.tateCount ?? 0), 0)
+    return { ...group, rows, tateTotal }
+  })
+}
+
 export function buildManufactureUnitTotals(
   segments: DrawingSegment[],
   units: Unit[],
   adjustmentMm: number,
+  tateCountOverrides: Readonly<Record<string, number>> = {},
 ): Map<string, { qtyTotal: number; tateTotal: number }> {
   const totals = new Map<string, { qtyTotal: number; tateTotal: number }>()
-  for (const group of buildManufactureGroups(segments, units, adjustmentMm)) {
+  const groups = applyManufactureTateCountOverrides(
+    buildManufactureGroups(segments, units, adjustmentMm),
+    tateCountOverrides,
+  )
+  for (const group of groups) {
     if (!group.unit) continue
     totals.set(group.unit.id, {
       qtyTotal: group.qtyTotal,
@@ -321,10 +347,15 @@ export function ManufactureListView({
   onMemoFontPxChange,
   legendPositions = {},
   onLegendPositionChange,
+  tateCountOverrides = {},
+  onTateCountOverrideChange,
 }: {
   segments: DrawingSegment[]
   units: Unit[]
   adjustmentMm: number
+  /** 行 key → 手入力タテ筋本数 */
+  tateCountOverrides?: Record<string, number>
+  onTateCountOverrideChange?: (rowKey: string, value: number | null) => void
   customerCompany: string
   onCustomerCompanyChange: (value: string) => void
   customerName: string
@@ -349,8 +380,12 @@ export function ManufactureListView({
   ) => void
 }) {
   const groups = useMemo(
-    () => buildManufactureGroups(segments, units, adjustmentMm),
-    [segments, units, adjustmentMm],
+    () =>
+      applyManufactureTateCountOverrides(
+        buildManufactureGroups(segments, units, adjustmentMm),
+        tateCountOverrides,
+      ),
+    [segments, units, adjustmentMm, tateCountOverrides],
   )
 
   // 文字サイズは行全体に inline style で当てる（Tailwind の text-* だと画面と印刷で
@@ -636,7 +671,33 @@ export function ManufactureListView({
                         style={{ height: ROW_HEIGHT }}
                       >
                         {r ? (
-                          r.tateCount ?? '-'
+                          r.tateCount != null && onTateCountOverrideChange ? (
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              aria-label={`${g.unitName} 呼称${r.nominalMm} のタテ筋本数`}
+                              title={
+                                r.autoTateCount != null
+                                  ? `自動: ${r.autoTateCount} 本`
+                                  : undefined
+                              }
+                              value={r.tateCount}
+                              onChange={(e) => {
+                                const raw = e.target.value
+                                if (raw === '') {
+                                  onTateCountOverrideChange(r.key, null)
+                                  return
+                                }
+                                const n = Number.parseInt(raw, 10)
+                                if (!Number.isFinite(n) || n < 0) return
+                                onTateCountOverrideChange(r.key, n)
+                              }}
+                              className="w-full min-w-[2.5rem] border-0 bg-transparent px-0 py-0 text-center outline-none focus:underline focus:decoration-primary/40 print:border-transparent print:bg-transparent"
+                            />
+                          ) : (
+                            (r.tateCount ?? '-')
+                          )
                         ) : isTotalRow ? (
                           <span className="font-semibold">
                             {g.pitchMm != null && g.pitchMm > 0
