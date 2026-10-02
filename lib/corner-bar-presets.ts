@@ -342,6 +342,8 @@ const CORNER_STANDARD_LENGTHS_MM: Record<string, readonly [number, number]> = {
   D10: [450, 450],
   D16: [750, 750],
   D19: [900, 900],
+  D22: [1000, 1000],
+  D25: [1150, 1150],
 }
 
 /** 添え筋ストレートの標準寸法（径ごと） */
@@ -350,6 +352,8 @@ const SOE_STANDARD_LENGTHS_MM: Record<string, number> = {
   D10: 900,
   D16: 1500,
   D19: 1800,
+  D22: 2000,
+  D25: 2300,
 }
 
 export function hasStandardSegmentLengths(category: CornerBarCategory): boolean {
@@ -595,7 +599,7 @@ export function makeCornerBarBar(
  * 径だけを変えた鉄筋 1 件を作る。
  *
  * 辺は新しい径の標準寸法で入れ替える。標準を持つ筋種類（コーナー筋・添え筋）で
- * 標準が無い径（D22 / D25）を選んだときは空にする。前の径の値をそのまま残すと、
+ * 標準が無い径を選んだときは空にする。前の径の値をそのまま残すと、
  * 違う径の寸法が入ったままだと気づかずに配置されてしまうため。
  * もともと標準を持たない筋種類は手入力なので、入力済みの値は残す。
  */

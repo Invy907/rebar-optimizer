@@ -292,9 +292,7 @@ button,
     min-width: 0 !important;
   }
 
-  /* 付加筋カードは現在の印刷レイアウトを丸ごと縮小して材料取りの右へ置く。
-     見出しぶんだけ上を空け、左右のカード上端を揃える。zoom は文字・罫線・
-     形状図を同じ比率で縮めつつ、縮小後の寸法で grid を組ませられる。 */
+  /* 付加筋カードは材料取りの右列。文字サイズは左の材料取り表と同じ 14px に揃える */
   .optimize-print-corner-bars {
     min-width: 0 !important;
     width: auto !important;
@@ -303,8 +301,26 @@ button,
   }
 
   .optimize-print-corner-bars .corner-summary-print-root {
-    width: auto !important;
-    zoom: 0.65;
+    width: 100% !important;
+  }
+
+  .optimize-print-corner-bars .corner-summary-section {
+    overflow: hidden !important;
+  }
+
+  /* 文字列は内容幅、形状図は残り幅に合わせて縮める */
+  .optimize-print-corner-bars .corner-summary-print-root table {
+    width: 100% !important;
+  }
+
+  .corner-summary-figure {
+    width: 100%;
+  }
+
+  .corner-summary-figure svg {
+    width: 100% !important;
+    max-width: 280px;
+    height: auto !important;
   }
 
   /* 筋種類ごとのセクションと表の行が途中で割れないようにする。
@@ -327,7 +343,7 @@ button,
     break-inside: avoid;
   }
 
-  /* 「鉄筋種類別の必要本数」と同じ密度に詰める（画面の text-lg のままだと大きすぎる） */
+  /* 材料取り表（.print-bar-summary table）と同じ 14px・セル余白 */
   .corner-summary-print-root table {
     border-color: #64748b !important;
     width: auto !important;
@@ -339,6 +355,21 @@ button,
     border-color: #64748b !important;
     padding-top: 1px !important;
     padding-bottom: 1px !important;
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+  }
+
+  .corner-summary-print-root td:first-child,
+  .corner-summary-print-root th:first-child {
+    padding-left: 0 !important;
+  }
+
+  .corner-summary-print-root .text-sm {
+    font-size: inherit !important;
+  }
+
+  .corner-summary-print-root .font-semibold {
+    font-weight: 500 !important;
   }
 
   /* 画面では辺ごとの寸法基準を 1 行で見せている（セルが nowrap）。

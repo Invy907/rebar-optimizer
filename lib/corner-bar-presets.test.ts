@@ -48,6 +48,11 @@ test('CORNER L D13 standard mm is 600 × 600', () => {
   assert.deepEqual(getStandardSegmentLengthsMm('CORNER', 'D13', 'L'), [600, 600])
 })
 
+test('CORNER L D22 / D25 standard mm', () => {
+  assert.deepEqual(getStandardSegmentLengthsMm('CORNER', 'D22', 'L'), [1000, 1000])
+  assert.deepEqual(getStandardSegmentLengthsMm('CORNER', 'D25', 'L'), [1150, 1150])
+})
+
 test('SOE STRAIGHT D13 standard mm is 1200 (2 × corner leg)', () => {
   assert.deepEqual(getStandardSegmentLengthsMm('SOE', 'D13', 'STRAIGHT'), [1200])
 })

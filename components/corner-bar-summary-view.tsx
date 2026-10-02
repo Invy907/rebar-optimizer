@@ -13,13 +13,14 @@ import {
   cornerBarThumbPoints,
   getCornerBarShape,
   measurementTypeLabel,
+  type CornerBarShapeDef,
 } from '@/lib/corner-bar-presets'
 
 /**
  * 手書きの拾い出し資料と同じ考え方で仕分ける。
  *
  * ・コーナー筋・添え筋 → 径・寸法と本数（加工長行は出さない）
- * ・特殊コーナー筋 → 寸法と加工長つきの行
+ * ・特殊コーナー筋 → D13（加工長）と本数（辺寸法は形状図）
  *
  * 全ての行を 1 つの <table> に入れる。カテゴリーごとに別の <table> にすると、
  * 見出し文字列の幅が違うせいで列がガタガタになる（表の列幅は table ごとに
@@ -99,12 +100,20 @@ function SpecWithDiameter({ row }: { row: AdditionalRebarSpecRow }) {
   )
 }
 
-function KakouchouResult({ row }: { row: AdditionalRebarSpecRow }) {
+/** 特殊コーナー筋: 括弧内は加工長のみ（辺寸法は形状図） */
+function SpecWithKakouchou({ row }: { row: AdditionalRebarSpecRow }) {
+  const inner =
+    row.kakouchouMm != null
+      ? String(row.kakouchouMm)
+      : row.segmentSumMm != null
+        ? String(row.segmentSumMm)
+        : '—'
   return (
     <>
-      {row.kakouchouMm == null ? '—' : `${row.kakouchouMm.toLocaleString('ja-JP')}mm`}
-      <span className="px-1.5 text-muted">×</span>
-      <span className="font-semibold">{row.quantity}</span>
+      {row.diameter}
+      <span className="text-muted">（</span>
+      {inner}
+      <span className="text-muted">）</span>
     </>
   )
 }
@@ -160,9 +169,9 @@ function buildSheetRows(groups: AdditionalRebarGroup[]): SheetRow[] {
           key: row.key,
           label: block.heading,
           isGroupStart: i === 0,
-          spec: <SpecWithDiameter row={row} />,
-          result: <KakouchouResult row={row} />,
-          layout: 'stacked',
+          spec: <SpecWithKakouchou row={row} />,
+          result: <QuantityText quantity={row.quantity} />,
+          layout: 'inline',
           figure:
             showShapeFigure
               ? {
@@ -188,10 +197,9 @@ function buildSheetRows(groups: AdditionalRebarGroup[]): SheetRow[] {
  * 隣の辺のラベルと重なって読めなくなるため。寸法は左の列に並んでいるので、
  * 番号と列の並び順（左から辺 1, 2, 3…）で対応が取れる。
  */
-const FIGURE_W = 200
-/** 縦長の階段形（STEP・V_STEP2）でも辺の中点が詰まらない高さ。
- *  低くすると隣り合う辺のラベルどうしが重なる（H=156 では 7.6px しか離れない） */
-const FIGURE_H = 200
+/** 結果表の形状図は横長ボックスに収め、行の縦幅を抑える */
+const FIGURE_W = 280
+const FIGURE_H = 120
 /** ラベルは path の外側に置くので、その分の余白を確保する。
  *  広げると形状が縮んで辺の中点どうしが近づくため、必要最小限にとどめる */
 const FIGURE_PAD = 27
@@ -240,6 +248,34 @@ function segmentMeasurementLabelFor(
   return measurementType ? measurementTypeLabel(measurementType) : ''
 }
 
+/** 特殊コーナー等の縦長形状を、結果表では横長になる向きに回転する */
+function pickSummaryFigureRotation(shape: CornerBarShapeDef): number {
+  let best = 0
+  let bestScore = -1
+  const probeSize = 160
+  for (let rotation = 0; rotation < 4; rotation += 1) {
+    const pts = cornerBarThumbPoints(
+      shape,
+      probeSize,
+      probeSize,
+      FIGURE_PAD,
+      rotation,
+      false,
+    )
+    if (pts.length < 2) continue
+    const xs = pts.map((p) => p.x)
+    const ys = pts.map((p) => p.y)
+    const w = Math.max(...xs) - Math.min(...xs)
+    const h = Math.max(...ys) - Math.min(...ys)
+    const score = w / Math.max(h, 1)
+    if (score > bestScore) {
+      bestScore = score
+      best = rotation
+    }
+  }
+  return best
+}
+
 /**
  * 寸法ラベルを中点の外側に置いても、隣の辺のラベルと重ならないか。
  *
@@ -282,7 +318,15 @@ function ShapeFigure({
   const shape = getCornerBarShape(shapeType)
   if (!shape) return null
 
-  const points = cornerBarThumbPoints(shape, FIGURE_W, FIGURE_H, FIGURE_PAD)
+  const rotation = pickSummaryFigureRotation(shape)
+  const points = cornerBarThumbPoints(
+    shape,
+    FIGURE_W,
+    FIGURE_H,
+    FIGURE_PAD,
+    rotation,
+    false,
+  )
   if (points.length < 2) return null
 
   const path = points
@@ -303,7 +347,7 @@ function ShapeFigure({
     labelsFitWithoutOverlap(anchors, labelLines)
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="corner-summary-figure flex flex-col items-start">
       <svg
         width={FIGURE_W}
         height={FIGURE_H}
@@ -337,15 +381,15 @@ function ShapeFigure({
               y={measurementTexts[i] ? anchor.y - 5 : anchor.y}
               textAnchor="middle"
               dominantBaseline="middle"
-              fontSize={12}
+              fontSize={14}
               fill="#0f172a"
             >
               <tspan x={anchor.x}>{dimTexts[i]}</tspan>
               {measurementTexts[i] ? (
                 <tspan
                   x={anchor.x}
-                  dy={12}
-                  fontSize={9}
+                  dy={14}
+                  fontSize={11}
                   fontWeight={400}
                   fill="#0f172a"
                 >
@@ -388,12 +432,15 @@ function QuantityText({ quantity }: { quantity: number }) {
   )
 }
 
+const labelCell = 'py-2 pr-4 align-baseline whitespace-nowrap'
+/** 径・寸法と本数の間は詰め、形状図列に余白を逃がす */
+const specCell = 'py-2 pr-2 align-baseline whitespace-nowrap font-mono'
+const qtyCell = 'py-2 pl-1 pr-6 align-baseline whitespace-nowrap font-mono text-left'
 const dataCell = 'py-2 pr-6 align-baseline whitespace-nowrap'
 /**
  * table-layout: auto の古典的なトリック。幅を「1%」にすると、その列は
  * 中身がぴったり収まる最小幅まで縮む（nowrap と組み合わせたときだけ効く）。
- * こう縮めた列以外（＝各辺寸法の列）に余った横幅が全部流れるので、
- * 見出し（筋種類）のすぐ右に鉄筋径・本数が詰まって並ぶ。
+ * 鉄筋径・本数も 1% にし、余った幅は形状図列へ流す。
  */
 const shrinkCell = { width: '1%' }
 
@@ -408,13 +455,13 @@ function SheetTable({ rows }: { rows: SheetRow[] }) {
   const hasAnyFigure = rows.some((r) => typeof r.figure === 'object')
 
   return (
-    <table className="w-full border-collapse text-lg">
+    <table className="w-auto max-w-full border-collapse text-lg">
       <tbody className="divide-y divide-border">
         {rows.map((row) => {
           const pad = row.isGroupStart ? 'pt-4' : 'pt-2'
           return (
             <tr key={row.key}>
-              <td style={shrinkCell} className={`${dataCell} ${pad}`}>
+              <td style={shrinkCell} className={`${labelCell} ${pad}`}>
                 {row.label}
               </td>
               {row.layout === 'stacked' ? (
@@ -425,26 +472,24 @@ function SheetTable({ rows }: { rows: SheetRow[] }) {
                 </td>
               ) : (
                 <>
-                  <td className={`${dataCell} font-mono ${pad}`}>{row.spec}</td>
-                  <td
-                    style={shrinkCell}
-                    className={`${dataCell} text-right font-mono ${pad}`}
-                  >
+                  <td style={shrinkCell} className={`${specCell} ${pad}`}>
+                    {row.spec}
+                  </td>
+                  <td style={shrinkCell} className={`${qtyCell} ${pad}`}>
                     {row.result}
                   </td>
                 </>
               )}
               {hasAnyFigure && typeof row.figure === 'object' && (
                 <td
-                  style={shrinkCell}
                   rowSpan={row.figure.rowSpan}
-                  className="py-2 pl-6 align-middle"
+                  className="py-2 pl-4 align-top"
                 >
                   {row.figure.node}
                 </td>
               )}
               {hasAnyFigure && row.figure === 'empty' && (
-                <td style={shrinkCell} className={`${dataCell} ${pad}`} />
+                <td className={`${pad} py-2`} aria-hidden />
               )}
             </tr>
           )
