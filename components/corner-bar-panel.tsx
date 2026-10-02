@@ -2,7 +2,7 @@
 
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import type { DrawingCornerBar } from '@/lib/types/database'
 import {
@@ -28,7 +28,9 @@ import {
   getCornerBarShapeOptionsForCategory,
   getNextCornerBarDiameter,
   isCornerBarBarsFullyDimensioned,
+  isPerEdgeVisualDrawCategory,
   makeCornerBarBar,
+  scaleCornerBarDrawScale,
   defaultPlacementDraftForCategory,
   makeCornerBarDraft,
   MEASUREMENT_TYPES,
@@ -118,6 +120,10 @@ export function CornerBarPanel({
       選択編集と配置設定は同時に出ないので 1 つで足りる */
   const [activeSegIndex, setActiveSegIndex] = useState<number | null>(null)
 
+  useEffect(() => {
+    setActiveSegIndex(null)
+  }, [selected?.id])
+
   const printSummary = useMemo(
     () => buildCornerBarPrintSummary(cornerBars, normalizeSegmentColor),
     [cornerBars],
@@ -157,6 +163,60 @@ export function CornerBarPanel({
     if (!selected) return
     onPatchCornerBarBars(selected.id, patch)
   }
+
+  function adjustSelectedDrawScale(factor: number) {
+    if (!selected || activeSegIndex == null || !isPerEdgeVisualDrawCategory(selected.category)) {
+      return
+    }
+    const segIndex = activeSegIndex
+    commitSelectedBars((bars) =>
+      bars.map((bar) => ({
+        ...bar,
+        segments: bar.segments.map((seg, j) =>
+          j === segIndex
+            ? { ...seg, drawScale: scaleCornerBarDrawScale(seg.drawScale, factor) }
+            : seg,
+        ),
+      })),
+    )
+  }
+
+  function handleSelectedSizeDecrease() {
+    if (
+      selected &&
+      activeSegIndex != null &&
+      isPerEdgeVisualDrawCategory(selected.category)
+    ) {
+      adjustSelectedDrawScale(1 / SIZE_STEP)
+      return
+    }
+    if (!selected) return
+    onUpdate(selected.id, {
+      size_px: clampCornerBarSizePx(currentSizePx / SIZE_STEP),
+    })
+  }
+
+  function handleSelectedSizeIncrease() {
+    if (
+      selected &&
+      activeSegIndex != null &&
+      isPerEdgeVisualDrawCategory(selected.category)
+    ) {
+      adjustSelectedDrawScale(SIZE_STEP)
+      return
+    }
+    if (!selected) return
+    onUpdate(selected.id, {
+      size_px: clampCornerBarSizePx(currentSizePx * SIZE_STEP),
+    })
+  }
+
+  const selectedSizeTitle =
+    selected &&
+    activeSegIndex != null &&
+    isPerEdgeVisualDrawCategory(selected.category)
+      ? `辺${activeSegIndex + 1}を選択中: 図面上の長さのみ変更（mm は変わりません）`
+      : '図面上の全体の大きさを変更'
 
   function handleSelectedCategoryChange(category: CornerBarCategory) {
     if (!selected || !selectedBars) return
@@ -400,25 +460,17 @@ export function CornerBarPanel({
                 <span className="text-[10px] text-muted">大きさ</span>
                 <button
                   type="button"
-                  onClick={() =>
-                    onUpdate(selected.id, {
-                      size_px: clampCornerBarSizePx(currentSizePx / SIZE_STEP),
-                    })
-                  }
+                  onClick={handleSelectedSizeDecrease}
                   className="rounded border border-border bg-white px-2 py-0.5 text-xs hover:bg-gray-50"
-                  title="小さくする"
+                  title={selectedSizeTitle}
                 >
                   −
                 </button>
                 <button
                   type="button"
-                  onClick={() =>
-                    onUpdate(selected.id, {
-                      size_px: clampCornerBarSizePx(currentSizePx * SIZE_STEP),
-                    })
-                  }
+                  onClick={handleSelectedSizeIncrease}
                   className="rounded border border-border bg-white px-2 py-0.5 text-xs hover:bg-gray-50"
-                  title="大きくする"
+                  title={selectedSizeTitle}
                 >
                   ＋
                 </button>
@@ -430,6 +482,11 @@ export function CornerBarPanel({
               shape={selectedShape}
               rotation={selected.rotation}
               flipped={normalizeCornerBarFlip(selected.flipped)}
+              segments={
+                isPerEdgeVisualDrawCategory(selected.category)
+                  ? selectedBars[0]?.segments
+                  : undefined
+              }
               activeIndex={activeSegIndex}
               onActiveIndexChange={setActiveSegIndex}
             />
@@ -778,30 +835,31 @@ function CornerBarBarsField({
                 return (
                 <div
                   key={seg.id}
-                  onMouseEnter={() => onActiveSegIndexChange(segIdx)}
-                  onMouseLeave={() => onActiveSegIndexChange(null)}
                   className={`flex items-center gap-1.5 rounded px-0.5 ${
                     isActiveSeg ? 'bg-primary/10' : ''
                   }`}
                 >
-                  <span
-                    aria-label={`辺${segIdx + 1}`}
-                    title={`辺${segIdx + 1}`}
-                    className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border-[1.5px] text-[10px] font-semibold leading-none ${
+                  <button
+                    type="button"
+                    aria-label={`辺${segIdx + 1}を選択`}
+                    title={`辺${segIdx + 1}を選択（大きさ±で図面上の長さを変更）`}
+                    onClick={() =>
+                      onActiveSegIndexChange(isActiveSeg ? null : segIdx)
+                    }
+                    className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border-[1.5px] text-[10px] font-semibold leading-none outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
                       isActiveSeg
                         ? 'border-primary bg-primary text-white'
-                        : 'border-slate-400 bg-white text-slate-600'
+                        : 'border-slate-400 bg-white text-slate-600 hover:border-primary/60'
                     }`}
                   >
                     {segIdx + 1}
-                  </span>
+                  </button>
                   <input
                     type="number"
                     min={1}
                     placeholder="mm"
                     value={seg.lengthMm ?? ''}
                     onFocus={() => onActiveSegIndexChange(segIdx)}
-                    onBlur={() => onActiveSegIndexChange(null)}
                     onChange={(e) => {
                       const raw = e.target.value
                       if (raw === '') {
@@ -823,7 +881,7 @@ function CornerBarBarsField({
                     }
                     className="w-[68px] shrink-0 rounded border border-border bg-white px-1 py-1 text-xs outline-none focus:border-primary"
                   >
-                    <option value="">基準</option>
+                    <option value="">標準</option>
                     {MEASUREMENT_TYPES.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.label}
@@ -863,16 +921,27 @@ function CornerBarSegmentFigure({
   shape,
   rotation,
   flipped = false,
+  segments,
   activeIndex,
   onActiveIndexChange,
 }: {
   shape: CornerBarShapeDef
   rotation: number
   flipped?: boolean
+  segments?: CornerBarSegment[]
   activeIndex: number | null
   onActiveIndexChange: (index: number | null) => void
 }) {
-  const points = cornerBarThumbPoints(shape, FIG_W, FIG_H, FIG_PAD, rotation, flipped)
+  const points = cornerBarThumbPoints(
+    shape,
+    FIG_W,
+    FIG_H,
+    FIG_PAD,
+    rotation,
+    flipped,
+    segments,
+    activeIndex,
+  )
   if (points.length < 3) return null
 
   const anchors = cornerBarSegmentLabelAnchors(points, FIG_LABEL_GAP)
@@ -899,6 +968,7 @@ function CornerBarSegmentFigure({
               stroke={isActive ? '#2563eb' : '#94a3b8'}
               strokeWidth={isActive ? 3.5 : 2.5}
               strokeLinecap="round"
+              pointerEvents="none"
             />
           )
         })}
@@ -914,8 +984,20 @@ function CornerBarSegmentFigure({
           return (
             <g
               key={anchor.index}
-              onMouseEnter={() => onActiveIndexChange(anchor.index)}
-              onMouseLeave={() => onActiveIndexChange(null)}
+              role="button"
+              tabIndex={0}
+              aria-label={`辺${anchor.index + 1}を選択`}
+              aria-pressed={isActive}
+              className="cursor-pointer outline-none"
+              onClick={() =>
+                onActiveIndexChange(isActive ? null : anchor.index)
+              }
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onActiveIndexChange(isActive ? null : anchor.index)
+                }
+              }}
             >
               <line
                 x1={p1.x}

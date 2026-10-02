@@ -417,8 +417,30 @@ export interface CornerBarSegment {
   id: string
   lengthMm: number | null
   measurementType: MeasurementType | null
+  /** 図面上の見た目の辺長倍率（mm とは独立。既定 1） */
+  drawScale?: number
   labelOffsetX?: number
   labelOffsetY?: number
+}
+
+export const DEFAULT_CORNER_BAR_DRAW_SCALE = 1
+export const MIN_CORNER_BAR_DRAW_SCALE = 0.25
+/** 図面キャンバス上の辺の最大倍率（パネル図は別途 MIN_PANEL_THUMB_EDGE_RATIO で短縮下限） */
+export const MAX_CORNER_BAR_DRAW_SCALE = 20
+
+export function clampCornerBarDrawScale(value: unknown): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return DEFAULT_CORNER_BAR_DRAW_SCALE
+  return Math.min(MAX_CORNER_BAR_DRAW_SCALE, Math.max(MIN_CORNER_BAR_DRAW_SCALE, n))
+}
+
+/** コーナー筋・特殊コーナー筋のみ辺ごとの図面長調整を行う */
+export function isPerEdgeVisualDrawCategory(category: string): boolean {
+  return category === 'CORNER' || category === 'SPECIAL_CORNER'
+}
+
+export function scaleCornerBarDrawScale(current: unknown, factor: number): number {
+  return clampCornerBarDrawScale(Number(current ?? 1) * factor)
 }
 
 /** 形状を選んだ直後の、寸法未入力の辺列を作る */
@@ -457,6 +479,9 @@ export function applyStandardSegmentLengths(
       ...(Number.isFinite(Number(prev?.labelOffsetY))
         ? { labelOffsetY: Number(prev?.labelOffsetY) }
         : {}),
+      ...(Number.isFinite(Number(prev?.drawScale))
+        ? { drawScale: clampCornerBarDrawScale(prev?.drawScale) }
+        : {}),
     }
   })
 }
@@ -488,6 +513,9 @@ export function normalizeCornerBarSegments(
         : {}),
       ...(Number.isFinite(Number(raw?.labelOffsetY))
         ? { labelOffsetY: Number(raw?.labelOffsetY) }
+        : {}),
+      ...(Number.isFinite(Number(raw?.drawScale))
+        ? { drawScale: clampCornerBarDrawScale(raw?.drawScale) }
         : {}),
     }
   })
@@ -726,9 +754,8 @@ export function cornerBarBarQuantities(source: {
 /**
  * 図面上の大きさ（bbox の長辺, px）。
  *
- * 実寸(mm)をそのまま図面座標に使うと、600mm が 600px になって図面に対して
- * 大きすぎる。寸法は資料どおりの数値として持ちたいだけなので、描画の大きさは
- * 配置時のクリック（既定 size_px）または選択タブの ± で決め、mm はラベル・集計用のデータとして保持する。
+ * 実寸(mm)をそのまま図面座標に使うと大きすぎる。mm は集計用。
+ * 全体スケールは size_px、コーナー/特殊コーナーは辺ごとに drawScale も使う。
  */
 export const DEFAULT_CORNER_BAR_SIZE_PX = 110
 /** クリック配置の既定 size_px（コーナー筋。既存データの size_px 未設定時のフォールバックは 110 のまま） */
@@ -786,13 +813,60 @@ export function isCornerBarDragPlacement(dx: number, dy: number): boolean {
 const MIN_SEGMENT_RATIO = 0.12
 
 /**
- * 図面上の辺の比率。形状の既定値のみ使い、入力した mm には連動しない。
- * 短い辺が潰れて掴めなくならないよう、最長辺に対して下限を置く。
+ * パネル形状図（アンカー辺選択時）。他辺がアンカー基準長の何割以下には縮まないか。
+ * L形で 1 辺を最大まで伸ばしたとき 2 辺が約 1/4 程度で止まる想定。
  */
-function relativeSegmentLengths(shape: CornerBarShapeDef): number[] {
-  const raw = shape.directions.map((_, i) => shape.defaultLengths[i] ?? 300)
-  const floor = Math.max(...raw) * MIN_SEGMENT_RATIO
-  return raw.map((v) => Math.max(v, floor))
+export const MIN_PANEL_THUMB_EDGE_RATIO = 0.25
+
+function applyMinSegmentLengthFloor(lengths: number[]): number[] {
+  const floor = Math.max(...lengths, 1) * MIN_SEGMENT_RATIO
+  return lengths.map((v) => Math.max(v, floor))
+}
+
+/**
+ * 図面上の辺の比率。defaultLengths × drawScale（mm 入力とは連動しない）。
+ */
+function relativeSegmentLengths(
+  shape: CornerBarShapeDef,
+  segments?: CornerBarSegment[],
+): number[] {
+  const raw = shape.directions.map((_, i) => {
+    const base = shape.defaultLengths[i] ?? 300
+    const scale = clampCornerBarDrawScale(segments?.[i]?.drawScale ?? DEFAULT_CORNER_BAR_DRAW_SCALE)
+    return base * scale
+  })
+  return applyMinSegmentLengthFloor(raw)
+}
+
+/**
+ * パネル形状図用。anchor 辺の見かけ長を一定にし、他辺は相対比率だけ変える。
+ */
+export function drawEdgeLengthsForThumb(
+  shape: CornerBarShapeDef,
+  segments: CornerBarSegment[] | undefined,
+  anchorEdgeIndex: number | null | undefined,
+): number[] {
+  const base = shape.directions.map((_, i) => shape.defaultLengths[i] ?? 300)
+  const scaled = base.map((b, i) =>
+    b * clampCornerBarDrawScale(segments?.[i]?.drawScale ?? DEFAULT_CORNER_BAR_DRAW_SCALE),
+  )
+  if (
+    anchorEdgeIndex == null ||
+    anchorEdgeIndex < 0 ||
+    anchorEdgeIndex >= scaled.length ||
+    scaled[anchorEdgeIndex]! <= 0
+  ) {
+    return applyMinSegmentLengthFloor(scaled)
+  }
+  const refAnchor = base[anchorEdgeIndex]!
+  const anchorCurrent = scaled[anchorEdgeIndex]!
+  const minOther = refAnchor * MIN_PANEL_THUMB_EDGE_RATIO
+  const lengths = scaled.map((_, i) => {
+    const relative = refAnchor * (scaled[i]! / anchorCurrent)
+    if (i === anchorEdgeIndex) return relative
+    return Math.max(relative, minOther)
+  })
+  return applyMinSegmentLengthFloor(lengths)
 }
 
 export interface CornerBarGeometry {
@@ -800,33 +874,75 @@ export interface CornerBarGeometry {
   points: Array<{ x: number; y: number }>
 }
 
-/**
- * 原点 (0,0) 起点で、辺を順番につないだ折れ線を作る。
- * 形は形状の既定比率で決まり、全体の大きさは sizePx（bbox の長辺）に合わせる。
- * segments の lengthMm は描画には使わない。
- */
-export function buildCornerBarGeometry(
+function cornerBarPointsFromLengths(
   shape: CornerBarShapeDef,
-  _segments: CornerBarSegment[],
-  sizePx: number = DEFAULT_CORNER_BAR_SIZE_PX,
-): CornerBarGeometry {
-  const lengths = relativeSegmentLengths(shape)
+  lengths: number[],
+): Array<{ x: number; y: number }> {
   const points: Array<{ x: number; y: number }> = [{ x: 0, y: 0 }]
   shape.directions.forEach((dir, i) => {
     const len = lengths[i] ?? 0
     const prev = points[points.length - 1]!
     points.push({ x: prev.x + dir.x * len, y: prev.y + dir.y * len })
   })
+  return points
+}
 
+function cornerBarPolylineNaturalSpan(points: Array<{ x: number; y: number }>): number {
   const xs = points.map((p) => p.x)
   const ys = points.map((p) => p.y)
-  const natural = Math.max(
+  return Math.max(
     Math.max(...xs) - Math.min(...xs),
     Math.max(...ys) - Math.min(...ys),
   )
+}
+
+/**
+ * 原点 (0,0) 起点で、辺を順番につないだ折れ線を作る。
+ * 与えた lengths の bbox 長辺が sizePx になるよう一括スケール（サムネイル用）。
+ */
+export function buildCornerBarGeometryFromLengths(
+  shape: CornerBarShapeDef,
+  lengths: number[],
+  sizePx: number = DEFAULT_CORNER_BAR_SIZE_PX,
+): CornerBarGeometry {
+  const points = cornerBarPointsFromLengths(shape, lengths)
+  const natural = cornerBarPolylineNaturalSpan(points)
   if (natural <= 0) return { points }
   const k = clampCornerBarSizePx(sizePx) / natural
   return { points: points.map((p) => ({ x: p.x * k, y: p.y * k })) }
+}
+
+/**
+ * 図面キャンバス用。size_px は drawScale=1 の形の bbox に対するスケール。
+ * 辺の drawScale を上げるとその辺だけ px 長く伸びる（他辺は基準スケールのまま）。
+ */
+export function buildCornerBarGeometry(
+  shape: CornerBarShapeDef,
+  segments: CornerBarSegment[] = [],
+  sizePx: number = DEFAULT_CORNER_BAR_SIZE_PX,
+): CornerBarGeometry {
+  const drawLengths = relativeSegmentLengths(shape, segments.length > 0 ? segments : undefined)
+  const baselineLengths = relativeSegmentLengths(shape, undefined)
+  const baselineNatural = cornerBarPolylineNaturalSpan(
+    cornerBarPointsFromLengths(shape, baselineLengths),
+  )
+  if (baselineNatural <= 0) {
+    return buildCornerBarGeometryFromLengths(shape, drawLengths, sizePx)
+  }
+  const k = clampCornerBarSizePx(sizePx) / baselineNatural
+  const scaledLengths = drawLengths.map((len) => len * k)
+  return { points: cornerBarPointsFromLengths(shape, scaledLengths) }
+}
+
+/** 辺 i の描画長（buildCornerBarGeometry 後の座標系） */
+export function cornerBarGeometryEdgeLength(
+  geometry: CornerBarGeometry,
+  edgeIndex: number,
+): number {
+  const p1 = geometry.points[edgeIndex]
+  const p2 = geometry.points[edgeIndex + 1]
+  if (!p1 || !p2) return 0
+  return Math.hypot(p2.x - p1.x, p2.y - p1.y)
 }
 
 export function normalizeCornerBarRotation(steps: number): number {
@@ -959,8 +1075,12 @@ export function cornerBarThumbPoints(
   pad = 6,
   rotationSteps = 0,
   flipped = false,
+  segments?: CornerBarSegment[],
+  anchorEdgeIndex?: number | null,
 ): Array<{ x: number; y: number }> {
-  const geometry = buildCornerBarGeometry(shape, makeCornerBarSegments(shape))
+  const lengths = drawEdgeLengthsForThumb(shape, segments, anchorEdgeIndex)
+  const refSize = Math.max(...lengths, DEFAULT_CORNER_BAR_SIZE_PX)
+  const geometry = buildCornerBarGeometryFromLengths(shape, lengths, refSize)
   const rotated = {
     points: geometry.points.map((p) =>
       applyCornerBarOrientation(p, rotationSteps, flipped),

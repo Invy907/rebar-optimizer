@@ -31,6 +31,7 @@ import {
   normalizeCornerBarBars,
   normalizeCornerBarFlip,
   normalizeCornerBarRotation,
+  isPerEdgeVisualDrawCategory,
   type CornerBarBarItem,
   type CornerBarCategory,
   type CornerBarGeometry,
@@ -1280,14 +1281,17 @@ export function DrawingViewer({
 
   /**
    * 保存済みの付加筋を、図面座標系の折れ線に展開する。
-   * 図面上の形は形状の既定比率と size_px だけで決まり、辺の寸法(mm)は使わない。
+   * コーナー/特殊コーナーは defaultLengths × drawScale、mm は使わない。
    */
   const cornerBarGeometryOf = useCallback((cb: DrawingCornerBar): CornerBarGeometry | null => {
     const shape = getCornerBarShape(cb.shape_type)
     if (!shape) return null
+    const drawSegments = isPerEdgeVisualDrawCategory(cb.category)
+      ? (normalizeCornerBarBars(shape, cb)[0]?.segments ?? [])
+      : []
     return cornerBarCanvasGeometry(
       shape,
-      [],
+      drawSegments,
       cb.x,
       cb.y,
       cb.rotation,
@@ -4768,9 +4772,9 @@ export function DrawingViewer({
                 type="button"
                 onClick={enterCornerPlaceMode}
                 className={toolButtonClass(cornerTool === 'place')}
-                title="図面をクリックして新しい部材を配置します (D)"
+                title="図面をクリックして新しい部材を置きます (D)"
               >
-                配置
+                位置
               </button>
               <button
                 type="button"
@@ -4868,7 +4872,7 @@ export function DrawingViewer({
             }`}
           >
             {layer === 'corner'
-              ? 'Sキー: 選択／Dキー: 配置／Escキー: 配置をやめる／Zキー: 選択した部材を削除／Fキー: 全画面'
+              ? 'Sキー: 選択／Dキー: 位置／Escキー: 位置をやめる／Zキー: 選択した部材を削除／Fキー: 全画面'
               : splitArmedSegmentId
                 ? 'Escキー: 分割をキャンセル'
                 : 'Escキー: 描画取消／Dキー: 描画／Gキー: 間隔線／Sキー: 選択／Fキー: 全画面／Zキー: 削除／Shift+描画: 水平・垂直'}
